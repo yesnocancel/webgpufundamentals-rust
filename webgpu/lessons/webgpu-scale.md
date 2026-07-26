@@ -77,34 +77,30 @@ struct VSOutput {
 And, like before, we need to update our uniform buffer to have room for
 the scale value.
 
-```js
+```rust
 -  // color, resolution, translation, rotation, padding
--  const uniformBufferSize = (4 + 2 + 2 + 2) * 4 + 8;
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 2) * 4 + 8;
 +  // color, resolution, translation, rotation, scale
-+  const uniformBufferSize = (4 + 2 + 2 + 2 + 2) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 2 + 2) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kResolutionOffset = 4;
-  const kTranslationOffset = 6;
-  const kRotationOffset = 8;
-+  const kScaleOffset = 10;
-
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
-  const translationValue = uniformValues.subarray(kTranslationOffset, kTranslationOffset + 2);
-  const rotationValue = uniformValues.subarray(kRotationOffset, kRotationOffset + 2);
-+  const scaleValue = uniformValues.subarray(kScaleOffset, kScaleOffset + 2);
+  const K_COLOR_OFFSET: usize = 0;
+  const K_RESOLUTION_OFFSET: usize = 4;
+  const K_TRANSLATION_OFFSET: usize = 6;
+  const K_ROTATION_OFFSET: usize = 8;
++  const K_SCALE_OFFSET: usize = 10;
 ```
 
-and at render time we need to update the scale
+and at render time we need to update the scale. In the page we add scale
+sliders,
 
 ```js
   const settings = {
@@ -113,30 +109,30 @@ and at render time we need to update the scale
 +    scale: [1, 1],
   };
 
-  const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
-
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
-  gui.add(settings, 'rotation', radToDegOptions);
-+  gui.add(settings.scale, '0', -5, 5).name('scale.x');
-+  gui.add(settings.scale, '1', -5, 5).name('scale.y');
+  ...
++  gui.add(settings.scale, '0', -5, 5).name('scale.x')
++     .onChange(v => wasm.set_setting_num('scaleX', v));
++  gui.add(settings.scale, '1', -5, 5).name('scale.y')
++     .onChange(v => wasm.set_setting_num('scaleY', v));
+```
 
-  function render() {
+and in the Rust we read and set them.
+
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
-
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
-    translationValue.set(settings.translation);
-    rotationValue.set([
-        Math.cos(settings.rotation),
-        Math.sin(settings.rotation),
-    ]);
-+    scaleValue.set(settings.scale);
+    uniform_values[K_ROTATION_OFFSET..K_ROTATION_OFFSET + 2]
+        .copy_from_slice(&rotation);
++    let scale = [
++        wgpu_fun::setting_f64("scaleX", 1.0) as f32,
++        wgpu_fun::setting_f64("scaleY", 1.0) as f32,
++    ];
++    uniform_values[K_SCALE_OFFSET..K_SCALE_OFFSET + 2]
++        .copy_from_slice(&scale);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 And now we have scale. Drag the sliders.

@@ -96,31 +96,27 @@ struct VSOutput {
 }
 ```
 
-And we update the JavaScript to add space to the new uniform value.
+And we update the Rust to add space to the new uniform value.
 
-```js
+```rust
 -  // color, resolution, translation
--  const uniformBufferSize = (4 + 2 + 2) * 4;
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2) * 4;
 +  // color, resolution, translation, rotation, padding
-+  const uniformBufferSize = (4 + 2 + 2 + 2) * 4 + 8;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 2) * 4 + 8;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kResolutionOffset = 4;
-  const kTranslationOffset = 6;
-+  const kRotationOffset = 8;
-
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
-  const translationValue = uniformValues.subarray(kTranslationOffset, kTranslationOffset + 2);
-+  const rotationValue = uniformValues.subarray(kRotationOffset, kRotationOffset + 2);
+  const K_COLOR_OFFSET: usize = 0;
+  const K_RESOLUTION_OFFSET: usize = 4;
+  const K_TRANSLATION_OFFSET: usize = 6;
++  const K_ROTATION_OFFSET: usize = 8;
 ```
 
 And we need some kind of UI. This isn't a tutorial about making UIs so
@@ -145,32 +141,43 @@ Then some CSS to put it somewhere
 }
 ```
 
-and finally the JavaScript to use it.
+and finally the page JavaScript to use it, feeding the circle's x and y into
+the wasm module,
 
 ```js
 +import UnitCircle from './resources/js/unit-circle.js';
 
 ...
 
-  const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
-
 +  const unitCircle = new UnitCircle();
 +  document.querySelector('#circle').appendChild(unitCircle.domElement);
-+  unitCircle.onChange(render);
++  unitCircle.onChange(() => {
++    wasm.set_setting_num('rotationX', unitCircle.x);
++    wasm.set_setting_num('rotationY', unitCircle.y);
++  });
+```
 
-  function render() {
+and the Rust to read it.
+
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
-    translationValue.set(settings.translation);
-+    rotationValue.set([unitCircle.x, unitCircle.y]);
+    // Set the uniform values in our Rust side array
+    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
+        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
+    uniform_values[K_TRANSLATION_OFFSET..K_TRANSLATION_OFFSET + 2]
+        .copy_from_slice(&translation);
++    // x, y from the unit circle widget on the page
++    let rotation = [
++        wgpu_fun::setting_f64("rotationX", 1.0) as f32,
++        wgpu_fun::setting_f64("rotationY", 0.0) as f32,
++    ];
++    uniform_values[K_ROTATION_OFFSET..K_ROTATION_OFFSET + 2]
++        .copy_from_slice(&rotation);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 And here's the result. Drag the handle on the circle to rotate
@@ -228,15 +235,14 @@ There's another name for the points on a unit circle. They're called
 the sine and cosine. So for any given angle we can just look up the
 sine and cosine like this.
 
-    function printSineAndCosineForAnAngle(angleInDegrees) {
-      const angleInRadians = angleInDegrees * Math.PI / 180;
-      const s = Math.sin(angleInRadians);
-      const c = Math.cos(angleInRadians);
-      console.log('s =', s, 'c =', c);
+    fn print_sine_and_cosine_for_an_angle(angle_in_degrees: f32) {
+      let angle_in_radians = angle_in_degrees.to_radians();
+      let s = angle_in_radians.sin();
+      let c = angle_in_radians.cos();
+      println!("s = {s} c = {c}");
     }
 
-If you copy and paste the code into your JavaScript console and
-type `printSineAndCosignForAngle(30)` you see it prints
+If you call `print_sine_and_cosine_for_an_angle(30.0)` it prints
 `s = 0.50 c = 0.87` (note: I rounded off the numbers)
 
 If you put it all together you can rotate your vertex positions to any angle
@@ -244,11 +250,11 @@ you desire. Just set the rotation to the sine and cosine of the angle
 you want to rotate to.
 
       ...
-      const angleInRadians = angleInDegrees * Math.PI / 180;
-      rotation[0] = Math.cos(angleInRadians);
-      rotation[1] = Math.sin(angleInRadians);
+      let angle_in_radians = angle_in_degrees.to_radians();
+      rotation[0] = angle_in_radians.cos();
+      rotation[1] = angle_in_radians.sin();
 
-Let's change things to just have an rotation setting.
+Let's change things to just have an rotation setting. In the page:
 
 ```js
 +  const degToRad = d => d * Math.PI / 180;
@@ -261,26 +267,31 @@ Let's change things to just have an rotation setting.
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
-+  gui.add(settings, 'rotation', radToDegOptions);
+  gui.add(settings.translation, '0', 0, 1000).name('translation.x')
+     .onChange(v => wasm.set_setting_num('translationX', v));
+  gui.add(settings.translation, '1', 0, 1000).name('translation.y')
+     .onChange(v => wasm.set_setting_num('translationY', v));
++  gui.add(settings, 'rotation', radToDegOptions)
++     .onChange(v => wasm.set_setting_num('rotation', v));
 
 -  const unitCircle = new UnitCircle();
 -  document.querySelector('#circle').appendChild(unitCircle.domElement);
--  unitCircle.onChange(render);
+-  unitCircle.onChange(...);
+```
 
-  function render() {
+And in the Rust:
+
+```rust
     ...
-
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
-    translationValue.set(settings.translation);
--    rotationValue.set([unitCircle.x, unitCircle.y]);
-+    rotationValue.set([
-+        Math.cos(settings.rotation),
-+        Math.sin(settings.rotation),
-+    ]);
+-    // x, y from the unit circle widget on the page
+-    let rotation = [
+-        wgpu_fun::setting_f64("rotationX", 1.0) as f32,
+-        wgpu_fun::setting_f64("rotationY", 0.0) as f32,
+-    ];
++    let angle = wgpu_fun::setting_f64("rotation", 30.0f64.to_radians()) as f32;
++    let rotation = [angle.cos(), angle.sin()];
+    uniform_values[K_ROTATION_OFFSET..K_ROTATION_OFFSET + 2]
+        .copy_from_slice(&rotation);
 ```
 
 Drag the sliders to translate or rotate.
@@ -308,8 +319,9 @@ Radians vs degrees are similar. Degrees make the math hard. Radians make
 the math easy. There are 360 degrees in a circle but there are only 2π radians.
 So a full turn is 2π radians. A half turn is 1π radian. A 1/4 turn, ie 90 degrees
 is 1/2π radians. So if you want to rotate something 90 degrees just use
-<code>Math.PI * 0.5</code>. If you want to rotate it 45 degrees use
-<code>Math.PI * 0.25</code> etc.
+<code>PI * 0.5</code>. If you want to rotate it 45 degrees use
+<code>PI * 0.25</code> etc. (in Rust, <code>std::f32::consts::PI</code>,
+or use <code>90.0f32.to_radians()</code>).
 </p>
 <p>
 Nearly all math involving angles, circles or rotation works very simply

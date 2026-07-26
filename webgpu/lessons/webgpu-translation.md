@@ -32,39 +32,37 @@ We'll make an F and we'll build it from 6 triangles like this
 
 Here's the data for the F
 
-```js
-function createFVertices() {
-  const vertexData = new Float32Array([
-    // left column
-    0, 0,
-    30, 0,
-    0, 150,
-    30, 150,
+```rust
+#[rustfmt::skip]
+fn create_f_vertices() -> (Vec<f32>, Vec<u32>, u32) {
+    let vertex_data: Vec<f32> = vec![
+        // left column
+        0.0, 0.0,
+        30.0, 0.0,
+        0.0, 150.0,
+        30.0, 150.0,
 
-    // top rung
-    30, 0,
-    100, 0,
-    30, 30,
-    100, 30,
+        // top rung
+        30.0, 0.0,
+        100.0, 0.0,
+        30.0, 30.0,
+        100.0, 30.0,
 
-    // middle rung
-    30, 60,
-    70, 60,
-    30, 90,
-    70, 90,
-  ]);
+        // middle rung
+        30.0, 60.0,
+        70.0, 60.0,
+        30.0, 90.0,
+        70.0, 90.0,
+    ];
 
-  const indexData = new Uint32Array([
-    0,  1,  2,    2,  1,  3,  // left column
-    4,  5,  6,    6,  5,  7,  // top run
-    8,  9, 10,   10,  9, 11,  // middle run
-  ]);
+    let index_data: Vec<u32> = vec![
+        0,  1,  2,    2,  1,  3,  // left column
+        4,  5,  6,    6,  5,  7,  // top run
+        8,  9, 10,   10,  9, 11,  // middle run
+    ];
 
-  return {
-    vertexData,
-    indexData,
-    numVertices: indexData.length,
-  };
+    let num_vertices = index_data.len() as u32;
+    (vertex_data, index_data, num_vertices)
 }
 ```
 
@@ -124,63 +122,83 @@ which we can output from the shader.
 
 We've only got one attribute so our pipeline looks like this
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'just 2d position',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-*          arrayStride: (2) * 4, // (2) floats, 4 bytes each
-*          attributes: [
-*            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-*          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("just 2d position"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+*        array_stride: (2) * 4, // (2) floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+*        attributes: &[
+*          // position
+*          wgpu::VertexAttribute {
+*            shader_location: 0,
+*            offset: 0,
+*            format: wgpu::VertexFormat::Float32x2,
+*          },
+*        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
 We need to setup a buffer for our uniforms
 
-```js
+```rust
   // color, resolution, padding
-*  const uniformBufferSize = (4 + 2) * 4 + 8;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+*  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2) * 4 + 8;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-*  const kColorOffset = 0;
-*  const kResolutionOffset = 4;
-*
-*  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-*  const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
+*  const K_COLOR_OFFSET: usize = 0;
+*  const K_RESOLUTION_OFFSET: usize = 4;
 *
 *  // The color will not change so let's set it once at init time
-*  colorValue.set([Math.random(), Math.random(), Math.random(), 1]);
+*  uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&[
+*    rand(0.0, 1.0),
+*    rand(0.0, 1.0),
+*    rand(0.0, 1.0),
+*    1.0,
+*  ]);
 ```
+
+(In JavaScript you'd make TypedArray *views* into one buffer; in Rust we just
+index one `[f32]` array with the offset constants.)
 
 At render time we need to set the resolution
 
-```js
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
+    // Set the uniform values in our Rust side array
+    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
+        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 Before we run it lets make the background of the canvas look like
@@ -220,33 +238,24 @@ The CSS above should handle both light and dark cases.
 All our examples to this point have used an opaque canvas. To make it transparent,
 so we can see the background we just setup, we need to make a few changes.
 
-First we need to set the `alphaMode` when we configure the canvas to `'premultiplied'`.
-It defaults to `'opaque'`.
+First we need to set the alpha mode of the canvas to premultiplied.
+It defaults to opaque.
 
-```js
-  context.configure({
-    device,
-    format: presentationFormat,
-+    alphaMode: 'premultiplied',
-  });
+```rust
+  let mut app = App::new("WebGPU Translation").await;
+  app.auto_resize = true;
++  app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 ```
 
-Then we need to clear the canvas to 0, 0, 0, 0 in our `GPURenderPassDescriptor`.
-Because the default `clearValue` is 0, 0, 0, 0 we can just delete the line that
-was setting it to something else.
+Then we need to clear the canvas to 0, 0, 0, 0 in our render pass descriptor,
+so the page shows through.
 
-```js
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
--        clearValue: [0.3, 0.3, 0.3, 1],
-        loadOp: 'clear',
-        storeOp: 'store',
+```rust
+      ops: wgpu::Operations {
+-        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.3, g: 0.3, b: 0.3, a: 1.0 }),
++        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+        store: wgpu::StoreOp::Store,
       },
-    ],
-  };
 ```
 
 And with that, here's our F
@@ -311,48 +320,51 @@ struct VSOutput {
 
 We need to add room to our uniform buffer
 
-```js
+```rust
 -  // color, resolution, padding
--  const uniformBufferSize = (4 + 2) * 4 + 8;
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2) * 4 + 8;
 +  // color, resolution, translation
-+  const uniformBufferSize = (4 + 2 + 2) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kResolutionOffset = 4;
-+  const kTranslationOffset = 6;
-
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
-+  const translationValue = uniformValues.subarray(kTranslationOffset, kTranslationOffset + 2);
+  const K_COLOR_OFFSET: usize = 0;
+  const K_RESOLUTION_OFFSET: usize = 4;
++  const K_TRANSLATION_OFFSET: usize = 6;
 ```
 
 And then we need to set a translation at render time
 
-```js
-+  const settings = {
-+    translation: [0, 0],
-+  };
-
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
-+    translationValue.set(settings.translation);
+    // Set the uniform values in our Rust side array
+    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
+        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
++    let translation = [
++        wgpu_fun::setting_f64("translationX", 0.0) as f32,
++        wgpu_fun::setting_f64("translationY", 0.0) as f32,
++    ];
++    uniform_values[K_TRANSLATION_OFFSET..K_TRANSLATION_OFFSET + 2]
++        .copy_from_slice(&translation);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
-Finally let's add a UI so we can adjust the translation
+Finally let's add a UI so we can adjust the translation. The settings panel
+stays in the example's page JavaScript (like the GUI examples in
+[the article on textures](webgpu-textures.html)); its onChange handlers push
+values into the wasm module, which is where `wgpu_fun::setting_f64` above
+reads them from.
 
 ```js
 +import GUI from '../3rdparty/muigui-0.x.module.js';
@@ -363,9 +375,10 @@ Finally let's add a UI so we can adjust the translation
   };
 
 +  const gui = new GUI();
-+  gui.onChange(render);
-+  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-+  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
++  gui.add(settings.translation, '0', 0, 1000).name('translation.x')
++     .onChange(v => wasm.set_setting_num('translationX', v));
++  gui.add(settings.translation, '1', 0, 1000).name('translation.y')
++     .onChange(v => wasm.set_setting_num('translationY', v));
 ```
 
 And now we've added translation
