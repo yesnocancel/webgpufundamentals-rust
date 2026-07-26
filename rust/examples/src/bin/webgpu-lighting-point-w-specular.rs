@@ -357,6 +357,18 @@ mod m4 {
     }
 
     #[rustfmt::skip]
+    pub fn transpose(m: &[f32; 16]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+
+        dst[ 0] = m[ 0];  dst[ 1] = m[ 4];  dst[ 2] = m[ 8];  dst[ 3] = m[12];
+        dst[ 4] = m[ 1];  dst[ 5] = m[ 5];  dst[ 6] = m[ 9];  dst[ 7] = m[13];
+        dst[ 8] = m[ 2];  dst[ 9] = m[ 6];  dst[10] = m[10];  dst[11] = m[14];
+        dst[12] = m[ 3];  dst[13] = m[ 7];  dst[14] = m[11];  dst[15] = m[15];
+
+        dst
+    }
+
+    #[rustfmt::skip]
     pub fn camera_aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
         let mut dst = [0.0; 16];
 
@@ -453,8 +465,17 @@ mod m4 {
     }
 }
 
+mod mat3 {
+    #[rustfmt::skip]
+    pub fn from_mat4(m: &[f32; 16], dst: &mut [f32]) {
+        dst[0] = m[0]; dst[1] = m[1];  dst[ 2] = m[ 2];
+        dst[4] = m[4]; dst[5] = m[5];  dst[ 6] = m[ 6];
+        dst[8] = m[8]; dst[9] = m[9];  dst[10] = m[10];
+    }
+}
+
 async fn run() {
-    let mut app = App::new("WebGPU Lighting - Directional").await;
+    let mut app = App::new("WebGPU Lighting - Point with specular").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -465,9 +486,12 @@ async fn run() {
             source: wgpu::ShaderSource::Wgsl(
                 r#"
       struct Uniforms {
-        matrix: mat4x4f,
+        normalMatrix: mat3x3f,
+        worldViewProjection: mat4x4f,
+        world: mat4x4f,
         color: vec4f,
-        lightDirection: vec3f,
+        lightWorldPosition: vec3f,
+        viewWorldPosition: vec3f,
       };
 
       struct Vertex {
@@ -478,14 +502,30 @@ async fn run() {
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) normal: vec3f,
+        @location(1) surfaceToLight: vec3f,
+        @location(2) surfaceToView: vec3f,
       };
 
       @group(0) @binding(0) var<uniform> uni: Uniforms;
 
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
-        vsOut.position = uni.matrix * vert.position;
-        vsOut.normal = vert.normal;
+        vsOut.position = uni.worldViewProjection * vert.position;
+
+        // Orient the normals and pass to the fragment shader
+        vsOut.normal = uni.normalMatrix * vert.normal;
+
+        // Compute the world position of the surface
+        let surfaceWorldPosition = (uni.world * vert.position).xyz;
+
+        // Compute the vector of the surface to the light
+        // and pass it to the fragment shader
+        vsOut.surfaceToLight = uni.lightWorldPosition - surfaceWorldPosition;
+
+        // Compute the vector of the surface to the light
+        // and pass it to the fragment shader
+        vsOut.surfaceToView = uni.viewWorldPosition - surfaceWorldPosition;
+
         return vsOut;
       }
 
@@ -495,13 +535,20 @@ async fn run() {
         // Normalizing it will make it a unit vector again
         let normal = normalize(vsOut.normal);
 
+        let surfaceToLightDirection = normalize(vsOut.surfaceToLight);
+
         // Compute the light by taking the dot product
-        // of the normal to the light's reverse direction
-        let light = dot(normal, -uni.lightDirection);
+        // of the normal with the direction to the light
+        let light = dot(normal, surfaceToLightDirection);
+
+        let surfaceToViewDirection = normalize(vsOut.surfaceToView);
+        let halfVector = normalize(
+          surfaceToLightDirection + surfaceToViewDirection);
+        let specular = dot(normal, halfVector);
 
         // Lets multiply just the color portion (not the alpha)
         // by the light
-        let color = uni.color.rgb * light;
+        let color = uni.color.rgb * light + specular;
         return vec4f(color, uni.color.a);
       }
     "#
@@ -559,8 +606,9 @@ async fn run() {
             cache: None,
         });
 
-    // matrix + color + light direction
-    const UNIFORM_BUFFER_SIZE: u64 = (16 + 4 + 4) * 4;
+    // normalMatrix + worldViewProjection + world + color + light position +
+    // view position
+    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4) * 4;
     let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("uniforms"),
         size: UNIFORM_BUFFER_SIZE,
@@ -571,9 +619,12 @@ async fn run() {
     let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
     // offsets to the various uniform values in float32 indices
-    const K_MATRIX_OFFSET: usize = 0;
-    const K_COLOR_OFFSET: usize = 16;
-    const K_LIGHT_DIRECTION_OFFSET: usize = 20;
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+    const K_WORLD_OFFSET: usize = 28;
+    const K_COLOR_OFFSET: usize = 44;
+    const K_LIGHT_WORLD_POSITION_OFFSET: usize = 48;
+    const K_VIEW_WORLD_POSITION_OFFSET: usize = 52;
 
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bind group for object"),
@@ -674,13 +725,27 @@ async fn run() {
             // Combine the view and projection matrixes
             let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-            let matrix_value = m4::rotate_y(&view_projection_matrix, rotation);
-            uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
+            // Compute a world matrix directly into the world value
+            let world = m4::rotation_y(rotation);
+            uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world);
+
+            // Combine the viewProjection and world matrices
+            let world_view_projection_value = m4::multiply(&view_projection_matrix, &world);
+            uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
+                .copy_from_slice(&world_view_projection_value);
+
+            // Inverse and transpose it into the worldInverseTranspose value
+            mat3::from_mat4(
+                &m4::transpose(&m4::inverse(&world)),
+                &mut uniform_values[K_NORMAL_MATRIX_OFFSET..K_NORMAL_MATRIX_OFFSET + 12],
+            );
 
             uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
                 .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
-            uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
-                .copy_from_slice(&vec3::normalize([-0.5, -0.7, -1.0]));
+            uniform_values[K_LIGHT_WORLD_POSITION_OFFSET..K_LIGHT_WORLD_POSITION_OFFSET + 3]
+                .copy_from_slice(&[-10.0, 30.0, 100.0]);
+            uniform_values[K_VIEW_WORLD_POSITION_OFFSET..K_VIEW_WORLD_POSITION_OFFSET + 3]
+                .copy_from_slice(&eye);
 
             // upload the uniform values to the uniform buffer
             frame

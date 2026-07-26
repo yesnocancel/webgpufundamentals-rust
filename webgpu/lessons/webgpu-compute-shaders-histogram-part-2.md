@@ -3,8 +3,8 @@ Description: Using an image histogram to adjust video in real time.
 TOC: Image Histogram Part 2
 
 In [the previous article](webgpu-compute-shaders-histogram.html) we covered
-how to make an image histogram in JavaScript and then converted it to use WebGPU
-and went through several steps of optimizing it.
+how to make an image histogram on the CPU in Rust and then converted it to use
+WebGPU and went through several steps of optimizing it.
 
 Let's do a few more things with it
 
@@ -35,102 +35,133 @@ to overlap. On the right we have a luminance histogram like the one we generated
 
 It's a tiny change to generate all 4 at once.
 
-In JavaScript, here's the changes to generate 4 histograms at once
+Here's the changes to our `compute_histogram` function to generate 4 histograms
+at once
 
-```js
-function computeHistogram(numBins, imgData) {
-  const {width, height, data} = imgData;
--  const bins = new Array(numBins).fill(0);
-+  const bins = new Array(numBins * 4).fill(0);
-  for (let y = 0; y < height; ++y) {
-    for (let x = 0; x < width; ++x) {
-      const offset = (y * width + x) * 4;
+```rust
+fn compute_histogram(num_bins: usize, img_data: &ImageData) -> Vec<u32> {
+  let ImageData { width, height, data } = img_data;
+-  let mut bins = vec![0u32; num_bins];
++  let mut bins = vec![0u32; num_bins * 4];
+  for y in 0..*height {
+    for x in 0..*width {
+      let offset = ((y * width + x) * 4) as usize;
 
--      const r = data[offset + 0] / 255;
--      const g = data[offset + 1] / 255;
--      const b = data[offset + 2] / 255;
--      const v = srgbLuminance(r, g, b);
+      let r = data[offset] as f32 / 255.0;
+      let g = data[offset + 1] as f32 / 255.0;
+      let b = data[offset + 2] as f32 / 255.0;
+-      let v = srgb_luminance(r, g, b);
 -
--      const bin = Math.min(numBins - 1, v * numBins) | 0;
--      ++bins[bin];
-
-+       for (const ch = 0; ch < 4; ++ch) {
-+          const v = ch < 3
-+             ? data[offset + ch] / 255
-+             : srgbLuminance(data[offset + 0] / 255,
-+                             data[offset + 1] / 255,
-+                             data[offset + 2] / 255);
-+          const bin = Math.min(numBins - 1, v * numBins) | 0;
-+          ++bins[bin * 4 + ch];
-+       }
+-      let bin = (v * num_bins as f32) as usize;
+-      bins[bin.min(num_bins - 1)] += 1;
++      let channels = [r, g, b, srgb_luminance(r, g, b)];
++      for (ch, v) in channels.iter().enumerate() {
++        let bin = ((v * num_bins as f32) as usize).min(num_bins - 1);
++        bins[bin * 4 + ch] += 1;
++      }
     }
   }
-  return bins;
+  bins
 }
 ```
 
 This will generate the histograms interleaved, r, g, b, l, r, g, b, l, r, g, b, l ....
 
-We can update the code to render them like this
+Now we need to update the code that draws them. The JavaScript version draws
+with the canvas 2D API. It picks a color for each channel and sets
+`globalCompositeOperation = 'screen'` so that overlapping bars add up like
+light. Our `histogram_to_image` function generates the graph as an `ImageData`
+on the CPU, so we do the same 'screen' compositing ourselves.
 
-```js
-function drawHistogram(histogram, numEntries, channels, height = 100) {
--  const numBins = histogram.length;
--  const max = Math.max(...histogram);
--  const scale = Math.max(1 / max);//, 0.2 * numBins / numEntries);
+```rust
++// Like the JS version's drawHistogram: draws the chosen channels with
++// 'screen' compositing (red, green, blue, white for luminance).
+-fn histogram_to_image(histogram: &[u32], num_entries: u32, height: usize) -> ImageData {
+-  let num_bins = histogram.len();
+-  let max = *histogram.iter().max().unwrap();
+-  let scale = (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32);
++fn histogram_to_image(
++  histogram: &[u32],
++  num_entries: u32,
++  channels: &[usize],
++  height: usize,
++) -> ImageData {
 +  // find the highest value for each channel
-+  const numBins = histogram.length / 4;
-+  const max = [0, 0, 0, 0];
-+  histogram.forEach((v, ndx) => {
-+    const ch = ndx % 4;
-+    max[ch] = Math.max(max[ch], v);
-+  });
-+  const scale = max.map(max => Math.max(1 / max, 0.2 * numBins / numEntries));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = numBins;
-  canvas.height = height;
-  document.body.appendChild(canvas);
-  const ctx = canvas.getContext('2d');
-
-+  const colors = [
-+    'rgb(255, 0, 0)',
-+    'rgb(0, 255, 0)',
-+    'rgb(0, 0, 255)',
-+    'rgb(255, 255, 255)',
++  let num_bins = histogram.len() / 4;
++  let mut max = [0u32; 4];
++  for (ndx, v) in histogram.iter().enumerate() {
++    let ch = ndx % 4;
++    max[ch] = max[ch].max(*v);
++  }
++  let scale =
++    max.map(|max| (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32));
++
++  let colors: [[f32; 3]; 4] = [
++    [1.0, 0.0, 0.0],
++    [0.0, 1.0, 0.0],
++    [0.0, 0.0, 1.0],
++    [1.0, 1.0, 1.0],
 +  ];
 
--  ctx.fillStyle = '#fff';
-+  ctx.globalCompositeOperation = 'screen';
-
-  for (let x = 0; x < numBins; ++x) {
--    const v = histogram[x] * scale * height;
--    ctx.fillRect(x, height - v, 1, v);
-+    const offset = x * 4;
-+    for (const ch of channels) {
-+      const v = histogram[offset + ch] * scale[ch] * height;
-+      ctx.fillStyle = colors[ch];
-+      ctx.fillRect(x, height - v, 1, v);
+  let mut data = vec![0u8; num_bins * height * 4];
+  for x in 0..num_bins {
+-    let v = (histogram[x] as f32 * scale * height as f32) as usize;
+-    for y in (height - v.min(height))..height {
+-      let o = (y * num_bins + x) * 4;
+-      data[o..o + 4].copy_from_slice(&[255, 255, 255, 255]);
+-    }
++    let offset = x * 4;
++    for y in 0..height {
++      // 'screen' composite the channels whose bar covers this pixel
++      let mut acc = [0.0f32; 3];
++      for &ch in channels {
++        let v = (histogram[offset + ch] as f32 * scale[ch] * height as f32) as usize;
++        if height - y <= v {
++          for c in 0..3 {
++            acc[c] = 1.0 - (1.0 - acc[c]) * (1.0 - colors[ch][c]);
++          }
++        }
++      }
++      let o = (y * num_bins + x) * 4;
++      data[o] = (acc[0] * 255.0) as u8;
++      data[o + 1] = (acc[1] * 255.0) as u8;
++      data[o + 2] = (acc[2] * 255.0) as u8;
++      data[o + 3] = 255;
 +    }
+  }
+  ImageData {
+    data,
+    width: num_bins as u32,
+    height: height as u32,
   }
 }
 ```
 
+There's now a per channel `max` and per channel `scale` since each channel's
+histogram gets its own scale. 'screen' compositing is
+`1 - (1 - dst) * (1 - src)`: where only the red bar covers a pixel we get pure
+red, where the red and green bars overlap we get yellow, and where all 3 color
+bars overlap we get white.
+
 And then call that function twice, once to render the
 color histograms and once for the luminance histogram
 
-```js
-  const histogram = computeHistogram(numBins, imgData);
+```rust
+  let histogram = compute_histogram(num_bins, &img);
 
-  showImageBitmap(imgBitmap);
-
+  let num_entries = texture.width() * texture.height();
+-  let histogram_image = histogram_to_image(&histogram, num_entries, 100);
+-  let histogram_texture = create_texture_from_source(&app.device, &app.queue, &histogram_image);
 +  // draw the red, green, and blue channels
-  const numEntries = imgData.width * imgData.height;
--  drawHistogram(histogram, numEntries);
-+  drawHistogram(histogram, numEntries, [0, 1, 2]);
++  let color_histogram = create_texture_from_source(
++    &app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[0, 1, 2], 100));
 +
 +  // draw the luminosity channel
-+  drawHistogram(histogram, numEntries, [3]);
++  let luminosity_histogram = create_texture_from_source(
++    &app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[3], 100));
+
+-  show_images(app, vec![texture, histogram_texture]);
++  show_images(app, vec![texture, color_histogram, luminosity_histogram]);
 ```
 
 And now we get these results.
@@ -174,7 +205,6 @@ fn srgbLuminance(color: vec3f) -> f32 {
     }
   }
 }
-
 ```
 
 We needed to make room for all 4 channels by changing bins
@@ -194,11 +224,14 @@ the correct bin.
 The only other change we need is allocating 4x the memory
 for our buffer
 
-```js
-  const histogramBuffer = device.createBuffer({
--    size: numBins * 4, // 256 entries * 4 bytes per (u32)
-+    size: 256 * 4 * 4, // 256 entries * 4 (rgba) * 4 bytes per (u32)
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+```rust
+  let num_bins = 256u32;
+  let histogram_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+-    size: (num_bins * 4) as u64, // 256 entries * 4 bytes per (u32)
++    size: (num_bins * 4 * 4) as u64, // 256 entries * 4 (rgba) * 4 bytes per (u32)
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    mapped_at_creation: false,
   });
 ```
 
@@ -225,12 +258,12 @@ fn srgbLuminance(color: vec3f) -> f32 {
 
 @compute @workgroup_size(chunkWidth, chunkHeight, 1)
 fn cs(
+  @builtin(global_invocation_id) global_invocation_id: vec3u,
   @builtin(workgroup_id) workgroup_id: vec3u,
   @builtin(local_invocation_id) local_invocation_id: vec3u,
 ) {
   let size = textureDimensions(ourTexture, 0);
-  let position = workgroup_id.xy * vec2u(chunkWidth, chunkHeight) + 
-                 local_invocation_id.xy;
+  let position = global_invocation_id.xy;
   if (all(position < size)) {
     let numBins = f32(chunkSize);
     let lastBinIndex = u32(numBins - 1);
@@ -293,17 +326,21 @@ struct Uniforms {
 
 Like the previous example, we need to increase the buffer sizes
 
-```js
-  const chunksBuffer = device.createBuffer({
--    size: numChunks * chunkSize * 4,  // 4 bytes per (u32)
-+    size: numChunks * chunkSize * 4 * 4,  // 16 bytes per (vec4u)
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+```rust
+  let chunks_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+-    size: (num_chunks * chunk_size * 4) as u64, // 4 bytes per (u32)
++    size: (num_chunks * chunk_size * 4 * 4) as u64, // 16 bytes per (vec4u)
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    mapped_at_creation: false,
   });
 
-  const resultBuffer = device.createBuffer({
--    size: chunkSize * 4,
-+    size: chunkSize * 4 * 4,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+-    size: (chunk_size * 4) as u64,
++    size: (chunk_size * 4 * 4) as u64,
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
   });
 ```
 
@@ -330,11 +367,11 @@ article.
 
 ## Drawing the histogram on the GPU
 
-Let's draw the histogram on the GPU. In JavaScript we used the
-canvas 2d API to draw a 1 by height rectangle for each bin which
-was very easy. We could do that using WebGPU as well but I think
-there's a better approach for the particular issue of drawing a
-histogram.
+Let's draw the histogram on the GPU. So far we've read the results back to the
+CPU and generated the graph as an `ImageData` in `histogram_to_image`, one
+1-by-height bar per bin, which was very easy. We could keep doing that but
+I think there's a better approach for the particular issue of drawing a
+histogram with the GPU.
 
 Let's instead just draw a rectangle.
 Drawing rectangles we've covered in many places. For example, most of
@@ -394,8 +431,8 @@ The first part is computing which bin based off the horizontal texture coordinat
 ```
 
 The next part is getting the heights for all 4 channels.
-We're multiplying by `scale` just like we did in
-JavaScript. We'll need to supply that later.
+We're multiplying by `scale` just like we did on the
+CPU. We'll need to supply that later.
 
 ```wgsl
   let heights = vec4f(bins[bin]) * scale;
@@ -411,8 +448,9 @@ higher than the texture coordinate.
 
 The next part will then select values from `uni.channelMult` based on those 4 bools and then add
 the 4 values.
-Being able to pass in `uni.channelMult` is the similar to what we did in
-the JavaScript, letting us choose which channels get drawn. For example
+Being able to pass in `uni.channelMult` is the similar to what we did with
+the `channels` argument of `histogram_to_image`, letting us choose which
+channels get drawn. For example
 if we set `channelMult` to `1, 2, 4, 0` then we'll get the red, green,
 and blue histograms.
 
@@ -426,17 +464,18 @@ This last part looks up one of our 16 colors.
   return uni.colors[ndx];
 ```
 
-We also need a shader to compute `scale`. In JavaScript we
+We also need a shader to compute `scale`. On the CPU we
 did this
 
-```js
-  const numBins = histogram.length / 4;
-  const max = [0, 0, 0, 0];
-  histogram.forEach((v, ndx) => {
-    const ch = ndx % 4;
-    max[ch] = Math.max(max[ch], v);
-  });
-  const scale = max.map(max => Math.max(1 / max, 0.2 * numBins / numEntries));
+```rust
+  let num_bins = histogram.len() / 4;
+  let mut max = [0u32; 4];
+  for (ndx, v) in histogram.iter().enumerate() {
+    let ch = ndx % 4;
+    max[ch] = max[ch].max(*v);
+  }
+  let scale =
+    max.map(|max| (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32));
 ```
 
 To do the same thing in a compute shaders we could do something like this
@@ -459,7 +498,7 @@ To do the same thing in a compute shaders we could do something like this
 ```
 
 Note that the only reason we pass in `ourTexture` is to get its size so
-we can compute `numEntries` where as in JavaScript we passed in `numEntries`.
+we can compute `numEntries` where as on the CPU we passed in `num_entries`.
 We could also use a uniform to pass in `numEntries` but then we'd have to
 create a uniform buffer, update it with the value for `numEntries`, bind
 it, etc... It seemed easier to just reference the texture itself.
@@ -472,22 +511,18 @@ it was around 0.1ms, at least on one machine.
 
 So, what's left to do is put the parts together
 
-Since we're going to
-draw to the canvas with the GPU we need to get the
-preferred canvas format
-
-```js
-  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-
-```
+Since we're going to draw with the GPU we need the canvas format but our
+`App` helper already provides that as `app.format` so, unlike the JavaScript
+version which calls `navigator.gpu.getPreferredCanvasFormat()`, there's
+nothing new to look up.
 
 We need to create the shader modules with the 2 shaders above
 and create pipelines for each one. 
 
-```js
-  const scaleModule = device.createShaderModule({
-    label: 'histogram scale shader',
-    code: /* wgsl */ `
+```rust
+  let scale_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("histogram scale shader"),
+    source: wgpu::ShaderSource::Wgsl(r#"
       @group(0) @binding(0) var<storage, read> bins: array<vec4u>;
       @group(0) @binding(1) var<storage, read_write> scale: vec4f;
       @group(0) @binding(2) var ourTexture: texture_2d<f32>;
@@ -495,6 +530,7 @@ and create pipelines for each one.
       @compute @workgroup_size(1, 1, 1) fn cs() {
         let size = textureDimensions(ourTexture, 0);
         let numEntries = f32(size.x * size.y);
+
         var m = vec4u(0);
         let numBins = arrayLength(&bins);
         for (var i = 0u ; i < numBins; i++) {
@@ -502,12 +538,12 @@ and create pipelines for each one.
         }
         scale = max(1.0 / vec4f(m), vec4f(0.2 * f32(numBins) / numEntries));
       }
-    `,
+    "#.into()),
   });
 
-  const drawHistogramModule = device.createShaderModule({
-    label: 'draw histogram shader',
-    code: /* wgsl */ `
+  let draw_histogram_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("draw histogram shader"),
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -527,12 +563,12 @@ and create pipelines for each one.
         @builtin(vertex_index) vertexIndex : u32
       ) -> OurVertexShaderOutput {
         let pos = array(
-          // 1st triangle
+
           vec2f( 0.0,  0.0),  // center
           vec2f( 1.0,  0.0),  // right, center
           vec2f( 0.0,  1.0),  // center, top
 
-          // 2nd triangle
+          // 2st triangle
           vec2f( 0.0,  1.0),  // center, top
           vec2f( 1.0,  0.0),  // right, center
           vec2f( 1.0,  1.0),  // right, top
@@ -557,27 +593,38 @@ and create pipelines for each one.
         let ndx = dot(select(vec4u(0), uni.channelMult, bits), vec4u(1));
         return uni.colors[ndx];
       }
-    `,
+    "#.into()),
   });
 
-  const scalePipeline = device.createComputePipeline({
-    label: 'scale',
-    layout: 'auto',
-    compute: {
-      module: scaleModule,
-    },
+  let scale_pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    label: Some("scale"),
+    layout: None,
+    module: &scale_module,
+    entry_point: None,
+    compilation_options: Default::default(),
+    cache: None,
   });
 
-  const drawHistogramPipeline = device.createRenderPipeline({
-    label: 'draw histogram',
-    layout: 'auto',
-    vertex: {
-      module: drawHistogramModule,
+  let draw_histogram_pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("draw histogram"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &draw_histogram_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
-      module: drawHistogramModule,
-      targets: [{ format: presentationFormat }],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &draw_histogram_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
@@ -585,38 +632,57 @@ We no longer need the result buffer since we're not going
 to read the values back but we need a scale buffer to
 store the scale we're going to compute.
 
-```js
--  const resultBuffer = device.createBuffer({
--    size: chunkSize * 4 * 4,
--    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+```rust
+-  let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+-    label: None,
+-    size: (chunk_size * 4 * 4) as u64,
+-    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+-    mapped_at_creation: false,
 -  });
-+  const scaleBuffer = device.createBuffer({
++  let scale_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
++    label: Some("scale buffer"),
 +    size: 4 * 4,
-+    usage: GPUBufferUsage.STORAGE,
++    usage: wgpu::BufferUsages::STORAGE,
++    mapped_at_creation: false,
 +  });
 ```
 
 We need a bind group for our scale pipeline that has the chunks,
-the scale buffer, and the texture
+the scale buffer, and the texture. For the chunks we don't want to
+bind the whole buffer, just the first chunk, so we make a binding
+resource with an explicit size. We'll `.clone()` it because we'll
+use it again below when we draw.
 
-```js
-  const scaleBindGroup = device.createBindGroup({
-    layout: scalePipeline.getBindGroupLayout(0),
-    entries: [
-      {
+```rust
+  let chunks_binding = wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+    buffer: &chunks_buffer,
+    offset: 0,
+    size: wgpu::BufferSize::new((chunk_size * 4 * 4) as u64),
+  });
+
+  let scale_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("scale bindGroup"),
+    layout: &scale_pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
         binding: 0,
-        resource: {
-          buffer: chunksBuffer,
-          size: chunkSize * 4 * 4,
-        },
+        resource: chunks_binding.clone(),
       },
-      { binding: 1, resource: scaleBuffer },
-      { binding: 2, resource: texture },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: scale_buffer.as_entire_binding(),
+      },
+      wgpu::BindGroupEntry {
+        binding: 2,
+        resource: wgpu::BindingResource::TextureView(
+          &texture.create_view(&Default::default()),
+        ),
+      },
     ],
   });
 ```
 
-Above we set the size of the binding for the `chunksBuffer`
+Above we set the size of the binding for the `chunks_buffer`
 to just the size of the first chunk. This way, in the
 shader this code
 
@@ -628,51 +694,58 @@ shader this code
         let numBins = arrayLength(&bins);
 ```
 
-will get the correct value. If we didn't specific the size
-then the entire `chunksBuffer` size would be available and
+will get the correct value. If we didn't specify the size
+then the entire `chunks_buffer` size would be available and
 `numBins` would be calculated from all of the chunks, not just
 the first one.
 
 Now, after we've reduced the chunks into one chunk we can
 run our scale compute shader to compute the scale and,
-since we longer have a result buffer we no longer need to copy
-the first chunk into it, nor do we need to map the result buffer,
-nor do we need to pass `numEntries` since we were using that
+since we no longer have a result buffer we no longer need to copy
+the first chunk into it, nor do we need to map it,
+nor do we need to pass `num_entries` since we were using that
 to compute a scale but we've already done that. We also
 are not going to pass `histogram` which is the data we got
-from the result buffer. Our data is already in the `chunksBuffer`.
+from the result buffer. Our data is already in the `chunks_buffer`.
 
 
-```js
-+  // Compute scales for the channels
-+  pass.setPipeline(scalePipeline);
-+  pass.setBindGroup(0, scaleBindGroup);
-+  pass.dispatchWorkgroups(1);
-  pass.end();
+```rust
++    // compute scales for the channels
++    pass.set_pipeline(&scale_pipeline);
++    pass.set_bind_group(0, &scale_bind_group, &[]);
++    pass.dispatch_workgroups(1, 1, 1);
+  }
 
--  encoder.copyBufferToBuffer(chunksBuffer, 0, resultBuffer, 0, resultBuffer.size);
-  const commandBuffer = encoder.finish();
-  device.queue.submit([commandBuffer]);
+-  encoder.copy_buffer_to_buffer(&chunks_buffer, 0, &result_buffer, 0, result_buffer.size());
+  app.queue.submit([encoder.finish()]);
 
--  await resultBuffer.mapAsync(GPUMapMode.READ);
--  const histogram = new Uint32Array(resultBuffer.getMappedRange());
+-  wgpu_fun::map_async(&app.device, &result_buffer, wgpu::MapMode::Read).await;
+-  let histogram: Vec<u32> = {
+-    let data = result_buffer.slice(..).get_mapped_range().unwrap();
+-    bytemuck::cast_slice(&data).to_vec()
+-  };
+-  result_buffer.unmap();
 
-  showImageBitmap(imgBitmap);
-
+-  let num_entries = texture.width() * texture.height();
   // draw the red, green, and blue channels
--  const numEntries = texture.width * texture.height;
--  drawHistogram(histogram, numEntries, [0, 1, 2]);
-+  drawHistogram([0, 1, 2]);
+-  let color_histogram = create_texture_from_source(
+-    &app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[0, 1, 2], 100));
++  let color_histogram = draw_histogram(&[0, 1, 2], 100);
 
   // draw the luminosity channel
--  drawHistogram(histogram, numEntries, [3]);
-+  drawHistogram([3]);
+-  let luminosity_histogram = create_texture_from_source(
+-    &app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[3], 100));
++  let luminosity_histogram = draw_histogram(&[3], 100);
 
--  resultBuffer.unmap();
+  show_images(app, vec![texture, color_histogram, luminosity_histogram]);
 ```
 
-Now we need to update our `drawHistogram` function to render
-with the GPU.
+Now we need to write that `draw_histogram` function, which replaces
+`histogram_to_image` and renders with the GPU. The JavaScript version
+creates one canvas per histogram and renders into it. We have a single
+canvas so instead each histogram renders into its own texture and we
+composite those textures into our one canvas with `show_images`, exactly
+like we've been doing with the `ImageData` based textures.
 
 First we need to make a uniform buffer to pass our uniforms.
 For reference here's the uniforms from the shaders we'll draw
@@ -689,49 +762,53 @@ struct Uniforms {
 So, here's the code to create a buffer for and fill out the
 channelMult and colors.
 
-```js
-  function drawHistogram(channels, height = 100) {
-    const numBins = chunkSize;
+```rust
+  // Draw a histogram entirely on the GPU into its own texture.
+  let draw_histogram = |channels: &[usize], height: u32| -> wgpu::Texture {
+    let num_bins = chunk_size;
 
     //  matrix: mat4x4f;
     //  colors: array<vec4f, 16>;
     //  channelMult; vec4u,
-    const uniformValuesAsF32 = new Float32Array(16 + 64 + 4 + 4);
-    const uniformValuesAsU32 = new Uint32Array(uniformValuesAsF32.buffer);
-    const uniformBuffer = device.createBuffer({
-      label: 'draw histogram uniform buffer',
-      size: uniformValuesAsF32.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    let mut uniform_values_f32 = [0.0f32; 16 + 64 + 4 + 4];
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("draw histogram uniform buffer"),
+      size: (uniform_values_f32.len() * 4) as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
-    const subpart = (view, offset, length) => view.subarray(offset, offset + length);
-    const matrix = subpart(uniformValuesAsF32, 0, 16);
-    const colors = subpart(uniformValuesAsF32, 16, 64);
-    const channelMult = subpart(uniformValuesAsU32, 16 + 64, 4);
-    channelMult.set(range(4, i => channels.indexOf(i) >= 0 ? 2 ** i : 0));
-    colors.set([
-      [0, 0, 0, 1],
-      [1, 0, 0, 1],
-      [0, 1, 0, 1],
-      [1, 1, 0, 1],
-      [0, 0, 1, 1],
-      [1, 0, 1, 1],
-      [0, 1, 1, 1],
-      [0.5, 0.5, 0.5, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-      [1, 1, 1, 1],
-    ].flat());
-    const range = (i, fn) => new Array(i).fill(0).map((_, i) => fn(i));
-    channelMult.set(range(4, i => channels.indexOf(i) >= 0 ? 2 ** i : 0));
+    uniform_values_f32[16..16 + 64].copy_from_slice(&[
+      0.0, 0.0, 0.0, 1.0,
+      1.0, 0.0, 0.0, 1.0,
+      0.0, 1.0, 0.0, 1.0,
+      1.0, 1.0, 0.0, 1.0,
+      0.0, 0.0, 1.0, 1.0,
+      1.0, 0.0, 1.0, 1.0,
+      0.0, 1.0, 1.0, 1.0,
+      0.5, 0.5, 0.5, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+      1.0, 1.0, 1.0, 1.0,
+    ]);
+    let channel_mult: [u32; 4] =
+      std::array::from_fn(|i| if channels.contains(&i) { 2u32.pow(i as u32) } else { 0 });
+    uniform_values_f32[16 + 64..16 + 64 + 4]
+      .copy_from_slice(bytemuck::cast_slice(&channel_mult));
 ```
+
+The JavaScript version makes typed-array views into one `ArrayBuffer`
+for `matrix`, `colors`, and `channelMult`. In Rust we just slice one
+`[f32]` array at the same offsets, using `bytemuck` to store the `u32`
+`channelMult` values in it.
 
 We also need to compute a matrix using matrix math like we covered
 in [the series of articles about matrix math](webgpu-translation.html).
+We use `glam` where the JavaScript version uses its `mat4` helpers.
 
 In particular, our shader has a hard coded unit quad that goes
 from 0 to 1 in X and Y. If we scale it by 2 in both X and Y and
@@ -740,67 +817,88 @@ unit quad is common as then we can just use a little matrix
 math to draw rectangles in any position and orientation without
 having to make special vertex data.
 
-```js
-    mat4.identity(matrix);
-    mat4.translate(matrix, [-1, -1, 0], matrix);
-    mat4.scale(matrix, [2, 2, 1], matrix);
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValuesAsF32);
+```rust
+    // matrix: cover clip space
+    let matrix = glam::Mat4::from_translation(glam::Vec3::new(-1.0, -1.0, 0.0))
+      * glam::Mat4::from_scale(glam::Vec3::new(2.0, 2.0, 1.0));
+    uniform_values_f32[0..16].copy_from_slice(&matrix.to_cols_array());
+    app.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values_f32));
 ```
 
-We need a bindGroup for all of this
+We need a bindGroup for all of this. Note how we reuse the
+`chunks_binding` from above so the shader only sees the first chunk.
 
-```js
-    const bindGroup = device.createBindGroup({
-      layout: drawHistogramPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: chunksBuffer, size: chunkSize * 4 * 4 }},
-        { binding: 1, resource: uniformBuffer  },
-        { binding: 2, resource: scaleBuffer },
+```rust
+    let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &draw_histogram_pipeline.get_bind_group_layout(0),
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: chunks_binding.clone(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: uniform_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: scale_buffer.as_entire_binding(),
+        },
       ],
     });
 ```
 
-We need a canvas configured for WebGPU
+The JavaScript version creates a canvas configured for WebGPU here.
+Instead we create the texture this histogram will be rendered into.
 
-```js
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('webgpu');
-    context.configure({
-      device,
-      format: presentationFormat,
+```rust
+    // In the JS version each histogram gets its own canvas; we render
+    // into a texture and composite them into our one canvas below.
+    let target = app.device.create_texture(&wgpu::TextureDescriptor {
+      label: None,
+      size: wgpu::Extent3d {
+        width: num_bins,
+        height,
+        depth_or_array_layers: 1,
+      },
+      format: app.format,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      view_formats: &[],
     });
-    canvas.width = numBins;
-    canvas.height = height;
-    document.body.appendChild(canvas);
 ```
 
 and finally we can render
 
-```js
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    const renderPassDescriptor = {
-      label: 'our basic canvas renderPass',
-      colorAttachments: [
-        {
-          view: context.getCurrentTexture().createView(),
-          clearValue: [0.3, 0.3, 0.3, 1],
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    };
-
-    const encoder = device.createCommandEncoder({ label: 'render histogram' });
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(drawHistogramPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(6);  // call our vertex shader 6 times
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+```rust
+    let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+      label: Some("render histogram"),
+    });
+    {
+      let view = target.create_view(&Default::default());
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.3, g: 0.3, b: 0.3, a: 1.0 }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
+      pass.set_pipeline(&draw_histogram_pipeline);
+      pass.set_bind_group(0, &bind_group, &[]);
+      pass.draw(0..6, 0..1); // call our vertex shader 6 times
+    }
+    app.queue.submit([encoder.finish()]);
+    target
+  };
 ```
 
 And with all of that we're rendering on the GPU
@@ -810,6 +908,17 @@ And with all of that we're rendering on the GPU
 Let's do one last thing, let's get a histogram of video.
 We're effectively going to merge the example from the
 [the article on using external video](webgpu-textures-external-video.html) and our previous example.
+
+<div class="warn">
+Video decoding is provided by the browser and, as covered in
+<a href="webgpu-textures-external-video.html">the article on using external
+video</a>, <code>importExternalTexture</code> is a browser-only API that wgpu
+does not expose. So this final section is about the browser path: the code
+shown is the original JavaScript version of the examples above (of which our
+Rust examples are translations) and the example below runs that JavaScript.
+The histogram computing and drawing techniques are exactly the ones we just
+wrote; only the video import has no native equivalent.
+</div>
 
 We need to update our HTML and CSS to match the video example
 
@@ -1131,8 +1240,8 @@ There are several things you can do with a histogram
 * Posterize using [histogram thresholding](https://www.google.com/search?q=histogram+thresholding)
 
 And a bunch of other techniques. Maybe we can cover some later.
-My hope is these have been useful examples. We went from some JavaScript
-that computed a histogram and JavaScript that drew a histogram
+My hope is these have been useful examples. We went from CPU code
+that computed a histogram and CPU code that drew a histogram
 to having all the work done on the GPU, including rendering
 that is hopefully fast enough to run in real time.
 

@@ -454,7 +454,7 @@ mod m4 {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Lighting - Directional").await;
+    let mut app = App::new("WebGPU Lighting - Directional w/world").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -465,7 +465,8 @@ async fn run() {
             source: wgpu::ShaderSource::Wgsl(
                 r#"
       struct Uniforms {
-        matrix: mat4x4f,
+        world: mat4x4f,
+        worldViewProjection: mat4x4f,
         color: vec4f,
         lightDirection: vec3f,
       };
@@ -484,8 +485,11 @@ async fn run() {
 
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
-        vsOut.position = uni.matrix * vert.position;
-        vsOut.normal = vert.normal;
+        vsOut.position = uni.worldViewProjection * vert.position;
+
+        // Orient the normals and pass to the fragment shader
+        vsOut.normal = (uni.world * vec4f(vert.normal, 0)).xyz;
+
         return vsOut;
       }
 
@@ -559,8 +563,8 @@ async fn run() {
             cache: None,
         });
 
-    // matrix + color + light direction
-    const UNIFORM_BUFFER_SIZE: u64 = (16 + 4 + 4) * 4;
+    // world + worldViewProjection + color + light direction
+    const UNIFORM_BUFFER_SIZE: u64 = (16 + 16 + 4 + 4) * 4;
     let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("uniforms"),
         size: UNIFORM_BUFFER_SIZE,
@@ -571,9 +575,10 @@ async fn run() {
     let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
     // offsets to the various uniform values in float32 indices
-    const K_MATRIX_OFFSET: usize = 0;
-    const K_COLOR_OFFSET: usize = 16;
-    const K_LIGHT_DIRECTION_OFFSET: usize = 20;
+    const K_WORLD_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 16;
+    const K_COLOR_OFFSET: usize = 32;
+    const K_LIGHT_DIRECTION_OFFSET: usize = 36;
 
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bind group for object"),
@@ -674,8 +679,14 @@ async fn run() {
             // Combine the view and projection matrixes
             let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-            let matrix_value = m4::rotate_y(&view_projection_matrix, rotation);
-            uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
+            // Compute a world matrix directly into the world value
+            let world_value = m4::rotation_y(rotation);
+            uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world_value);
+
+            // Combine the viewProjection and world matrices
+            let world_view_projection_value = m4::multiply(&view_projection_matrix, &world_value);
+            uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
+                .copy_from_slice(&world_view_projection_value);
 
             uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
                 .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green

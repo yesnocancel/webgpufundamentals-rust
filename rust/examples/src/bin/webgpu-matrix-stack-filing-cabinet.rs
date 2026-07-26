@@ -1,97 +1,50 @@
 use wgpu_fun::{App, Frame, RenderMode};
 
 #[rustfmt::skip]
-fn create_f_vertices() -> (Vec<f32>, u32) {
+fn create_cube_vertices() -> (Vec<f32>, u32) {
     let positions: Vec<f32> = vec![
-        // left column
-        -50.0,  75.0,  15.0,
-        -20.0,  75.0,  15.0,
-        -50.0, -75.0,  15.0,
-        -20.0, -75.0,  15.0,
+        // left
+        0.0, 0.0,  0.0,
+        0.0, 0.0, -1.0,
+        0.0, 1.0,  0.0,
+        0.0, 1.0, -1.0,
 
-        // top rung
-        -20.0,  75.0,  15.0,
-         50.0,  75.0,  15.0,
-        -20.0,  45.0,  15.0,
-         50.0,  45.0,  15.0,
-
-        // middle rung
-        -20.0,  15.0,  15.0,
-         20.0,  15.0,  15.0,
-        -20.0, -15.0,  15.0,
-         20.0, -15.0,  15.0,
-
-        // left column back
-        -50.0,  75.0, -15.0,
-        -20.0,  75.0, -15.0,
-        -50.0, -75.0, -15.0,
-        -20.0, -75.0, -15.0,
-
-        // top rung back
-        -20.0,  75.0, -15.0,
-         50.0,  75.0, -15.0,
-        -20.0,  45.0, -15.0,
-         50.0,  45.0, -15.0,
-
-        // middle rung back
-        -20.0,  15.0, -15.0,
-         20.0,  15.0, -15.0,
-        -20.0, -15.0, -15.0,
-         20.0, -15.0, -15.0,
+        // right
+        1.0, 0.0,  0.0,
+        1.0, 0.0, -1.0,
+        1.0, 1.0,  0.0,
+        1.0, 1.0, -1.0,
     ];
 
     let indices: Vec<u32> = vec![
-         0,  2,  1,    2,  3,  1,   // left column
-         4,  6,  5,    6,  7,  5,   // top run
-         8, 10,  9,   10, 11,  9,   // middle run
-
-        12, 13, 14,   14, 13, 15,   // left column back
-        16, 17, 18,   18, 17, 19,   // top run back
-        20, 21, 22,   22, 21, 23,   // middle run back
-
-         0,  5, 12,   12,  5, 17,   // top
-         5,  7, 17,   17,  7, 19,   // top rung right
-         6, 18,  7,   18, 19,  7,   // top rung bottom
-         6,  8, 18,   18,  8, 20,   // between top and middle rung
-         8,  9, 20,   20,  9, 21,   // middle rung top
-         9, 11, 21,   21, 11, 23,   // middle rung right
-        10, 22, 11,   22, 23, 11,   // middle rung bottom
-        10,  3, 22,   22,  3, 15,   // stem right
-         2, 14,  3,   14, 15,  3,   // bottom
-         0, 12,  2,   12, 14,  2,   // left
+         0,  2,  1,    2,  3,  1,   // left
+         4,  5,  6,    6,  5,  7,   // right
+         0,  4,  2,    2,  4,  6,   // front
+         1,  3,  5,    5,  3,  7,   // back
+         0,  1,  4,    4,  1,  5,   // bottom
+         2,  6,  3,    3,  6,  7,   // top
     ];
 
-    let normals: Vec<f32> = vec![
-         0.0,  0.0,  1.0,  // left column front
-         0.0,  0.0,  1.0,  // top rung front
-         0.0,  0.0,  1.0,  // middle rung front
-
-         0.0,  0.0, -1.0,  // left column back
-         0.0,  0.0, -1.0,  // top rung back
-         0.0,  0.0, -1.0,  // middle rung back
-
-         0.0,  1.0,  0.0,  // top
-         1.0,  0.0,  0.0,  // top rung right
-         0.0, -1.0,  0.0,  // top rung bottom
-         1.0,  0.0,  0.0,  // between top and middle rung
-         0.0,  1.0,  0.0,  // middle rung top
-         1.0,  0.0,  0.0,  // middle rung right
-         0.0, -1.0,  0.0,  // middle rung bottom
-         1.0,  0.0,  0.0,  // stem right
-         0.0, -1.0,  0.0,  // bottom
-        -1.0,  0.0,  0.0,  // left
+    let quad_colors: Vec<u8> = vec![
+        200,  70, 120,  // left column front
+         80,  70, 200,  // left column back
+         70, 200, 210,  // top
+        160, 160, 220,  // top rung right
+         90, 130, 110,  // top rung bottom
+        200, 200,  70,  // between top and middle rung
     ];
 
     let num_vertices = indices.len() as u32;
-    let mut vertex_data = vec![0.0f32; indices.len() * 6]; // xyz + normal
+    let mut vertex_data = vec![0.0f32; indices.len() * 4]; // xyz + color
     for (i, index) in indices.iter().enumerate() {
         let position_ndx = (index * 3) as usize;
         let position = &positions[position_ndx..position_ndx + 3];
-        vertex_data[i * 6..i * 6 + 3].copy_from_slice(position);
+        vertex_data[i * 4..i * 4 + 3].copy_from_slice(position);
 
         let quad_ndx = (i / 6) * 3;
-        let normal = &normals[quad_ndx..quad_ndx + 3];
-        vertex_data[i * 6 + 3..i * 6 + 6].copy_from_slice(normal);
+        let color = &quad_colors[quad_ndx..quad_ndx + 3];
+        // set RGB in the first 3 bytes of the 4th float, set A to 255
+        vertex_data[i * 4 + 3] = f32::from_ne_bytes([color[0], color[1], color[2], 255]);
     }
 
     (vertex_data, num_vertices)
@@ -357,6 +310,22 @@ mod m4 {
     }
 
     #[rustfmt::skip]
+    pub fn aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+
+        let z_axis = vec3::normalize(vec3::subtract(target, eye));
+        let x_axis = vec3::normalize(vec3::cross(up, z_axis));
+        let y_axis = vec3::normalize(vec3::cross(z_axis, x_axis));
+
+        dst[ 0] = x_axis[0];  dst[ 1] = x_axis[1];  dst[ 2] = x_axis[2];  dst[ 3] = 0.0;
+        dst[ 4] = y_axis[0];  dst[ 5] = y_axis[1];  dst[ 6] = y_axis[2];  dst[ 7] = 0.0;
+        dst[ 8] = z_axis[0];  dst[ 9] = z_axis[1];  dst[10] = z_axis[2];  dst[11] = 0.0;
+        dst[12] = eye[0];     dst[13] = eye[1];     dst[14] = eye[2];     dst[15] = 1.0;
+
+        dst
+    }
+
+    #[rustfmt::skip]
     pub fn camera_aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
         let mut dst = [0.0; 16];
 
@@ -453,8 +422,196 @@ mod m4 {
     }
 }
 
+struct MatrixStack {
+    matrix: [f32; 16],
+    stack: Vec<[f32; 16]>,
+}
+
+#[allow(dead_code)]
+impl MatrixStack {
+    fn new() -> Self {
+        MatrixStack {
+            matrix: m4::identity(),
+            stack: Vec::new(),
+        }
+    }
+    fn reset(&mut self) -> &mut Self {
+        self.matrix = m4::identity();
+        self.stack.clear();
+        self
+    }
+    fn save(&mut self) -> &mut Self {
+        // [f32; 16] is Copy so pushing copies the current matrix
+        self.stack.push(self.matrix);
+        self
+    }
+    fn restore(&mut self) -> &mut Self {
+        self.matrix = self.stack.pop().unwrap();
+        self
+    }
+    fn get(&self) -> [f32; 16] {
+        self.matrix
+    }
+    fn set(&mut self, matrix: [f32; 16]) -> &mut Self {
+        self.matrix = matrix;
+        self
+    }
+    fn translate(&mut self, translation: [f32; 3]) -> &mut Self {
+        self.matrix = m4::translate(&self.matrix, translation);
+        self
+    }
+    fn rotate_x(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_x(&self.matrix, angle);
+        self
+    }
+    fn rotate_y(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_y(&self.matrix, angle);
+        self
+    }
+    fn rotate_z(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_z(&self.matrix, angle);
+        self
+    }
+    fn scale(&mut self, scale: [f32; 3]) -> &mut Self {
+        self.matrix = m4::scale(&self.matrix, scale);
+        self
+    }
+}
+
+// matrix and color
+const UNIFORM_BUFFER_SIZE: u64 = (16 + 4) * 4;
+
+// offsets to the various uniform values in float32 indices
+const K_MATRIX_OFFSET: usize = 0;
+const K_COLOR_OFFSET: usize = 16;
+
+struct ObjectInfo {
+    uniform_buffer: wgpu::Buffer,
+    uniform_values: [f32; UNIFORM_BUFFER_SIZE as usize / 4],
+    bind_group: wgpu::BindGroup,
+}
+
+fn create_object_info(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline) -> ObjectInfo {
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bind group for object"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+
+    ObjectInfo {
+        uniform_buffer,
+        uniform_values,
+        bind_group,
+    }
+}
+
+// In JavaScript `drawObject` was a function that captured `device`,
+// `pipeline`, `objectInfos`, `objectNdx` and `numVertices` from the
+// enclosing scope. In Rust we pass those in via the context.
+struct Ctx<'a, 'b> {
+    pass: &'a mut wgpu::RenderPass<'b>,
+    stack: &'a mut MatrixStack,
+    view_projection_matrix: [f32; 16],
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: &'a wgpu::RenderPipeline,
+    object_infos: &'a mut Vec<ObjectInfo>,
+    object_ndx: usize,
+    num_vertices: u32,
+}
+
+fn draw_object(ctx: &mut Ctx, matrix: [f32; 16], color: [f32; 4]) {
+    if ctx.object_ndx == ctx.object_infos.len() {
+        ctx.object_infos
+            .push(create_object_info(ctx.device, ctx.pipeline));
+    }
+    let object_info = &mut ctx.object_infos[ctx.object_ndx];
+    ctx.object_ndx += 1;
+
+    let matrix_value = m4::multiply(&ctx.view_projection_matrix, &matrix);
+    object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
+        .copy_from_slice(&matrix_value);
+    object_info.uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&color);
+
+    // upload the uniform values to the uniform buffer
+    ctx.queue.write_buffer(
+        &object_info.uniform_buffer,
+        0,
+        bytemuck::cast_slice(&object_info.uniform_values),
+    );
+
+    ctx.pass.set_bind_group(0, &object_info.bind_group, &[]);
+    ctx.pass.draw(0..ctx.num_vertices, 0..1);
+}
+
+const K_HANDLE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+const K_DRAWER_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const K_CABINET_COLOR: [f32; 4] = [0.75, 0.75, 0.75, 0.75];
+const K_NUM_DRAWERS_PER_CABINET: usize = 4;
+
+const K_DRAWER_SIZE: [f32; 3] = [40.0, 30.0, 50.0];
+const K_HANDLE_SIZE: [f32; 3] = [10.0, 2.0, 2.0];
+
+const K_WIDTH: usize = 0;
+const K_HEIGHT: usize = 1;
+const K_DEPTH: usize = 2;
+
+const K_HANDLE_POSITION: [f32; 3] = [
+    (K_DRAWER_SIZE[K_WIDTH] - K_HANDLE_SIZE[K_WIDTH]) / 2.0,
+    K_DRAWER_SIZE[K_HEIGHT] * 2.0 / 3.0,
+    K_HANDLE_SIZE[K_DEPTH],
+];
+
+const K_DRAWER_SPACING: f32 = K_DRAWER_SIZE[K_HEIGHT] + 3.0;
+
+fn draw_drawer(ctx: &mut Ctx) {
+    ctx.stack.save();
+    ctx.stack.scale(K_DRAWER_SIZE);
+    draw_object(ctx, ctx.stack.get(), K_DRAWER_COLOR);
+    ctx.stack.restore();
+
+    ctx.stack.save();
+    ctx.stack.translate(K_HANDLE_POSITION);
+    ctx.stack.scale(K_HANDLE_SIZE);
+    draw_object(ctx, ctx.stack.get(), K_HANDLE_COLOR);
+    ctx.stack.restore();
+}
+
+fn draw_cabinet(ctx: &mut Ctx, num_drawers_per_cabinet: usize) {
+    let k_cabinet_size = [
+        K_DRAWER_SIZE[K_WIDTH] + 6.0,
+        K_DRAWER_SPACING * num_drawers_per_cabinet as f32 + 6.0,
+        K_DRAWER_SIZE[K_DEPTH] + 4.0,
+    ];
+
+    ctx.stack.save();
+    ctx.stack.scale(k_cabinet_size);
+    draw_object(ctx, ctx.stack.get(), K_CABINET_COLOR);
+    ctx.stack.restore();
+
+    for i in 0..num_drawers_per_cabinet {
+        ctx.stack.save();
+        ctx.stack
+            .translate([3.0, i as f32 * K_DRAWER_SPACING + 5.0, 1.0]);
+        draw_drawer(ctx);
+        ctx.stack.restore();
+    }
+}
+
 async fn run() {
-    let mut app = App::new("WebGPU Lighting - Directional").await;
+    let mut app = App::new("WebGPU Matrix Stack - Filing Cabinet").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -467,17 +624,16 @@ async fn run() {
       struct Uniforms {
         matrix: mat4x4f,
         color: vec4f,
-        lightDirection: vec3f,
       };
 
       struct Vertex {
         @location(0) position: vec4f,
-        @location(1) normal: vec3f,
+        @location(1) color: vec4f,
       };
 
       struct VSOutput {
         @builtin(position) position: vec4f,
-        @location(0) normal: vec3f,
+        @location(0) color: vec4f,
       };
 
       @group(0) @binding(0) var<uniform> uni: Uniforms;
@@ -485,24 +641,12 @@ async fn run() {
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
         vsOut.position = uni.matrix * vert.position;
-        vsOut.normal = vert.normal;
+        vsOut.color = vert.color;
         return vsOut;
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        // Because vsOut.normal is an inter-stage variable 
-        // it's interpolated so it will not be a unit vector.
-        // Normalizing it will make it a unit vector again
-        let normal = normalize(vsOut.normal);
-
-        // Compute the light by taking the dot product
-        // of the normal to the light's reverse direction
-        let light = dot(normal, -uni.lightDirection);
-
-        // Lets multiply just the color portion (not the alpha)
-        // by the light
-        let color = uni.color.rgb * light;
-        return vec4f(color, uni.color.a);
+        return vsOut.color * uni.color;
       }
     "#
                 .into(),
@@ -512,14 +656,14 @@ async fn run() {
     let pipeline = app
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("2 attributes"),
+            label: Some("2 attributes with color"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: None,
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: (3 + 3) * 4, // (3+3) floats 4 bytes each
+                    array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
                         // position
@@ -528,11 +672,11 @@ async fn run() {
                             offset: 0,
                             format: wgpu::VertexFormat::Float32x3,
                         },
-                        // normal
+                        // color
                         wgpu::VertexAttribute {
                             shader_location: 1,
                             offset: 12,
-                            format: wgpu::VertexFormat::Float32x3,
+                            format: wgpu::VertexFormat::Unorm8x4,
                         },
                     ],
                 })],
@@ -559,32 +703,9 @@ async fn run() {
             cache: None,
         });
 
-    // matrix + color + light direction
-    const UNIFORM_BUFFER_SIZE: u64 = (16 + 4 + 4) * 4;
-    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("uniforms"),
-        size: UNIFORM_BUFFER_SIZE,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let mut object_infos: Vec<ObjectInfo> = Vec::new();
 
-    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
-
-    // offsets to the various uniform values in float32 indices
-    const K_MATRIX_OFFSET: usize = 0;
-    const K_COLOR_OFFSET: usize = 16;
-    const K_LIGHT_DIRECTION_OFFSET: usize = 20;
-
-    let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bind group for object"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
-    });
-
-    let (vertex_data, num_vertices) = create_f_vertices();
+    let (vertex_data, num_vertices) = create_cube_vertices();
     let vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("vertex buffer vertices"),
         size: (vertex_data.len() * 4) as u64,
@@ -594,11 +715,11 @@ async fn run() {
     app.queue
         .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
 
+    let mut stack = MatrixStack::new();
+
     let mut depth_texture: Option<wgpu::Texture> = None;
 
     app.run(RenderMode::Once, move |frame: &Frame| {
-        let rotation = wgpu_fun::setting_f64("rotation", 0.0) as f32;
-
         // If we don't have a depth texture OR if its size is different
         // from the canvasTexture when make a new depth texture
         if depth_texture
@@ -656,39 +777,42 @@ async fn run() {
             pass.set_pipeline(&pipeline);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
+            let base_rotation = wgpu_fun::setting_f64("baseRotation", 0.0) as f32;
+
             let aspect = frame.width as f32 / frame.height as f32;
             let projection = m4::perspective(
-                60.0f32.to_radians(),
+                60.0f32.to_radians(), // fieldOfView,
                 aspect,
                 1.0,    // zNear
                 2000.0, // zFar
             );
 
-            let eye = [100.0, 150.0, 200.0];
-            let target = [0.0, 35.0, 0.0];
+            let eye = [0.0, 80.0, 200.0];
+            let target = [0.0, 80.0, 0.0];
             let up = [0.0, 1.0, 0.0];
 
             // Compute a view matrix
             let view_matrix = m4::look_at(eye, target, up);
 
-            // Combine the view and projection matrixes
+            // combine the view and projection matrixes
             let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-            let matrix_value = m4::rotate_y(&view_projection_matrix, rotation);
-            uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
-
-            uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
-                .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
-            uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
-                .copy_from_slice(&vec3::normalize([-0.5, -0.7, -1.0]));
-
-            // upload the uniform values to the uniform buffer
-            frame
-                .queue
-                .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
-
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.draw(0..num_vertices, 0..1);
+            let mut ctx = Ctx {
+                pass: &mut pass,
+                stack: &mut stack,
+                view_projection_matrix,
+                device: frame.device,
+                queue: frame.queue,
+                pipeline: &pipeline,
+                object_infos: &mut object_infos,
+                object_ndx: 0,
+                num_vertices,
+            };
+            ctx.stack.save();
+            ctx.stack.rotate_y(base_rotation);
+            ctx.stack.translate([K_DRAWER_SIZE[K_WIDTH] * -0.5, 0.0, 0.0]);
+            draw_cabinet(&mut ctx, K_NUM_DRAWERS_PER_CABINET);
+            ctx.stack.restore();
         }
 
         let command_buffer = encoder.finish();
