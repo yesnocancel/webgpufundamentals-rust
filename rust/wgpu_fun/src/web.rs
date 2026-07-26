@@ -42,6 +42,11 @@ pub struct App {
     surface: wgpu::Surface<'static>,
     canvas: HtmlCanvasElement,
     max_texture_dimension: u32,
+    // Keep the instance alive: on the WebGPU backend, dropping it aborts
+    // pending async operations (mapAsync etc.) with
+    // "A valid external Instance reference no longer exists".
+    #[allow(dead_code)]
+    instance: wgpu::Instance,
 }
 
 fn canvas() -> HtmlCanvasElement {
@@ -144,6 +149,7 @@ impl App {
             surface,
             canvas,
             max_texture_dimension,
+            instance,
         }
     }
 
