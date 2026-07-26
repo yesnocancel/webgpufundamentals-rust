@@ -142,6 +142,7 @@ impl App {
             surface: None,
             configured_alpha_mode: None,
             start_time: Instant::now(),
+            cursor: (0.0, 0.0),
         };
         event_loop.run_app(&mut handler).expect("event loop error");
     }
@@ -244,6 +245,7 @@ struct WinitApp {
     surface: Option<wgpu::Surface<'static>>,
     configured_alpha_mode: Option<wgpu::CompositeAlphaMode>,
     start_time: Instant,
+    cursor: (f32, f32),
 }
 
 impl WinitApp {
@@ -326,6 +328,39 @@ impl ApplicationHandler for WinitApp {
     ) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x as f32, position.y as f32);
+                crate::events::push_event(crate::PointerEvent::Move {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                });
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let button = match button {
+                    winit::event::MouseButton::Left => 0,
+                    winit::event::MouseButton::Middle => 1,
+                    winit::event::MouseButton::Right => 2,
+                    _ => 3,
+                };
+                let (x, y) = self.cursor;
+                crate::events::push_event(match state {
+                    winit::event::ElementState::Pressed => {
+                        crate::PointerEvent::Down { x, y, button }
+                    }
+                    winit::event::ElementState::Released => {
+                        crate::PointerEvent::Up { x, y, button }
+                    }
+                });
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (delta_x, delta_y) = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => (x * -100.0, y * -100.0),
+                    winit::event::MouseScrollDelta::PixelDelta(p) => {
+                        (-p.x as f32, -p.y as f32)
+                    }
+                };
+                crate::events::push_event(crate::PointerEvent::Wheel { delta_x, delta_y });
+            }
             WindowEvent::Resized(_) => {
                 self.configure_surface();
                 if let Some(window) = &self.window {

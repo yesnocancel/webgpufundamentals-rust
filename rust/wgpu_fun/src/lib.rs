@@ -218,6 +218,9 @@ pub use settings::{
     request_redraw, set_setting, setting_bool, setting_f64, setting_str, SettingValue,
 };
 
+mod events;
+pub use events::{drain_pointer_events, PointerEvent};
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]

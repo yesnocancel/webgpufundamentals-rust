@@ -36,4 +36,7 @@ web-sys = { workspace = true, features = [
     "DomRectReadOnly",
     "console",
     "Response",
+    "MouseEvent",
+    "PointerEvent",
+    "WheelEvent",
 ] }

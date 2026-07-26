@@ -158,6 +158,10 @@ frame code reads current values from wgpu_fun's settings store:
 - `App::new_with_features(title, features)` — requests optional features if
   the adapter supports them (JS `adapter.features.has(...)` +
   requiredFeatures).
+- `wgpu_fun::drain_pointer_events()` — drain queued `PointerEvent`s
+  (Down/Move/Up/Wheel, device-pixel coords) inside the frame callback; the
+  JS originals' pointerdown/pointermove/wheel listeners map to this. Events
+  trigger a re-render in `RenderMode::Once`.
 
 ## Verifying examples (required — "all examples work")
 

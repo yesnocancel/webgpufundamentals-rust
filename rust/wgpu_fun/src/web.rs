@@ -216,6 +216,60 @@ impl App {
         };
         let render = Rc::new(render);
 
+        // Pointer + wheel events feed the shared event queue (see events.rs).
+        {
+            let canvas = app.canvas.clone();
+            let to_device_px = move |e: &web_sys::MouseEvent| {
+                let scale_x = canvas.width() as f32 / canvas.client_width().max(1) as f32;
+                let scale_y = canvas.height() as f32 / canvas.client_height().max(1) as f32;
+                (e.offset_x() as f32 * scale_x, e.offset_y() as f32 * scale_y)
+            };
+
+            let t = to_device_px.clone();
+            let on_down = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
+                let (x, y) = t(&e);
+                crate::events::push_event(crate::PointerEvent::Down {
+                    x,
+                    y,
+                    button: e.button() as u32,
+                });
+            });
+            let t = to_device_px.clone();
+            let on_move = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
+                let (x, y) = t(&e);
+                crate::events::push_event(crate::PointerEvent::Move { x, y });
+            });
+            let t = to_device_px;
+            let on_up = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
+                let (x, y) = t(&e);
+                crate::events::push_event(crate::PointerEvent::Up {
+                    x,
+                    y,
+                    button: e.button() as u32,
+                });
+            });
+            let on_wheel = Closure::<dyn FnMut(web_sys::WheelEvent)>::new(move |e: web_sys::WheelEvent| {
+                e.prevent_default();
+                crate::events::push_event(crate::PointerEvent::Wheel {
+                    delta_x: e.delta_x() as f32,
+                    delta_y: e.delta_y() as f32,
+                });
+            });
+            let c = &app.canvas;
+            c.add_event_listener_with_callback("pointerdown", on_down.as_ref().unchecked_ref())
+                .unwrap();
+            c.add_event_listener_with_callback("pointermove", on_move.as_ref().unchecked_ref())
+                .unwrap();
+            c.add_event_listener_with_callback("pointerup", on_up.as_ref().unchecked_ref())
+                .unwrap();
+            c.add_event_listener_with_callback("wheel", on_wheel.as_ref().unchecked_ref())
+                .unwrap();
+            on_down.forget();
+            on_move.forget();
+            on_up.forget();
+            on_wheel.forget();
+        }
+
         // Watch the canvas's device-pixel size, like the JS lessons do.
         {
             let app = app.clone();
