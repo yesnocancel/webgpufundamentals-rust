@@ -117,146 +117,184 @@ and the corresponding CSS
 ```
 
 Then finally we'll move the UI inside this `#ui` div and update
-the div's css classes based on the UI state.
+the div's css classes based on the UI state. This is all page
+JavaScript in our port; the wasm module re-renders on its own so there's
+no `render()` to call.
 
 ```js
 -  const gui = new GUI();
--  gui.onChange(render);
 +  const uiElem = document.querySelector('#ui');
 +  const gui = new GUI({
 +    parent: uiElem,
 +  });
 +  gui.onChange(() => {
 +    uiElem.classList.toggle('hide-ui', !gui.isOpen());
-+    render();
 +  });
 ```
 
 Now let's start making an orbit camera based on scene graph nodes.
 
-Here's the our orbit camera rig:
+Here's the our orbit camera rig. In JavaScript this was a class whose
+private fields held direct references to its rig nodes; like the
+`SceneGraph` itself, in Rust the rig holds node *indices* and its methods
+take the scene graph. The JavaScript getters and setters
+(`get pan()` / `set pan(v)`) become `pan(&scene)` / `set_pan(&mut scene, v)`
+methods that read and write the rig nodes' `TRS` values.
 
-```js
-  class OrbitCamera {
-    #camTarget;
-    #camPan;
-    #camTilt;
-    #camExtend;
-    #cam;
+```rust
+// The camera rig. In JavaScript this was a class holding direct references
+// to its rig nodes and a `nodeToUISettings` map for the page's GUI (the map
+// stays page-side in this port); here the rig holds node indices and its
+// methods take the SceneGraph.
+struct OrbitCamera {
+    cam_target: NodeNdx,
+    cam_pan: NodeNdx,
+    cam_tilt: NodeNdx,
+    cam_extend: NodeNdx,
+    cam: NodeNdx,
+}
 
-    constructor() {
-      // Create Camera Rig
-      this.#camTarget = addTRSSceneGraphNode('cam-target');
-      this.#camPan = addTRSSceneGraphNode('cam-pan', this.#camTarget);
-      this.#camTilt = addTRSSceneGraphNode('cam-tilt', this.#camPan);
-      this.#camExtend = addTRSSceneGraphNode('cam-extend', this.#camTilt);
-      this.#cam = addTRSSceneGraphNode('cam', this.#camExtend);
+impl OrbitCamera {
+    fn new(scene: &mut SceneGraph) -> Self {
+        // Create Camera Rig
+        let cam_target = add_trs_scene_graph_node(scene, "cam-target", None, TRS::default());
+        let cam_pan = add_trs_scene_graph_node(scene, "cam-pan", Some(cam_target), TRS::default());
+        let cam_tilt = add_trs_scene_graph_node(scene, "cam-tilt", Some(cam_pan), TRS::default());
+        let cam_extend =
+            add_trs_scene_graph_node(scene, "cam-extend", Some(cam_tilt), TRS::default());
+        let cam = add_trs_scene_graph_node(scene, "cam", Some(cam_extend), TRS::default());
+
+        OrbitCamera {
+            cam_target,
+            cam_pan,
+            cam_tilt,
+            cam_extend,
+            cam,
+        }
     }
 
-    setParent(parent) {
-      this.#camTarget.setParent(parent);
+    fn set_parent(&self, scene: &mut SceneGraph, parent: NodeNdx) {
+        scene.set_parent(self.cam_target, Some(parent));
     }
 
-    getCameraMatrix() {
-      return this.#cam.worldMatrix;
+    fn get_camera_matrix(&self, scene: &SceneGraph) -> [f32; 16] {
+        scene.nodes[self.cam].world_matrix
     }
 
-    get pan() { return this.#camPan.source.rotation[1]; }
-    set pan(v) { this.#camPan.source.rotation[1] = v; }
-    get tilt() { return this.#camTilt.source.rotation[0]; }
-    set tilt(v) { this.#camTilt.source.rotation[0] = v; }
-    get radius() { return this.#camExtend.source.translation[2]; }
-    set radius(v) { this.#camExtend.source.translation[2] = v; }
-    get target() { return vec3.copy(this.#camTarget.source.translation); }
-    set target(v) { vec3.copy(v, this.#camTarget.source.translation); }
-  }
+    fn pan(&self, scene: &SceneGraph) -> f32 {
+        scene.nodes[self.cam_pan].source.as_ref().unwrap().rotation[1]
+    }
+    fn set_pan(&self, scene: &mut SceneGraph, v: f32) {
+        scene.nodes[self.cam_pan].source.as_mut().unwrap().rotation[1] = v;
+    }
+    fn tilt(&self, scene: &SceneGraph) -> f32 {
+        scene.nodes[self.cam_tilt].source.as_ref().unwrap().rotation[0]
+    }
+    fn set_tilt(&self, scene: &mut SceneGraph, v: f32) {
+        scene.nodes[self.cam_tilt].source.as_mut().unwrap().rotation[0] = v;
+    }
+    fn radius(&self, scene: &SceneGraph) -> f32 {
+        scene.nodes[self.cam_extend].source.as_ref().unwrap().translation[2]
+    }
+    fn set_radius(&self, scene: &mut SceneGraph, v: f32) {
+        scene.nodes[self.cam_extend].source.as_mut().unwrap().translation[2] = v;
+    }
+    fn target(&self, scene: &SceneGraph) -> [f32; 3] {
+        scene.nodes[self.cam_target].source.as_ref().unwrap().translation
+    }
+    fn set_target(&self, scene: &mut SceneGraph, v: [f32; 3]) {
+        scene.nodes[self.cam_target].source.as_mut().unwrap().translation = v;
+    }
+}
 ```
 
-We need to add `vec3.copy` which we haven't needed until this point
-
-```js
-const vec3 = {
-+  copy(src, dst) {
-+    dst = dst || new Float32Array(3);
-+    dst.set(src);
-+    return dst;
-+  },
-
-   ...
-```
+The JavaScript version needed to add a `vec3.copy` function here so its
+getter could return a copy of the target instead of a live reference.
+In Rust `[f32; 3]` is a `Copy` type so returning it already returns a copy
+and no helper is needed.
 
 then we need to use the `OrbitCamera`
 
-```js
-+  const orbitCamera = new OrbitCamera();
-+  orbitCamera.setParent(root);
-+  orbitCamera.target = [120, 80, 0];
-+  orbitCamera.tilt = Math.PI * -0.2;
-+  orbitCamera.radius = 300;
+```rust
+    let root = scene.add_node("root", None);
 
-  ...
++    let orbit_camera = OrbitCamera::new(&mut scene);
++    orbit_camera.set_parent(&mut scene, root);
++    orbit_camera.set_target(&mut scene, [120.0, 80.0, 0.0]);
++    orbit_camera.set_tilt(&mut scene, std::f32::consts::PI * -0.2);
++    orbit_camera.set_radius(&mut scene, 300.0);
 
-  const settings = {
--    cameraRotation: degToRad(-45),
-    showMeshNodes: false,
-    showAllTRS: false,
-  };
-
--  const cameraRadToDegOptions = { min: -180, max: 180, step: 1, converters: GUI.converters.radToDeg };
-
-  const uiElem = document.querySelector('#ui');
-  const gui = new GUI({
-    parent: uiElem,
-  });
-  gui.onChange(() => {
-    uiElem.classList.toggle('hide-ui', !gui.isOpen());
-  });
--  gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
-  gui.add(settings, 'showMeshNodes').onChange(showMeshNodes);
-  gui.add(settings, 'showAllTRS').onChange(showTRS);
-
-  ...
-
-  function render() {
-
-   ...
-
--    // Get the camera's position from the matrix we computed
--    const cameraMatrix = mat4.identity();
--    mat4.translate(cameraMatrix, [120, 100, 0], cameraMatrix);
--    mat4.rotateY(cameraMatrix, settings.cameraRotation, cameraMatrix);
--    mat4.translate(cameraMatrix, [60, 0, 300], cameraMatrix);
--
--    // Compute a view matrix
--    const viewMatrix = mat4.inverse(cameraMatrix);
-
-+    root.updateWorldMatrix();
-+
-+    // make a view matrix from the camera's
-+    const viewMatrix = mat4.inverse(orbitCamera.getCameraMatrix());
-
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
-
-    const encoder = device.createCommandEncoder();
-    {
-      const pass = encoder.beginRenderPass(renderPassDescriptor);
-      pass.setPipeline(pipeline);
-
-      const ctx = { pass, viewProjectionMatrix };
--      root.updateWorldMatrix();
-      for (const mesh of meshes) {
-        drawMesh(ctx, mesh);
-      }
-
-      pass.end();
+    // Add cabinets
+    for cabinet_ndx in 0..K_NUM_CABINETS {
+        add_cabinet(&mut scene, &mut meshes, root, cabinet_ndx);
     }
+```
 
+and in the frame callback we replace the old camera math with the camera
+matrix from the rig. Note `update_world_matrix` moves up, before we compute
+the view matrix, because the camera's matrix now comes from the scene graph.
+
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
+        ...
+
+-        let camera_rotation =
+-            wgpu_fun::setting_f64("cameraRotation", (-45.0f64).to_radians()) as f32;
+
+        let aspect = frame.width as f32 / frame.height as f32;
+        let projection = m4::perspective(
+            60.0f32.to_radians(), // fieldOfView,
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
+
+-        // Compute a camera matrix
+-        let mut camera_matrix = m4::identity();
+-        camera_matrix = m4::translate(&camera_matrix, [120.0, 100.0, 0.0]);
+-        camera_matrix = m4::rotate_y(&camera_matrix, camera_rotation);
+-        camera_matrix = m4::translate(&camera_matrix, [60.0, 0.0, 300.0]);
+-
+-        // Compute a view matrix
+-        let view_matrix = m4::inverse(&camera_matrix);
++        scene.update_world_matrix(root);
++
++        // make a view matrix from the camera's
++        let view_matrix = m4::inverse(&orbit_camera.get_camera_matrix(&scene));
+
+        // combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 ```
 
 Notice that a whole bunch of math disappeared. There is no math
 in the `OrbitCamera` code, just rig nodes. This is because
 all the math has been buried in the rig itself.
+
+The page's mirror of the node tree needs the same nodes in the same order
+so the GUI's node indices keep matching the Rust arena; the `cameraRotation`
+setting goes away.
+
+```js
++const nodeToUISettings = new Map();
+
+const root = addNode('root');
++// mirror of the Rust module's OrbitCamera rig and its initial settings
++const camTarget = addNode('cam-target', root, { translation: [120, 80, 0] });
++const camPan = addNode('cam-pan', camTarget, {});
++const camTilt = addNode('cam-tilt', camPan, { rotation: [Math.PI * -0.2, 0, 0] });
++const camExtend = addNode('cam-extend', camTilt, { translation: [0, 0, 300] });
++const cam = addNode('cam', camExtend, {});
+// Add cabinets
+for (let cabinetNdx = 0; cabinetNdx < kNumCabinets; ++cabinetNdx) {
+  addCabinet(root, cabinetNdx);
+}
+
+const settings = {
+-  cameraRotation: degToRad(-45),
+  showMeshNodes: false,
+  showAllTRS: false,
+};
+```
 
 We could run it as is but it would be difficult to change any
 camera settings since our UI, by default, displays translation x,y,z
@@ -268,56 +306,30 @@ settings just to keep it simple and terse we'll provide an array
 of controls by index we want to appear where 0, 1, 2 are translation
 x, y, z. 3, 4, 5 are rotation x, y, z, and 6, 7, 8 are scale.
 If no settings for the node exist then they'll follow the existing
-rules.
+rules. This is all page JavaScript, operating on the mirror.
 
 ```js
-+  const nodeToUISettings = new Map();
-
-  class OrbitCamera {
-    #camTarget;
-    #camPan;
-    #camTilt;
-    #camExtend;
-    #cam;
-
-    constructor() {
-      // Create Camera Rig
-      this.#camTarget = addTRSSceneGraphNode('cam-target');
-      this.#camPan = addTRSSceneGraphNode('cam-pan', this.#camTarget);
-      this.#camTilt = addTRSSceneGraphNode('cam-tilt', this.#camPan);
-      this.#camExtend = addTRSSceneGraphNode('cam-extend', this.#camTilt);
-      this.#cam = addTRSSceneGraphNode('cam', this.#camExtend);
-
-+      nodeToUISettings.set(this.#camTarget, { trs: [0, 1, 2] });
-+      nodeToUISettings.set(this.#camPan, { trs: [4] });
-+      nodeToUISettings.set(this.#camTilt, { trs: [3] });
-+      nodeToUISettings.set(this.#camExtend, { trs: [2] });
-+      nodeToUISettings.set(this.#cam, { trs: [] });
-    }
-
-    ...
-  }
++nodeToUISettings.set(camTarget, { trs: [0, 1, 2] });
++nodeToUISettings.set(camPan, { trs: [4] });
++nodeToUISettings.set(camTilt, { trs: [3] });
++nodeToUISettings.set(camExtend, { trs: [2] });
++nodeToUISettings.set(cam, { trs: [] });
 
   ...
 
-+  let currentNode;
   function setCurrentSceneGraphNode(node) {
-+    currentNode = node;
-    trsUIHelper.setTRS(node.source);
+    currentNode = node;
+    wasm.set_setting_num('nodeNdx', node.ndx);
     trsFolder.name(`orientation: ${node.name}`);
     trsFolder.updateDisplay();
 
- +   showTRS();
++    showTRS();
 
     // Mark which node is selected.
     for (const b of nodeButtons) {
       const name = b.button.getName().replace(prefixRE, '');
       b.button.name(`${b.node === node ? kSelected : kUnelected}${name}`);
     }
-
-    selectedMeshes = meshes.filter(mesh => meshUsesNode(mesh, node));
-
-    render();
   }
 
   ...
@@ -334,8 +346,7 @@ rules.
 +      trs.show(showThis);
     });
   }
-=  showTRS(false);
-
+-  showTRS(false);
 ```
 
 With those changes we've replaced the old camera code with
@@ -346,6 +357,29 @@ visible and editable.
 {{{example url="../webgpu-camera-controls-scene-graph-step-01.html"}}}
 
 Now that we have the basics in place, lets add some pointer controls.
+
+**A note on how this port handles pointer input:** the JavaScript originals
+attach `pointerdown`, `pointermove`, `pointerup` and `wheel` listeners to
+the canvas. In this port, wgpu_fun forwards those events (and the matching
+mouse events of a native window) into a queue that the example drains with
+`wgpu_fun::drain_pointer_events()` inside the frame callback. The events
+are `PointerEvent::Down { x, y, button }`, `Move { x, y }`,
+`Up { x, y, button }` and `Wheel { delta_x, delta_y }`, with coordinates in
+device pixels, and any event triggers a re-render so `RenderMode::Once`
+still works. The camera math stays the same; a few event-plumbing details
+change, all following from the queue being a single merged pointer stream:
+
+* There's no pointer capture. A `Down` starts a drag and an `Up` ends it —
+  we track that with the presence of the update helper.
+* Events don't carry keyboard modifiers, so where the originals check
+  `e.shiftKey || (e.buttons & 4) !== 0` to pick "track" mode we check
+  whether the drag started with the middle mouse button (`button == 1`).
+* Events don't carry pointer ids, so multi-touch gestures (the pinch
+  section below) can't be reconstructed — with 2 or more pointers down we
+  give up, like the originals do for 3 or more.
+* Camera changes happen inside the wasm module, so the page's mirrored TRS
+  values (and therefore the numbers in the GUI) don't live-update while you
+  drag; they only reflect edits made through the GUI itself.
 
 ## <a id="a-pan-and-tilt"></a> Pan and Tilt
 
@@ -364,106 +398,113 @@ canvas {
 ```
 
 Then, let's add some code to the camera to encapsulate these
-changes a little. We'll make a function `getUpdateHelper` that
+changes a little. We'll make a function `get_update_helper` that
 records some relevant but kind of private camera state, and the
 helper will provide functions to modify the camera state by
-deltas the UI code will pass in.
+deltas the input code will pass in. In JavaScript the helper was an object
+of closures that captured the starting camera state; in Rust it's a struct
+of the starting values with methods that take the camera and scene.
 
-```js
-  class OrbitCamera {
+```rust
+  impl OrbitCamera {
 
    ...
 
-+    getUpdateHelper() {
-+      const startTilt = this.tilt;
-+      const startPan = this.pan;
-+
-+      return {
-+        panAndTilt: (deltaPan, deltaTilt) => {
-+          this.tilt = startTilt - deltaTilt;
-+          this.pan = startPan - deltaPan;
-+        },
-+      };
++    fn get_update_helper(&self, scene: &SceneGraph) -> UpdateHelper {
++        UpdateHelper {
++            start_tilt: self.tilt(scene),
++            start_pan: self.pan(scene),
++        }
 +    }
 
    ...
 
   }
+
++struct UpdateHelper {
++    start_tilt: f32,
++    start_pan: f32,
++}
++
++impl UpdateHelper {
++    fn pan_and_tilt(&self, cam: &OrbitCamera, scene: &mut SceneGraph, delta_pan: f32, delta_tilt: f32) {
++        cam.set_tilt(scene, self.start_tilt - delta_tilt);
++        cam.set_pan(scene, self.start_pan - delta_pan);
++    }
++}
 ```
 
-Then, we can add a function to connect pointer input to create
-the helper and pass in deltas.
+Then, we can add some code to connect pointer input to create
+the helper and pass in deltas. Where the JavaScript version's
+`addOrbitCameraEventListeners` adds listeners, we keep a little state
+across frames and drain the event queue at the top of the frame callback.
 
-```js
-  function addOrbitCameraEventListeners(cam, elem) {
-    let startX;
-    let startY;
-    let camHelper;
+```rust
++    // state for the pointer events (addOrbitCameraEventListeners in the
++    // JS version)
++    let mut start_x = 0.0f32;
++    let mut start_y = 0.0f32;
++    // Some(...) while a drag is in progress; this stands in for the JS
++    // version's pointer capture check.
++    let mut cam_helper: Option<UpdateHelper> = None;
 
-    const updateStartPosition = (e) => {
-      startX = e.clientX;
-      startY = e.clientY;
-      camHelper = cam.getUpdateHelper();
-    };
+    app.run(RenderMode::Once, move |frame: &Frame| {
+        ...
 
-    const onMove = (e) => {
-      if (!canvas.hasPointerCapture(e.pointerId)) {
-        return;
-      }
-
-      const deltaX = e.clientX - startX;
-      const deltaY = e.clientY - startY;
-
-      camHelper.panAndTilt(deltaX * 0.01, deltaY * 0.01);
-      render();
-    };
-
-    const onUp = (e) => {
-      canvas.releasePointerCapture(e.pointerId);
-    };
-
-    const onDown = (e) => {
-      canvas.setPointerCapture(e.pointerId);
-      updateStartPosition(e);
-    };
-
-    elem.addEventListener('pointerup', onUp);
-    elem.addEventListener('pointercancel', onUp);
-    elem.addEventListener('lostpointercapture', onUp);
-    elem.addEventListener('pointerdown', onDown);
-    elem.addEventListener('pointermove', onMove);
-
-    return () => {
-      elem.removeEventListener('pointerup', onUp);
-      elem.removeEventListener('pointercancel', onUp);
-      elem.removeEventListener('lostpointercapture', onUp);
-      elem.removeEventListener('pointerdown', onDown);
-      elem.removeEventListener('pointermove', onMove);
-    };
-  }
-
-  addOrbitCameraEventListeners(orbitCamera, canvas);
++        // The JS version attaches pointerdown/pointermove/pointerup
++        // listeners to the canvas; here we drain wgpu_fun's pointer event
++        // queue instead (coordinates are in device pixels).
++        for event in wgpu_fun::drain_pointer_events() {
++            match event {
++                PointerEvent::Down { x, y, .. } => {
++                    // canvas.setPointerCapture(e.pointerId);
++                    // updateStartPosition(e);
++                    start_x = x;
++                    start_y = y;
++                    cam_helper = Some(orbit_camera.get_update_helper(&scene));
++                }
++                PointerEvent::Move { x, y } => {
++                    // if (!canvas.hasPointerCapture(e.pointerId)) return;
++                    let Some(helper) = &cam_helper else {
++                        continue;
++                    };
++
++                    let delta_x = x - start_x;
++                    let delta_y = y - start_y;
++
++                    helper.pan_and_tilt(
++                        &orbit_camera,
++                        &mut scene,
++                        delta_x * 0.01,
++                        delta_y * 0.01,
++                    );
++                }
++                PointerEvent::Up { .. } => {
++                    // canvas.releasePointerCapture(e.pointerId);
++                    cam_helper = None;
++                }
++                PointerEvent::Wheel { .. } => {}
++            }
++        }
 ```
 
-The code is pretty straight forward. On `pointerdown` we call
-`cam.getUpdateHelper` which records the current `pan` and `tilt`. We also record
-and the current pointer position. On `pointermove` we compute the delta from
-where the pointer started and pass it into the helper to  adjust `pan` and
-`tilt`. That's basically it. `addOrbitCameraEventListeners` also returns a
-function to remove the listeners if that's important.
+The code is pretty straight forward. On `Down` we call
+`get_update_helper` which records the current `pan` and `tilt`. We also record
+the current pointer position. On `Move` we compute the delta from
+where the pointer started and pass it into the helper to adjust `pan` and
+`tilt`. That's basically it. There's no `render()` call because pushing a
+pointer event already requests a re-render.
 
-One more small change, let's make the GUI check for updates to the values.
-This way when we just `pan` and `tilt` by dragging the pointer the values
-in the UI will update automatically.
+One more small change on the page, the original makes the GUI check for
+updates to the values with `.listen()`. We keep it, though as noted above,
+in this port the mirrored values only change for GUI-driven edits.
 
 ```js
 -  const trsFolder = gui.addFolder('orientation');
 +  const trsFolder = gui.addFolder('orientation').listen();
 ```
 
-Give it try, drag your finger on the canvas. You can select the
-`cam-tilt` or `cam-pan` nodes and you'll see the values change
-as you drag.
+Give it try, drag your finger on the canvas.
 
 {{{example url="../webgpu-camera-controls-scene-graph-step-02.html"}}}
 
@@ -474,164 +515,185 @@ instead of adjusting the pan or tilt, you instead "track" the camera (translate 
 
 Let's add that. First off we need a few new math functions.
 
-```js
-const vec3 = {
-+  create() {
-+    return new Float32Array(3);
-+  },
+```rust
+mod vec3 {
 
-  ...
++    pub fn create() -> [f32; 3] {
++        [0.0; 3]
++    }
++
++    pub fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
++
++        dst[0] = a[0] + b[0];
++        dst[1] = a[1] + b[1];
++        dst[2] = a[2] + b[2];
++
++        dst
++    }
++
++    pub fn transform_mat3(v: [f32; 3], m: &[f32; 16]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
++
++        let x = v[0];
++        let y = v[1];
++        let z = v[2];
++
++        dst[0] = x * m[0] + y * m[4] + z * m[8];
++        dst[1] = x * m[1] + y * m[5] + z * m[9];
++        dst[2] = x * m[2] + y * m[6] + z * m[10];
++
++        dst
++    }
 
-+  add(a, b, dst) {
-+      dst = dst || new Float32Array(3);
-+
-+      dst[0] = a[0] + b[0];
-+      dst[1] = a[1] + b[1];
-+      dst[2] = a[2] + b[2];
-+
-+      return dst;
-+  },
-+
-+  transformMat3(v, m, dst) {
-+    dst = dst ?? new Float32Array(3);
-+
-+    const x = v[0];
-+    const y = v[1];
-+    const z = v[2];
-+
-+    dst[0] = x * m[0] + y * m[4] + z * m[8];
-+    dst[1] = x * m[1] + y * m[5] + z * m[9];
-+    dst[2] = x * m[2] + y * m[6] + z * m[10];
-+
-+    return dst;
-+  },
+    ...
 }
 ```
 
 `create` just creates a vec3 with 3 zeros. `add` adds two vec3s.
-Finally, `transformMat3` multiplies a vector by a 3x3 matrix. This was
-mentioned [when we covered normals for lighting](webgpu-lighting-directional.html#a-normals). There, we multiplied a normal (vec3f) by a normal matrix (mat3x3f) in WGSL. Here, we're essentially doing the same thing but in JavaScript but instead of re-orienting a normal we're reorienting the pointer
+Finally, `transform_mat3` multiplies a vector by a 3x3 matrix. This was
+mentioned [when we covered normals for lighting](webgpu-lighting-directional.html#a-normals). There, we multiplied a normal (vec3f) by a normal matrix (mat3x3f) in WGSL. Here, we're essentially doing the same thing but in Rust but instead of re-orienting a normal we're reorienting the pointer
 movement.
 
 We can now update the helper
 
-```js
-  class OrbitCamera {
+```rust
+  impl OrbitCamera {
 
     ...
 
-    getUpdateHelper() {
-      const startTilt = this.tilt;
-      const startPan = this.pan;
-+      const startCameraMatrix = mat4.copy(this.getCameraMatrix());
-+      const startTarget = vec3.copy(this.target);
-
-      return {
-        panAndTilt: (deltaPan, deltaTilt) => {
-          this.tilt = startTilt - deltaTilt;
-          this.pan = startPan - deltaPan;
-        },
-+        track: (deltaX, deltaY) => {
-+          const direction = vec3.transformMat3([deltaX, deltaY, 0], startCameraMatrix);
-+          this.target = vec3.add(startTarget, direction);
-+        },
-      };
+    fn get_update_helper(&self, scene: &SceneGraph) -> UpdateHelper {
+        UpdateHelper {
+            start_tilt: self.tilt(scene),
+            start_pan: self.pan(scene),
++            start_camera_matrix: self.get_camera_matrix(scene),
++            start_target: self.target(scene),
+        }
     }
-```
+  }
 
-`track'` takes an xy delta  multiplies it by the upper left 3x3 matrix of our
-camera matrix. This has the effect of orienting the direction perpendicular to
-the way the camera is facing. We can then just add that to our target
+  struct UpdateHelper {
+      start_tilt: f32,
+      start_pan: f32,
++      start_camera_matrix: [f32; 16],
++      start_target: [f32; 3],
+  }
 
-We then `track` from the pointer event code.
-
-```js
-  function addOrbitCameraEventListeners(cam, elem) {
-    let startX;
-    let startY;
-+    let lastMode;
-    let camHelper;
-
-    const updateStartPosition = (e) => {
-      startX = e.clientX;
-      startY = e.clientY;
-      camHelper = cam.getUpdateHelper();
-    };
-
-    const onMove = (e) => {
-      if (!canvas.hasPointerCapture(e.pointerId)) {
-        return;
+  impl UpdateHelper {
+      fn pan_and_tilt(&self, cam: &OrbitCamera, scene: &mut SceneGraph, delta_pan: f32, delta_tilt: f32) {
+          cam.set_tilt(scene, self.start_tilt - delta_tilt);
+          cam.set_pan(scene, self.start_pan - delta_pan);
       }
-
-+      const mode = e.shiftKey
-+        ? 'track'
-+        : 'panAndTilt';
 +
-+      if (mode !== lastMode) {
-+        lastMode = mode;
-+        updateStartPosition(e);
++      fn track(&self, cam: &OrbitCamera, scene: &mut SceneGraph, delta_x: f32, delta_y: f32) {
++          let direction = vec3::transform_mat3([delta_x, delta_y, 0.0], &self.start_camera_matrix);
++          cam.set_target(scene, vec3::add(self.start_target, direction));
 +      }
-
-      const deltaX = e.clientX - startX;
-      const deltaY = e.clientY - startY;
-
-+      switch (mode) {
-+        case 'track': {
-+          const s = cam.radius * 0.001;
-+          camHelper.track(-deltaX * s, deltaY * s);
-+          break;
-+        }
-+        case 'panAndTilt':
-*          camHelper.panAndTilt(deltaX * 0.01, deltaY * 0.01);
-+          break;
-+      }
-
-      render();
-    };
-
-    const onUp = (e) => {
-      canvas.releasePointerCapture(e.pointerId);
-    };
-
-    const onDown = (e) => {
-      canvas.setPointerCapture(e.pointerId);
-      updateStartPosition(e);
-    };
-
-    elem.addEventListener('pointerup', onUp);
-    elem.addEventListener('pointercancel', onUp);
-    elem.addEventListener('lostpointercapture', onUp);
-    elem.addEventListener('pointerdown', onDown);
-    elem.addEventListener('pointermove', onMove);
-
-    return () => {
-      elem.removeEventListener('pointerup', onUp);
-      elem.removeEventListener('pointercancel', onUp);
-      elem.removeEventListener('lostpointercapture', onUp);
-      elem.removeEventListener('pointerdown', onDown);
-      elem.removeEventListener('pointermove', onMove);
-    };
   }
 ```
 
-Our event code above, computes a mode based on whether or not the user is
-holding the shift key. If the mode switches then we need to record starting
-values. It then switches on the mode.
+`track` takes an xy delta  multiplies it by the upper left 3x3 matrix of our
+camera matrix. This has the effect of orienting the direction perpendicular to
+the way the camera is facing. We can then just add that to our target
 
-Our `'track'` mode passes the pointer delta to the helper's `track`
+We then `track` from the pointer event code. The JS version uses strings
+for the modes; in Rust an enum is the natural fit.
+
+```rust
++// The JS version uses strings for the modes ('track', 'panAndTilt', ...);
++// in Rust an enum is the natural fit.
++#[derive(Clone, Copy, PartialEq)]
++enum Mode {
++    Track,
++    PanAndTilt,
++}
+
+    ...
+
+    let mut start_x = 0.0f32;
+    let mut start_y = 0.0f32;
++    let mut last_mode: Option<Mode> = None;
+    let mut cam_helper: Option<UpdateHelper> = None;
++    // wgpu_fun's event queue doesn't carry keyboard modifiers, so where the
++    // JS version checks `e.shiftKey || (e.buttons & 4) !== 0` we check
++    // which button started the drag (1 = middle).
++    let mut drag_button = 0u32;
+
+    ...
+
+        for event in wgpu_fun::drain_pointer_events() {
+            match event {
+-                PointerEvent::Down { x, y, .. } => {
++                PointerEvent::Down { x, y, button } => {
+                    // canvas.setPointerCapture(e.pointerId);
++                    drag_button = button;
+                    // updateStartPosition(e);
+                    start_x = x;
+                    start_y = y;
+                    cam_helper = Some(orbit_camera.get_update_helper(&scene));
+                }
+                PointerEvent::Move { x, y } => {
+                    // if (!canvas.hasPointerCapture(e.pointerId)) return;
+-                    let Some(helper) = &cam_helper else {
+-                        continue;
+-                    };
++                    if cam_helper.is_none() {
++                        continue;
++                    }
+
++                    let mode = if drag_button == 1 {
++                        Mode::Track
++                    } else {
++                        Mode::PanAndTilt
++                    };
++
++                    if Some(mode) != last_mode {
++                        last_mode = Some(mode);
++                        // updateStartPosition(e);
++                        start_x = x;
++                        start_y = y;
++                        cam_helper = Some(orbit_camera.get_update_helper(&scene));
++                    }
+
+                    let delta_x = x - start_x;
+                    let delta_y = y - start_y;
+
+-                    helper.pan_and_tilt(
+-                        &orbit_camera,
+-                        &mut scene,
+-                        delta_x * 0.01,
+-                        delta_y * 0.01,
+-                    );
++                    let helper = cam_helper.as_ref().unwrap();
++                    match mode {
++                        Mode::Track => {
++                            let s = orbit_camera.radius(&scene) * 0.001;
++                            helper.track(&orbit_camera, &mut scene, -delta_x * s, delta_y * s);
++                        }
++                        Mode::PanAndTilt => {
++                            helper.pan_and_tilt(
++                                &orbit_camera,
++                                &mut scene,
++                                delta_x * 0.01,
++                                delta_y * 0.01,
++                            );
++                        }
++                    }
+                }
+```
+
+Our event code above, computes a mode based on which button the drag
+started with (in the original, whether or not the user is holding the shift
+key or the middle mouse button — see the adaptation note above). If the
+mode switches then we need to record starting values. It then switches on
+the mode.
+
+Our `Mode::Track` passes the pointer delta to the helper's `track`
 function. We scale the delta by the radius (our distance from the
 target), that way we'll move in smaller steps if we're really close up.
 
-We can also make it track if the user is using the middle mouse button.
-
-```js
--      const mode = e.shiftKey
-+      const mode = e.shiftKey || (e.buttons & 4) !== 0
-        ? 'track'
-        : 'panAndTilt';
-```
-
-Now you can also hold the mouse wheel down and move your mouse to track.
+Now you can hold the mouse wheel (middle button) down and move your mouse
+to track.
 
 {{{example url="../webgpu-camera-controls-scene-graph-step-03.html"}}}
 
@@ -641,68 +703,53 @@ Next let's add zooming or "dolly" with the scroll wheel which is pretty common.
 
 First let's update our helper.
 
-```js
-  class OrbitCamera {
-    ...
-
-    getUpdateHelper() {
-      const startTilt = this.tilt;
-      const startPan = this.pan;
-+      const startRadius = this.radius;
-      const startCameraMatrix = mat4.copy(this.getCameraMatrix());
-      const startTarget = vec3.copy(this.target);
-
-      return {
-        panAndTilt: (deltaPan, deltaTilt) => {
-          this.tilt = startTilt - deltaTilt;
-          this.pan = startPan - deltaPan;
-        },
-        track: (deltaX, deltaY) => {
-          const direction = vec3.transformMat3([deltaX, deltaY, 0], startCameraMatrix);
-          this.target = vec3.add(startTarget, direction);
-        },
-+        dolly: (delta) => {
-+          this.radius = startRadius + delta;
-+        },
-      };
+```rust
+    fn get_update_helper(&self, scene: &SceneGraph) -> UpdateHelper {
+        UpdateHelper {
+            start_tilt: self.tilt(scene),
+            start_pan: self.pan(scene),
++            start_radius: self.radius(scene),
+            start_camera_matrix: self.get_camera_matrix(scene),
+            start_target: self.target(scene),
+        }
     }
 
-    ...
+  struct UpdateHelper {
+      start_tilt: f32,
+      start_pan: f32,
++      start_radius: f32,
+      start_camera_matrix: [f32; 16],
+      start_target: [f32; 3],
+  }
+
+  impl UpdateHelper {
+
+      ...
+
++      fn dolly(&self, cam: &OrbitCamera, scene: &mut SceneGraph, delta: f32) {
++          cam.set_radius(scene, self.start_radius + delta);
++      }
   }
 ```
 
 And then let's use it.
 
-```js
-  function addOrbitCameraEventListeners(cam, elem) {
+```rust
+        for event in wgpu_fun::drain_pointer_events() {
+            match event {
 
   ...
 
-
-+    // Dolly when the user uses the wheel
-+    const onWheel = (e) => {
-+      e.preventDefault();
-+      const helper = cam.getUpdateHelper();
-+      helper.dolly(cam.radius * 0.001 * e.deltaY);
-+      render();
-+    };
-
-    elem.addEventListener('pointerup', onUp);
-    elem.addEventListener('pointercancel', onUp);
-    elem.addEventListener('lostpointercapture', onUp);
-    elem.addEventListener('pointerdown', onDown);
-    elem.addEventListener('pointermove', onMove);
-+    elem.addEventListener('wheel', onWheel);
-
-    return () => {
-      elem.removeEventListener('pointerup', onUp);
-      elem.removeEventListener('pointercancel', onUp);
-      elem.removeEventListener('lostpointercapture', onUp);
-      elem.removeEventListener('pointerdown', onDown);
-      elem.removeEventListener('pointermove', onMove);
-+      elem.removeEventListener('wheel', onWheel);
-    };
-  }
+-                PointerEvent::Wheel { .. } => {}
++                // Dolly when the user uses the wheel
++                PointerEvent::Wheel { delta_y, .. } => {
++                    // (e.preventDefault() happens inside wgpu_fun)
++                    let helper = orbit_camera.get_update_helper(&scene);
++                    let radius = orbit_camera.radius(&scene);
++                    helper.dolly(&orbit_camera, &mut scene, radius * 0.001 * delta_y);
++                }
+            }
+        }
 ```
 
 With that small change you should be able to zoom in/out (dolly) with
@@ -716,103 +763,80 @@ move the same speed if we're too close.
 
 ## <a id="a-dolly-by-pinch"></a> Dolly by Pinch
 
-On mobile it's common to pinch to zoom. Let's add that.
+On mobile it's common to pinch to zoom.
 
-```js
-  function addOrbitCameraEventListeners(cam, elem) {
-    let startX;
-    let startY;
-    let lastMode;
-    let camHelper;
-+    let startPinchDistance;
-+    const pointerToLastPosition = new Map();
+The JavaScript original implements this by keeping a
+`Map` of pointer id → last position. When exactly 2 pointers are down it's
+a pinch: it records the distance between them when the pinch starts
+(`computePinchDistance`), and as they move it dollies by how much that
+distance has changed. With more than 2 pointers it gives up.
 
-+    const computePinchDistance = () => {
-+      const pos = [...pointerToLastPosition.values()];
-+      const dx = pos[0].x - pos[1].x;
-+      const dy = pos[0].y - pos[1].y;
-+      return Math.hypot(dx, dy);
-+    };
+As covered in the adaptation note above, wgpu_fun's event queue merges all
+pointers into one stream with no pointer ids, so we can't tell which finger
+a `Move` belongs to and can't compute a pinch distance. What we *can* do is
+count pointers (the JS version's `pointerToLastPosition.size`) and give up
+on 2 or more, the way the JS gives up on 3 or more.
 
-    const updateStartPosition = (e) => {
-      startX = e.clientX;
-      startY = e.clientY;
-+      if (pointerToLastPosition.size === 2) {
-+        startPinchDistance = computePinchDistance();
-+      }
-      camHelper = cam.getUpdateHelper();
-    };
-
-    const onMove = (e) => {
--      if (!canvas.hasPointerCapture(e.pointerId)) {
-+      if (!pointerToLastPosition.has(e.pointerId) ||
-+          !canvas.hasPointerCapture(e.pointerId)) {
-        return;
-      }
-+      pointerToLastPosition.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
--      const mode = e.shiftKey || (e.buttons & 4) !== 0
-+      const mode = pointerToLastPosition.size === 2
-+        ? 'pinch'
-+        : pointerToLastPosition.size > 2
-+        ? 'undefined'
-+        : e.shiftKey || (e.buttons & 4) !== 0
-        ? 'track'
-        : 'panAndTilt';
-
-      if (mode !== lastMode) {
-        lastMode = mode;
-        updateStartPosition(e);
-      }
-
-      const deltaX = e.clientX - startX;
-      const deltaY = e.clientY - startY;
-
-      switch (mode) {
-+        case 'pinch': {
-+          const pinchDistance = computePinchDistance();
-+          const delta = pinchDistance - startPinchDistance;
-+          camHelper.dolly(cam.radius * 0.002 * -delta);
-+          break;
-+        }
-        case 'track': {
-          const s = cam.radius * 0.001;
-          camHelper.track(-deltaX * s, deltaY * s);
-          break;
-        }
-        case 'panAndTilt':
-          camHelper.panAndTilt(deltaX * 0.01, deltaY * 0.01);
-          break;
-      }
-
-      render();
-    };
-
-    const onUp = (e) => {
-+     pointerToLastPosition.delete(e.pointerId);
-     canvas.releasePointerCapture(e.pointerId);
-    };
-
-    const onDown = (e) => {
-      canvas.setPointerCapture(e.pointerId);
-+      pointerToLastPosition.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      updateStartPosition(e);
-    };
+```rust
+    let mut drag_button = 0u32;
++    // The JS version keeps a Map of pointer id -> last position so it can
++    // compute the distance between 2 fingers (a pinch). wgpu_fun's event
++    // queue merges all pointers into one stream with no ids, so we can only
++    // count them (the JS version's pointerToLastPosition.size) and give up
++    // on 2 or more, like the JS gives up on 3 or more.
++    let mut pointer_count = 0i32;
 
     ...
-  }
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
++    Undefined,
+    Track,
+    PanAndTilt,
+}
+
+    ...
+
+                PointerEvent::Down { x, y, button } => {
+                    // canvas.setPointerCapture(e.pointerId);
++                    pointer_count += 1;
+                    drag_button = button;
+                    ...
+                }
+                PointerEvent::Move { x, y } => {
+                    ...
+
+-                    let mode = if drag_button == 1 {
++                    let mode = if pointer_count >= 2 {
++                        // more than one pointer; without pointer ids we
++                        // can't compute a pinch distance, so give up.
++                        Mode::Undefined
++                    } else if drag_button == 1 {
+                        Mode::Track
+                    } else {
+                        Mode::PanAndTilt
+                    };
+
+                    ...
+
+                    match mode {
++                        Mode::Undefined => {}
+                        Mode::Track => {
+                        ...
+                    }
+                }
+                PointerEvent::Up { .. } => {
++                    // pointerToLastPosition.delete(e.pointerId);
++                    pointer_count = (pointer_count - 1).max(0);
+                    // canvas.releasePointerCapture(e.pointerId);
+                    cam_helper = None;
+                }
 ```
 
-Now we tracking the starting position of all pointers. We check if there are 2.
-If so we're pinching, if there are more than 2 then we give up. If there is only
-1 then we're back where we were.
-
-In `computePinchDistance` we get the 2 positions and compute the distance between
-them. We can use that to record how far apart they were when the user started pinching
-and how far apart they are later and apply that to zooming.
-
-If you have a touch screen laptop, or you're on a tablet or phone, 
-maybe you can give it a try.
+So, unlike the original, this version doesn't dolly on pinch — but it also
+won't misbehave when a second finger comes down. If you need real pinch
+support you'd extend wgpu_fun's event plumbing to carry pointer ids, which
+would be a straight port of the JavaScript shown in the original article.
 
 {{{example url="../webgpu-camera-controls-scene-graph-step-05.html"}}}
 
@@ -820,102 +844,86 @@ maybe you can give it a try.
 
 Let's do one more. It's common on some apps that if you double tap the screen
 and then drag your finger it zooms. Google Maps does this for example. Let's add
-that.
+that. This one only needs a single pointer and a clock, so it ports
+directly — we use the frame time where the JavaScript uses
+`performance.now()`.
 
-```js
-  function addOrbitCameraEventListeners(cam, elem) {
-    let startX;
-    let startY;
-    let lastMode;
-    let camHelper;
-+    let doubleTapMode;
-+    let lastSingleTapTime;
-    let startPinchDistance;
-    const pointerToLastPosition = new Map();
+```rust
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Undefined,
++    DoubleTapZoom,
+    Track,
+    PanAndTilt,
+}
+
+    ...
+
+    let mut pointer_count = 0i32;
++    let mut double_tap_mode = false;
++    // performance.now() in the JS version; we use the frame time instead.
++    let mut last_single_tap_time = f64::NEG_INFINITY;
 
     ...
 
-    const onMove = (e) => {
-      if (!pointerToLastPosition.has(e.pointerId) ||
-          !canvas.hasPointerCapture(e.pointerId)) {
-        return;
-      }
-      pointerToLastPosition.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                PointerEvent::Down { x, y, button } => {
++                    const K_DOUBLE_CLICK_TIME_MS: f64 = 300.0;
+                    // canvas.setPointerCapture(e.pointerId);
+                    pointer_count += 1;
+                    drag_button = button;
++                    if pointer_count == 1 {
++                        if !double_tap_mode {
++                            let now = frame.time;
++                            let delta_time = (now - last_single_tap_time) * 1000.0;
++                            if delta_time < K_DOUBLE_CLICK_TIME_MS {
++                                double_tap_mode = true;
++                            }
++                            last_single_tap_time = now;
++                        }
++                    } else {
++                        double_tap_mode = false;
++                    }
+                    // updateStartPosition(e);
+                    start_x = x;
+                    start_y = y;
+                    cam_helper = Some(orbit_camera.get_update_helper(&scene));
+                }
+                PointerEvent::Move { x, y } => {
+                    ...
 
-      const mode = pointerToLastPosition.size === 2
-        ? 'pinch'
-        : pointerToLastPosition.size > 2
-        ? 'undefined'
-+        : doubleTapMode
-+        ? 'doubleTapZoom'
-        : e.shiftKey || (e.buttons & 4) !== 0
-        ? 'track'
-        : 'panAndTilt';
+                    let mode = if pointer_count >= 2 {
+                        Mode::Undefined
++                    } else if double_tap_mode {
++                        Mode::DoubleTapZoom
+                    } else if drag_button == 1 {
+                        Mode::Track
+                    } else {
+                        Mode::PanAndTilt
+                    };
 
-      if (mode !== lastMode) {
-        lastMode = mode;
-        updateStartPosition(e);
-      }
+                    ...
 
-      const deltaX = e.clientX - startX;
-      const deltaY = e.clientY - startY;
-
-      switch (mode) {
-        case 'pinch': {
-          const pinchDistance = computePinchDistance();
-          const delta = pinchDistance - startPinchDistance;
-          camHelper.dolly(cam.radius * 0.002 * -delta);
-          break;
-        }
-        case 'track': {
-          const s = cam.radius * 0.001;
-          camHelper.track(-deltaX * s, deltaY * s);
-          break;
-        }
-        case 'panAndTilt':
-          camHelper.panAndTilt(deltaX * 0.01, deltaY * 0.01);
-          break;
-+        case 'doubleTapZoom':
-+          camHelper.dolly(cam.radius * 0.002 * deltaY);
-+          break;
-      }
-
-      render();
-    };
-
-    const onUp = (e) => {
-      pointerToLastPosition.delete(e.pointerId);
-      canvas.releasePointerCapture(e.pointerId);
-+      if (pointerToLastPosition.size === 0) {
-+        doubleTapMode = false;
-+      }
-    };
-
-+    const kDoubleClickTimeMS = 300;
-    const onDown = (e) => {
-      canvas.setPointerCapture(e.pointerId);
-      pointerToLastPosition.set(e.pointerId, { x: e.clientX, y: e.clientY });
-+      if (pointerToLastPosition.size === 1) {
-+        if (!doubleTapMode) {
-+          const now = performance.now();
-+          const deltaTime = now - lastSingleTapTime;
-+          if (deltaTime < kDoubleClickTimeMS) {
-+            doubleTapMode = true;
-+          }
-+          lastSingleTapTime = now;
-+        }
-+      } else {
-+        doubleTapMode = false;
-+      }
-      updateStartPosition(e);
-    };
-
-    ...
-  }
+                    match mode {
+                        ...
++                        Mode::DoubleTapZoom => {
++                            let radius = orbit_camera.radius(&scene);
++                            helper.dolly(&orbit_camera, &mut scene, radius * 0.002 * delta_y);
++                        }
+                    }
+                }
+                PointerEvent::Up { .. } => {
+                    // pointerToLastPosition.delete(e.pointerId);
+                    pointer_count = (pointer_count - 1).max(0);
+                    // canvas.releasePointerCapture(e.pointerId);
+                    cam_helper = None;
++                    if pointer_count == 0 {
++                        double_tap_mode = false;
++                    }
+                }
 ```
 
-The code checks if there is a single `pointerdown` and checks the time between that and
-the last single `pointerdown`. If it's below `kDoubleClickTime` then we're in `doubleTapMode`
+The code checks if there is a single `Down` and checks the time between that and
+the last single `Down`. If it's below `K_DOUBLE_CLICK_TIME_MS` then we're in `double_tap_mode`
 and we can adjust the zoom based on the distance from where the 2nd tap started.
 
 ATM, this will work with the mouse or a touch screen. Is it appropriate for a mouse?
@@ -935,99 +943,75 @@ For tilt, pan, and dolly, nothing needs to change as all of these are
 relative to the camera itself but for track, we need to do some extra
 work since the target of the camera is relative to its parent node.
 
-To fix this, first, we should probably remove the `target` setter
-as it's mis-leading. We'll make a `setTarget` function that takes
+To fix this, first, we should probably replace the plain `set_target`
+setter as it's mis-leading. We'll make it take a world position and take
 the camera's parent into account.
 
-```js
-  class OrbitCamera {
-
-   ...
-
-    get target() { return vec3.copy(this.#camTarget.source.translation); }
--    set target(v) { vec3.copy(v, this.#camTarget.source.translation); }
-_    setTarget(worldPosition) {
-_      const inv = mat4.inverse(this.#camTarget.parent?.worldMatrix ?? mat4.identity());
-_      vec3.transformMat4(worldPosition, inv, this.#camTarget.source.translation);
-_    }
-  }
+```rust
+    fn target(&self, scene: &SceneGraph) -> [f32; 3] {
+        scene.nodes[self.cam_target].source.as_ref().unwrap().translation
+    }
+-    fn set_target(&self, scene: &mut SceneGraph, v: [f32; 3]) {
+-        scene.nodes[self.cam_target].source.as_mut().unwrap().translation = v;
+-    }
++    fn set_target(&self, scene: &mut SceneGraph, world_position: [f32; 3]) {
++        // this.#camTarget.parent?.worldMatrix ?? mat4.identity()
++        let parent_world_matrix = match scene.nodes[self.cam_target].parent {
++            Some(parent) => scene.nodes[parent].world_matrix,
++            None => m4::identity(),
++        };
++        let inv = m4::inverse(&parent_world_matrix);
++        scene.nodes[self.cam_target].source.as_mut().unwrap().translation =
++            vec3::transform_mat4(world_position, &inv);
++    }
 ```
 
-We also need to add `vec3.transformMat4` which is the same math
+We also need to add `vec3::transform_mat4` which is the same math
 we use in our vertex shader for `uni.matrix * vert.position` just
-translated to JavaScript.
+translated to Rust.
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-  transformMat3(v, m, dst) {
-    dst = dst ?? new Float32Array(3);
 
-    const x = v[0];
-    const y = v[1];
-    const z = v[2];
-
-    dst[0] = x * m[0] + y * m[4] + z * m[8];
-    dst[1] = x * m[1] + y * m[5] + z * m[9];
-    dst[2] = x * m[2] + y * m[6] + z * m[10];
-
-    return dst;
-  },
-
-+  transformMat4(v, m, dst) {
-+    dst = dst ?? new Float32Array(3);
++    pub fn transform_mat4(v: [f32; 3], m: &[f32; 16]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    const x = v[0];
-+    const y = v[1];
-+    const z = v[2];
-+    const w = (m[3] * x + m[7] * y + m[11] * z + m[15]) || 1;
++        let x = v[0];
++        let y = v[1];
++        let z = v[2];
++        let w = m[3] * x + m[7] * y + m[11] * z + m[15];
++        let w = if w == 0.0 { 1.0 } else { w }; // the JS version's `|| 1`
 +
-+    dst[0] = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
-+    dst[1] = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
-+    dst[2] = (m[2] * x + m[6] * y + m[10] * z + m[14]) / w;
++        dst[0] = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
++        dst[1] = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
++        dst[2] = (m[2] * x + m[6] * y + m[10] * z + m[14]) / w;
 +
-+    return dst;
-+  },
-};
-```
-
-With the setter removed we need to fix the code what was using it.
-
-```js
-  const orbitCamera = new OrbitCamera();
-  orbitCamera.setParent(root);
--  orbitCamera.target = [120, 80, 0];
-+  orbitCamera.setTarget([120, 80, 0]);
-  orbitCamera.tilt = Math.PI * -0.2;
-  orbitCamera.radius = 300;
++        dst
++    }
+}
 ```
 
 We also need to refactor the helper's `track` function to
 take into account it might not be at the root and adjust the delta
 to be relative to the camera's parent.
 
-```js
-  class OrbitCamera {
-
-    ...
-
-    getUpdateHelper() {
-
-      ...
-
-        track: (deltaX, deltaY) => {
--          const direction = vec3.transformMat3([deltaX, deltaY, 0], startCameraMatrix);
--          this.target = vec3.add(startTarget, direction);
-+          const worldDirection = vec3.transformMat3([deltaX, deltaY, 0], startCameraMatrix);
-+          const inv = mat4.inverse(this.#camTarget.parent?.worldMatrix ?? mat4.identity());
-+          const cameraDirection = vec3.transformMat3(worldDirection, inv);
--          this.target = vec3.add(startTarget, cameraDirection);
-+          vec3.add(startTarget, cameraDirection, this.#camTarget.source.translation);
-        },
-
-      ...
+```rust
+    fn track(&self, cam: &OrbitCamera, scene: &mut SceneGraph, delta_x: f32, delta_y: f32) {
+-        let direction = vec3::transform_mat3([delta_x, delta_y, 0.0], &self.start_camera_matrix);
+-        cam.set_target(scene, vec3::add(self.start_target, direction));
++        let world_direction =
++            vec3::transform_mat3([delta_x, delta_y, 0.0], &self.start_camera_matrix);
++        // this.#camTarget.parent?.worldMatrix ?? mat4.identity()
++        let parent_world_matrix = match scene.nodes[cam.cam_target].parent {
++            Some(parent) => scene.nodes[parent].world_matrix,
++            None => m4::identity(),
++        };
++        let inv = m4::inverse(&parent_world_matrix);
++        let camera_direction = vec3::transform_mat3(world_direction, &inv);
++        scene.nodes[cam.cam_target].source.as_mut().unwrap().translation =
++            vec3::add(self.start_target, camera_direction);
     }
-  }
 ```
 
 The direction we were computing before was a direction in world space.
@@ -1038,13 +1022,33 @@ we need.
 
 Let's put the camera on some extra scene graph nodes
 
-```js
-  const orbitCamera = new OrbitCamera();
--  orbitCamera.setParent(root);
-+  const extraRot = addTRSSceneGraphNode('extra-rot', root, { rotation: [0, 0, Math.PI * 0.35] });
-+  const extraMov = addTRSSceneGraphNode('extra-mov', extraRot, { translation: [-30, -90, 40] });
-+  orbitCamera.setParent(extraMov);
+```rust
+    let orbit_camera = OrbitCamera::new(&mut scene);
+-    orbit_camera.set_parent(&mut scene, root);
++    let extra_rot = add_trs_scene_graph_node(
++        &mut scene,
++        "extra-rot",
++        Some(root),
++        TRS {
++            rotation: [0.0, 0.0, std::f32::consts::PI * 0.35],
++            ..Default::default()
++        },
++    );
++    let extra_mov = add_trs_scene_graph_node(
++        &mut scene,
++        "extra-mov",
++        Some(extra_rot),
++        TRS {
++            translation: [-30.0, -90.0, 40.0],
++            ..Default::default()
++        },
++    );
++    orbit_camera.set_parent(&mut scene, extra_mov);
+    orbit_camera.set_target(&mut scene, [120.0, 80.0, 0.0]);
 ```
+
+(and the page's mirror gets the same `extra-rot` and `extra-mov` nodes so
+the node indices keep matching.)
 
 You should set tracking still works.
 
@@ -1057,252 +1061,277 @@ to move the camera to show that object. To do that requires knowing how large ea
 object is. For this specific case, we happen to know everything on the screen is a unit cube.
 We can store some extents on our data but for now just set them all to cover our cube.
 
-```js
-function createCubeVertices() {
-  const positions = [
-    // left
-    0, 0,  0,
-    0, 0, -1,
-    0, 1,  0,
-    0, 1, -1,
+```rust
++struct Aabb {
++    min: [f32; 3],
++    max: [f32; 3],
++}
 
-    // right
-    1, 0,  0,
-    1, 0, -1,
-    1, 1,  0,
-    1, 1, -1,
-  ];
+#[rustfmt::skip]
+-fn create_cube_vertices() -> (Vec<f32>, u32) {
++fn create_cube_vertices() -> (Vec<f32>, u32, Aabb) {
+    let positions: Vec<f32> = vec![
+        // left
+        0.0, 0.0,  0.0,
+        0.0, 0.0, -1.0,
+        0.0, 1.0,  0.0,
+        0.0, 1.0, -1.0,
 
-  ...
+        // right
+        1.0, 0.0,  0.0,
+        1.0, 0.0, -1.0,
+        1.0, 1.0,  0.0,
+        1.0, 1.0, -1.0,
+    ];
 
-  return {
-    vertexData,
-    numVertices,
-+    aabb: {
-+      min: [ 0,  0, -1],
-+      max: [ 1,  1,  0],
-+    },
-  };
+    ...
+
+-    (vertex_data, num_vertices)
++    (vertex_data, num_vertices, Aabb {
++        min: [ 0.0,  0.0, -1.0],
++        max: [ 1.0,  1.0,  0.0],
++    })
+}
 ```
 
-`aabb` stands for Axis Aligned Bounding Box. We can easily see
+`Aabb` stands for Axis Aligned Bounding Box. We can easily see
 this matches our cube. If we had different data we'd have to scan it
 for the min and max values.
 
 We need to bubble this data up to our mesh vertices
 
-```js
--  function createVertices({vertexData, numVertices}, name) {
-  function createVertices({vertexData, numVertices, aabb}, name) {
-    const vertexBuffer = device.createBuffer({
-      label: `${name}: vertex buffer vertices`,
-      size: vertexData.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+```rust
+struct Vertices {
+    vertex_buffer: wgpu::Buffer,
+    num_vertices: u32,
++    aabb: Aabb,
+}
+
+fn create_vertices(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+-    (vertex_data, num_vertices): (Vec<f32>, u32),
++    (vertex_data, num_vertices, aabb): (Vec<f32>, u32, Aabb),
+    name: &str,
+) -> Vertices {
+    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(&format!("{name}: vertex buffer vertices")),
+        size: (vertex_data.len() * 4) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
-    device.queue.writeBuffer(vertexBuffer, 0, vertexData);
-    return {
-      vertexBuffer,
-      numVertices,
-+      aabb,
-    };
+    queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+    Vertices {
+        vertex_buffer,
+        num_vertices,
++        aabb,
+    }
+}
 ```
 
 We need a function that given a mesh, computes the AABB for that
 mesh in world space since it will have been oriented by our scene graph.
 
-```js
-  function computeAABBForMesh(mesh) {
-    const mat = mesh.node.worldMatrix;
-    const p0 = mesh.vertices.aabb.min;
-    const p1 = mesh.vertices.aabb.max;
-    let min;
-    let max;
-    for (let i = 0; i < 8; ++i) {
-      const p = [
-        (i & 1) ? p0[0] : p1[0],
-        (i & 2) ? p0[1] : p1[1],
-        (i & 4) ? p0[2] : p1[2],
-      ];
-      vec3.transformMat4(p, mat, p);
-      if (i === 0) {
-        min = p.slice();
-        max = p.slice();
-      } else {
-        vec3.min(min, p, min);
-        vec3.max(max, p, max);
-      }
+```rust
+fn compute_aabb_for_mesh(mesh: &Mesh, scene: &SceneGraph, vertex_sets: &[Vertices]) -> Aabb {
+    let mat = &scene.nodes[mesh.node].world_matrix;
+    let p0 = vertex_sets[mesh.vertices].aabb.min;
+    let p1 = vertex_sets[mesh.vertices].aabb.max;
+    let mut min = [0.0; 3];
+    let mut max = [0.0; 3];
+    for i in 0..8 {
+        let p = [
+            if i & 1 != 0 { p0[0] } else { p1[0] },
+            if i & 2 != 0 { p0[1] } else { p1[1] },
+            if i & 4 != 0 { p0[2] } else { p1[2] },
+        ];
+        let p = vec3::transform_mat4(p, mat);
+        if i == 0 {
+            min = p;
+            max = p;
+        } else {
+            min = vec3::min(min, p);
+            max = vec3::max(max, p);
+        }
     }
-    return { min, max };
-  }
+    Aabb { min, max }
+}
 ```
 
 This used 2 more `vec3` functions we need to add. `min`, and `max`
 that return the a `vec3` that contains the min or max of each component
 of 2 vec3s.
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
 
-+  min(a, b, dst) {
-+    dst = dst ?? new Float32Array(3);
++    pub fn min(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    dst[0] = Math.min(a[0], b[0]);
-+    dst[1] = Math.min(a[1], b[1]);
-+    dst[2] = Math.min(a[2], b[2]);
++        dst[0] = a[0].min(b[0]);
++        dst[1] = a[1].min(b[1]);
++        dst[2] = a[2].min(b[2]);
 +
-+    return dst;
-+  },
++        dst
++    }
 +
-+  max(a, b, dst) {
-+    dst = dst ?? new Float32Array(3);
++    pub fn max(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    dst[0] = Math.max(a[0], b[0]);
-+    dst[1] = Math.max(a[1], b[1]);
-+    dst[2] = Math.max(a[2], b[2]);
++        dst[0] = a[0].max(b[0]);
++        dst[1] = a[1].max(b[1]);
++        dst[2] = a[2].max(b[2]);
 +
-+    return dst;
-+  },
++        dst
++    }
 
   ...
-};
+}
 ```
 
 Then, we need a function to go through the selected meshes and gives
 us their combined AABB.
 
-```js
-  function expandAABBInPlace(aabb, otherAABB) {
-    vec3.min(aabb.min, otherAABB.min, aabb.min);
-    vec3.max(aabb.max, otherAABB.max, aabb.max);
-  }
+```rust
+fn expand_aabb_in_place(aabb: &mut Aabb, other_aabb: &Aabb) {
+    aabb.min = vec3::min(aabb.min, other_aabb.min);
+    aabb.max = vec3::max(aabb.max, other_aabb.max);
+}
 
-  function getAABBForSelectedMeshes() {
-    if (selectedMeshes.length === 0) {
-      return undefined;
+fn get_aabb_for_selected_meshes(
+    selected_meshes: &[&Mesh],
+    scene: &SceneGraph,
+    vertex_sets: &[Vertices],
+) -> Option<Aabb> {
+    if selected_meshes.is_empty() {
+        return None;
     }
-    const aabb = computeAABBForMesh(selectedMeshes[0]);
-    for (let i = 1; i < selectedMeshes.length; ++i) {
-      expandAABBInPlace(aabb, computeAABBForMesh(selectedMeshes[i]));
+    let mut aabb = compute_aabb_for_mesh(selected_meshes[0], scene, vertex_sets);
+    for mesh in &selected_meshes[1..] {
+        expand_aabb_in_place(
+            &mut aabb,
+            &compute_aabb_for_mesh(mesh, scene, vertex_sets),
+        );
     }
-    return aabb;
-  }
+    Some(aabb)
+}
 ```
 
-With that we can make a function that frames the selected meshes
+With that we can write the code that frames the selected meshes. In the
+JavaScript version this is a `frameSelected` function called by a GUI
+button. In our port the page's button just bumps a `frameSelected` setting
+and the Rust side runs the code once per press, in the frame callback,
+right after `selected_meshes` has been gathered.
 
-```js
-  function frameSelected() {
-    if (selectedMeshes.length === 0) {
-      return;
-    }
-
-    // get aabb bounds for the selected objects.
-    const aabb = getAABBForSelectedMeshes();
-
-    const extent = vec3.subtract(aabb.max, aabb.min);
-    const diameter = vec3.distance(aabb.min, aabb.max);
-
-    // compute how far we need to set the radius for the selected
-    // objects to be framed.
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const fieldOfViewH = 2 * Math.atan(Math.tan(settings.fieldOfView) * aspect);
-    const fov = Math.min(fieldOfViewH, settings.fieldOfView);
-    const zoomScale = 1.5; // make it 1.5 times as large for some padding.
-    const halfSize = diameter * zoomScale * 0.5;
-    const distance = halfSize / Math.tan(fov * 0.5);
-
-    orbitCamera.radius = distance;
-
-    // point the camera at the center
-    const center = vec3.addScaled(aabb.min, extent, 0.5);
-    orbitCamera.setTarget(center);
-
-    render();
-  }
+```rust
++        // The page's "frame selected" button bumps the `frameSelected`
++        // setting; run the JS version's frameSelected() once per press.
++        let frame_selected_id = wgpu_fun::setting_f64("frameSelected", 0.0);
++        if frame_selected_id != last_frame_selected_id {
++            last_frame_selected_id = frame_selected_id;
++            if !selected_meshes.is_empty() {
++                // In the JS version the world matrices are up to date from
++                // the previous render; make sure they are here too.
++                scene.update_world_matrix(root);
++
++                // get aabb bounds for the selected objects.
++                let aabb =
++                    get_aabb_for_selected_meshes(&selected_meshes, &scene, &vertex_sets).unwrap();
++
++                let extent = vec3::subtract(aabb.max, aabb.min);
++                let diameter = vec3::distance(aabb.min, aabb.max);
++
++                // compute how far we need to set the radius for the selected
++                // objects to be framed.
++                let aspect = frame.width as f32 / frame.height as f32;
++                let field_of_view_h = 2.0 * (field_of_view.tan() * aspect).atan();
++                let fov = field_of_view_h.min(field_of_view);
++                let zoom_scale = 1.5; // make it 1.5 times as large for some padding.
++                let half_size = diameter * zoom_scale * 0.5;
++                let distance = half_size / (fov * 0.5).tan();
++
++                orbit_camera.set_radius(&mut scene, distance);
++
++                // point the camera at the center
++                let center = vec3::add_scaled(aabb.min, extent, 0.5);
++                orbit_camera.set_target(&mut scene, center);
++            }
++        }
 ```
 
 The code above gets the AABB for the selected meshes. The diameter
 of a sphere that would contain this AABB is just the distance between
 2 opposite corners. Once we have that diameter we compute how far away
-a camera needs to be give its current `fieldOfView`. The field of view
-setting of our `mat4.perspective` function is the vertical field of view.
+a camera needs to be give its current `field_of_view`. The field of view
+setting of our `m4::perspective` function is the vertical field of view.
 so based on that and the aspect we horizontal field of view and use
 whichever is smaller and then use that to compute how far away we need
-to be so our sphere would fit. We use `zoomScale` to make our sphere 1.5x
+to be so our sphere would fit. We use `zoom_scale` to make our sphere 1.5x
 as large as the sphere that contains our AABB so we'll get some padding.
 We then just the radius of the camera to that distance.
 
 Finally we point the camera's target at the AABB's center point.
 
-We need to supply a few more `vec3` functions, `distance` and `addScaled`
+We need to supply a few more `vec3` functions, `distance` and `add_scaled`
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-+  distance(a, b) {
-+    const dx = a[0] - b[0];
-+    const dy = a[1] - b[1];
-+    const dz = a[2] - b[2];
-+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
-+  },
 
-...
-
-+  addScaled(a, b, scale, dst) {
-+      dst = dst || new Float32Array(3);
-+
-+      dst[0] = a[0] + b[0] * scale;
-+      dst[1] = a[1] + b[1] * scale;
-+      dst[2] = a[2] + b[2] * scale;
-+
-+      return dst;
-+  },
-
++    pub fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
++        let dx = a[0] - b[0];
++        let dy = a[1] - b[1];
++        let dz = a[2] - b[2];
++        (dx * dx + dy * dy + dz * dz).sqrt()
++    }
 
   ...
-};
+
++    pub fn add_scaled(a: [f32; 3], b: [f32; 3], scale: f32) -> [f32; 3] {
++        let mut dst = [0.0; 3];
++
++        dst[0] = a[0] + b[0] * scale;
++        dst[1] = a[1] + b[1] * scale;
++        dst[2] = a[2] + b[2] * scale;
++
++        dst
++    }
+
+  ...
+}
 ```
 
-`distance` computes the distance between 2 `vec3`s. `addScaled` effectively
+`distance` computes the distance between 2 `vec3`s. `add_scaled` effectively
 does `a + b * scale`. It makes it easy to add some portion of `b` to `a`.
 
-We need to add a `fieldOfView` to settings
+We need a `field_of_view` we can share between the projection matrix and
+the framing code
 
-```js
-  const settings = {
-+    fieldOfView: degToRad(60),
-    showMeshNodes: false,
-    showAllTRS: false,
-  };
+```rust
++    let field_of_view = 60.0f32.to_radians();
 
-  function render() {
     ...
 
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(
--        degToRad(60), // fieldOfView,
-+        settings.fieldOfView,
-        aspect,
-        1,      // zNear
-        2000,   // zFar
-    );
+        let aspect = frame.width as f32 / frame.height as f32;
+        let projection = m4::perspective(
+-            60.0f32.to_radians(), // fieldOfView,
++            field_of_view,
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
 ```
 
-We also need to add a "frame selected" button
+We also need to add a "frame selected" button on the page
 
 ```js
-  const uiElem = document.querySelector('#ui');
-  const gui = new GUI({
-    parent: uiElem,
-  });
-  gui.onChange(() => {
-    uiElem.classList.toggle('hide-ui', !gui.isOpen());
-    render();
-  });
   gui.add(settings, 'showMeshNodes').onChange(showMeshNodes);
   gui.add(settings, 'showAllTRS').onChange(showTRS);
-+  gui.addButton('frame selected', frameSelected);
++  // each press bumps the frameSelected setting so the Rust module runs
++  // frameSelected() once per press
++  let frameSelectedId = 0;
++  gui.addButton('frame selected', () => wasm.set_setting_num('frameSelected', ++frameSelectedId));
   const trsFolder = gui.addFolder('orientation').listen();
 ```
 
@@ -1310,27 +1339,42 @@ Let's also add a parent node that contains
 all 4 cabinets. That way we'll have something to
 select that we can frame the entire thing.
 
-```js
-+  const cabinets = addTRSSceneGraphNode('cabinets', root);
-  // Add cabinets
-  for (let cabinetNdx = 0; cabinetNdx < kNumCabinets; ++cabinetNdx) {
--    addCabinet(root, cabinetNdx);
-+    addCabinet(cabinets, cabinetNdx);
-  }
-
-  ...
-
--  setCurrentSceneGraphNode(root.children[2]);
-+  setCurrentSceneGraphNode(cabinets.children[1]);
+```rust
++    let cabinets = add_trs_scene_graph_node(&mut scene, "cabinets", Some(root), TRS::default());
+    // Add cabinets
+    for cabinet_ndx in 0..K_NUM_CABINETS {
+-        add_cabinet(&mut scene, &mut meshes, root, cabinet_ndx);
++        add_cabinet(&mut scene, &mut meshes, cabinets, cabinet_ndx);
+    }
 ```
+
+(with the matching change on the page's mirror, where the default selected
+node also becomes `cabinets.children[1]`.)
 
 And while we're at it lets remove the extra rotation and translation
 
-```js
--  const extraRot = addTRSSceneGraphNode('extra-rot', root, { rotation: [0, 0, Math.PI * 0.35] });
--  const extraMov = addTRSSceneGraphNode('extra-mov', extraRot, { translation: [-30, -90, 40] });
-+  const extraRot = addTRSSceneGraphNode('extra-rot', root);
-+  const extraMov = addTRSSceneGraphNode('extra-mov', extraRot);
+```rust
+-    let extra_rot = add_trs_scene_graph_node(
+-        &mut scene,
+-        "extra-rot",
+-        Some(root),
+-        TRS {
+-            rotation: [0.0, 0.0, std::f32::consts::PI * 0.35],
+-            ..Default::default()
+-        },
+-    );
+-    let extra_mov = add_trs_scene_graph_node(
+-        &mut scene,
+-        "extra-mov",
+-        Some(extra_rot),
+-        TRS {
+-            translation: [-30.0, -90.0, 40.0],
+-            ..Default::default()
+-        },
+-    );
++    let extra_rot = add_trs_scene_graph_node(&mut scene, "extra-rot", Some(root), TRS::default());
++    let extra_mov =
++        add_trs_scene_graph_node(&mut scene, "extra-mov", Some(extra_rot), TRS::default());
 ```
 
 Try selecting an object and the picking "Frame selected".
@@ -1347,7 +1391,7 @@ Some off of them include:
   Roll is like when you tilt your head left / right.
 
   Adding roll would just be a matter of adding one more node at the end
-  with a z rotation of our current rig between `#camExtend` and `#cam`.
+  with a z rotation of our current rig between `cam_extend` and `cam`.
 
 * Should it be like we have it, just letting you drag, or should you it require some other way to adjust
   the camera.
@@ -1364,7 +1408,7 @@ Some off of them include:
 
 * What should happen on mobile?
 
-  We didn't provide a solution for tracking the camera on mobile. Our only current method requires holding shift. Using an icon to drag on would
+  We didn't provide a solution for tracking the camera on mobile. Our only current method requires the middle mouse button. Using an icon to drag on would
   work. I think some viewers use 2 fingers to track.
 
 * Should it allow tilting past 90 degrees?
@@ -1400,68 +1444,114 @@ Some off of them include:
 If you understood how a scene graph works from [the article on scene graphs](webgpu-scene-graphs.html)
 then it should be pretty clear. We just need code like
 
-```js
-   class OrbitCamera {
-    #target = vec3.create();
-    #pan = 0;
-    #tilt = 0;
-    #radius = 0;
+```rust
+// An OrbitCamera that is not based on scene graph nodes. It keeps its own
+// target/pan/tilt/radius and does the math itself.
+struct OrbitCamera {
+    target: [f32; 3],
+    pan: f32,
+    tilt: f32,
+    radius: f32,
+}
 
-    constructor() {}
-
-    getCameraMatrix(parentMatrix) {
-      const mat = mat4.copy(parentMatrix ?? mat4.identity());
-      mat4.translate(mat, this.#target, mat);
-      mat4.rotateY(mat, this.#pan, mat);
-      mat4.rotateX(mat, this.#tilt, mat);
-      mat4.translate(mat, [0, 0, this.#radius], mat);
-      return mat;
+impl OrbitCamera {
+    fn new() -> Self {
+        OrbitCamera {
+            target: vec3::create(),
+            pan: 0.0,
+            tilt: 0.0,
+            radius: 0.0,
+        }
     }
 
-    getUpdateHelper(parentMatrix) {
-      const startTilt = this.tilt;
-      const startPan = this.pan;
-      const startRadius = this.radius;
-      const startCameraMatrix = mat4.copy(this.getCameraMatrix());
-      const startTarget = vec3.copy(this.target);
-
-      return {
-        panAndTilt: (deltaPan, deltaTilt) => {
-          this.tilt = startTilt - deltaTilt;
-          this.pan = startPan - deltaPan;
-        },
-        track: (deltaX, deltaY) => {
-          const worldDirection = vec3.transformMat3([deltaX, deltaY, 0], startCameraMatrix);
-          const inv = mat4.inverse(parentMatrix ?? mat4.identity());
-          const cameraDirection = vec3.transformMat3(worldDirection, inv);
-          this.target = vec3.add(startTarget, cameraDirection);
-        },
-        dolly: (delta) => {
-          this.radius = startRadius + delta;
-        },
-      };
+    fn get_camera_matrix(&self, parent_matrix: Option<&[f32; 16]>) -> [f32; 16] {
+        let mut mat = match parent_matrix {
+            Some(m) => *m,
+            None => m4::identity(),
+        };
+        mat = m4::translate(&mat, self.target);
+        mat = m4::rotate_y(&mat, self.pan);
+        mat = m4::rotate_x(&mat, self.tilt);
+        mat = m4::translate(&mat, [0.0, 0.0, self.radius]);
+        mat
     }
 
-    get pan() { return this.#pan; }
-    set pan(v) { this.#pan = v; }
-    get tilt() { return this.#tilt; }
-    set tilt(v) { this.#tilt = v; }
-    get radius() { return this.#radius; }
-    set radius(v) { this.#radius = v; }
-    get target() { return vec3.copy(this.#target); }
-    set target(v) { vec3.copy(v, this.#target); }
-  }
+    fn set_target(&mut self, world_position: [f32; 3], parent_matrix: Option<&[f32; 16]>) {
+        let inv = m4::inverse(&match parent_matrix {
+            Some(m) => *m,
+            None => m4::identity(),
+        });
+        self.target = vec3::transform_mat4(world_position, &inv);
+    }
+
+    fn get_update_helper(&self) -> UpdateHelper {
+        UpdateHelper {
+            start_tilt: self.tilt,
+            start_pan: self.pan,
+            start_radius: self.radius,
+            start_camera_matrix: self.get_camera_matrix(None),
+            start_target: self.target,
+        }
+    }
+}
+
+struct UpdateHelper {
+    start_tilt: f32,
+    start_pan: f32,
+    start_radius: f32,
+    start_camera_matrix: [f32; 16],
+    start_target: [f32; 3],
+}
+
+impl UpdateHelper {
+    fn pan_and_tilt(&self, cam: &mut OrbitCamera, delta_pan: f32, delta_tilt: f32) {
+        cam.tilt = self.start_tilt - delta_tilt;
+        cam.pan = self.start_pan - delta_pan;
+    }
+
+    fn track(
+        &self,
+        cam: &mut OrbitCamera,
+        delta_x: f32,
+        delta_y: f32,
+        parent_matrix: Option<&[f32; 16]>,
+    ) {
+        let world_direction =
+            vec3::transform_mat3([delta_x, delta_y, 0.0], &self.start_camera_matrix);
+        let inv = m4::inverse(&match parent_matrix {
+            Some(m) => *m,
+            None => m4::identity(),
+        });
+        let camera_direction = vec3::transform_mat3(world_direction, &inv);
+        cam.target = vec3::add(self.start_target, camera_direction);
+    }
+
+    fn dolly(&self, cam: &mut OrbitCamera, delta: f32) {
+        cam.radius = self.start_radius + delta;
+    }
+}
 ```
+
+The JavaScript version's private fields and getters/setters become plain
+struct fields, and since the camera is no longer read and written through
+the scene graph the helper methods take `&mut OrbitCamera` directly.
 
 Popping that in our example we need one more minor change. Since it's not in the scene graph
 we need to not add it to the scene graph.
 
-```js
-  const orbitCamera = new OrbitCamera();
--  orbitCamera.setParent(root);
-  orbitCamera.target = [120, 80, 0];
-  orbitCamera.tilt = Math.PI * -0.2;
-  orbitCamera.radius = 300;
+```rust
+-    let orbit_camera = OrbitCamera::new(&mut scene);
+-    let extra_rot = add_trs_scene_graph_node(&mut scene, "extra-rot", Some(root), TRS::default());
+-    let extra_mov =
+-        add_trs_scene_graph_node(&mut scene, "extra-mov", Some(extra_rot), TRS::default());
+-    orbit_camera.set_parent(&mut scene, extra_mov);
+-    orbit_camera.set_target(&mut scene, [120.0, 80.0, 0.0]);
+-    orbit_camera.set_tilt(&mut scene, std::f32::consts::PI * -0.2);
+-    orbit_camera.set_radius(&mut scene, 300.0);
++    let mut orbit_camera = OrbitCamera::new();
++    orbit_camera.set_target([120.0, 80.0, 0.0], None);
++    orbit_camera.tilt = std::f32::consts::PI * -0.2;
++    orbit_camera.radius = 300.0;
 ```
 
 And it works 
