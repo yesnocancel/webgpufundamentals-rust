@@ -5,6 +5,16 @@ TOC: WebGPU from WebGL
 This article is meant for people who already know WebGL and want to start
 using WebGPU.
 
+One note about this site: the WebGPU examples here are written in
+[Rust](https://www.rust-lang.org/) using [wgpu](https://wgpu.rs/) and compiled
+to WebAssembly to run in the browser, so the WebGPU side of the comparisons
+below is Rust code. The JavaScript WebGPU API and wgpu map to each other
+almost 1:1 — `createRenderPipeline` becomes `create_render_pipeline`,
+`writeBuffer` becomes `write_buffer` (camelCase ↔ snake_case) — so every
+comparison below holds whichever language you use WebGPU from. See
+[the fundamentals article](webgpu-fundamentals.html) for how the Rust
+examples are set up.
+
 If you're coming from WebGL to WebGPU it's worth noting that many of the
 concepts are the same. Both WebGL and WebGPU let you run small functions on the
 GPU. WebGL has vertex shaders and fragment shaders. WebGPU has the same plus

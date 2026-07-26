@@ -368,8 +368,7 @@ async fn run() {
                 wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
             ];
 
-            let mut matrix_value =
-                m4::projection(frame.width as f32, frame.height as f32, 400.0);
+            let mut matrix_value = m4::projection(frame.width as f32, frame.height as f32, 400.0);
             matrix_value = m4::translate(&matrix_value, translation);
             matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
             matrix_value = m4::rotate_y(&matrix_value, rotation[1]);

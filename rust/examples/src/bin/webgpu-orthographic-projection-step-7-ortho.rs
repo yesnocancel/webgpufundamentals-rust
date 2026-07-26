@@ -481,12 +481,12 @@ async fn run() {
             ];
 
             let mut matrix_value = m4::ortho(
-                0.0,                   // left
-                frame.width as f32,    // right
-                frame.height as f32,   // bottom
-                0.0,                   // top
-                400.0,                 // near
-                -400.0,                // far
+                0.0,                 // left
+                frame.width as f32,  // right
+                frame.height as f32, // bottom
+                0.0,                 // top
+                400.0,               // near
+                -400.0,              // far
             );
             matrix_value = m4::translate(&matrix_value, translation);
             matrix_value = m4::rotate_x(&matrix_value, rotation[0]);

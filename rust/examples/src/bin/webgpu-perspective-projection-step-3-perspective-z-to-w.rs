@@ -492,12 +492,12 @@ async fn run() {
             let fudge_factor = wgpu_fun::setting_f64("fudgeFactor", 10.0) as f32;
 
             let projection = m4::ortho(
-                0.0,                   // left
-                frame.width as f32,    // right
-                frame.height as f32,   // bottom
-                0.0,                   // top
-                1200.0,                // near
-                -1000.0,               // far
+                0.0,                 // left
+                frame.width as f32,  // right
+                frame.height as f32, // bottom
+                0.0,                 // top
+                1200.0,              // near
+                -1000.0,             // far
             );
             let mut matrix_value = m4::multiply(&make_z_to_w_matrix(fudge_factor), &projection);
             matrix_value = m4::translate(&matrix_value, translation);

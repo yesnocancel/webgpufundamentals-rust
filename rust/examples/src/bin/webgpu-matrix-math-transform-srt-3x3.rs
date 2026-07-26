@@ -297,8 +297,7 @@ async fn run() {
                 .copy_from_slice(&[frame.width as f32, frame.height as f32]);
             // copy each column of 3 values, followed by 1 float of padding
             uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 3].copy_from_slice(&matrix[0..3]);
-            uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7]
-                .copy_from_slice(&matrix[3..6]);
+            uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7].copy_from_slice(&matrix[3..6]);
             uniform_values[K_MATRIX_OFFSET + 8..K_MATRIX_OFFSET + 11]
                 .copy_from_slice(&matrix[6..9]);
 
