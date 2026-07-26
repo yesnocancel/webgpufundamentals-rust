@@ -272,10 +272,11 @@ impl App {
 
         // Watch the canvas's device-pixel size, like the JS lessons do.
         {
-            let app = app.clone();
+            let app2 = app.clone();
             let size = size.clone();
             let render = render.clone();
             let observer_cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+                let app = &app2;
                 for entry in entries.iter() {
                     let entry: web_sys::ResizeObserverEntry = entry.dyn_into().unwrap();
                     let (mut width, mut height);
