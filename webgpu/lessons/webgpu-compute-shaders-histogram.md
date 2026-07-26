@@ -12,7 +12,8 @@ previous step.
 Further, we're going to mention speed and timing but the articles
 and examples would get even longer if we added the code to do the timing so
 we'll leave timing to [another article](webgpu-timing.html) and in these
-articles I'll just mention my own timing and provide some run-able examples.
+articles I'll just mention the timings the author of the original JavaScript
+article measured on his own machines and provide some run-able examples.
 Hopefully this article will provide one example of making a compute shader.
 
 An image histogram is where you sum up all the pixels in an image by their values or
@@ -36,16 +37,12 @@ It has these colors.
 </div>
 
 For each color we can compute a luminance level, (how bright it is). Looking online I found this
-formula
+formula. It returns a value from 0 to 1 for luminance, where r, g, b each go from 0 to 1.
 
-```js
-// Returns a value from 0 to 1 for luminance.
-// where r, g, b each go from 0 to 1.
-function srgbLuminance(r, g, b) {
-  // from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
-  return r * 0.2126 +
-         g * 0.7152 +
-         b * 0.0722;
+```rust
+// from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
+fn srgb_luminance(r: f32, g: f32, b: f32) -> f32 {
+  r * 0.2126 + g * 0.7152 + b * 0.0722
 }
 ```
 
@@ -93,29 +90,30 @@ and we count up the pixel luminance values, separate them into say 256 bins, and
   </div>
 </div>
 
-Computing an image histogram is pretty simple. Let's first do it in JavaScript
+Computing an image histogram is pretty simple. Let's first do it in plain Rust
+on the CPU.
 
-Let's make a function that given an `ImageData` object, generates
-a histogram.
+Let's make a function that given an `ImageData` (the little width, height, and
+RGBA bytes struct `wgpu_fun::load_image` returns), generates a histogram.
 
-```js
-function computeHistogram(numBins, imgData) {
-  const {width, height, data} = imgData;
-  const bins = new Array(numBins).fill(0);
-  for (let y = 0; y < height; ++y) {
-    for (let x = 0; x < width; ++x) {
-      const offset = (y * width + x) * 4;
+```rust
+fn compute_histogram(num_bins: usize, img_data: &ImageData) -> Vec<u32> {
+  let ImageData { width, height, data } = img_data;
+  let mut bins = vec![0u32; num_bins];
+  for y in 0..*height {
+    for x in 0..*width {
+      let offset = ((y * width + x) * 4) as usize;
 
-      const r = data[offset + 0] / 255;
-      const g = data[offset + 1] / 255;
-      const b = data[offset + 2] / 255;
-      const v = srgbLuminance(r, g, b);
+      let r = data[offset] as f32 / 255.0;
+      let g = data[offset + 1] as f32 / 255.0;
+      let b = data[offset + 2] as f32 / 255.0;
+      let v = srgb_luminance(r, g, b);
 
-      const bin = Math.min(numBins - 1, v * numBins) | 0;
-      ++bins[bin];
+      let bin = (v * num_bins as f32) as usize;
+      bins[bin.min(num_bins - 1)] += 1;
     }
   }
-  return bins;
+  bins
 }
 ```
 
@@ -123,122 +121,161 @@ As you can see above, we walk through each pixel. We extract r, g, and b from
 the image. We compute a luminance value. We convert that to a bin index and
 increment that bin's count.
 
-Once we have that data we can graph it. The main graph function just
-draws a line for each bin multiplied by some scale and the height of
-the canvas.
+Once we have that data we can graph it. The original JavaScript version of this
+article creates a couple of extra 2D canvases and draws the image and the graph
+into those with the 2D canvas API. We have a single WebGPU canvas so instead
+we'll generate the graph itself as an `ImageData` on the CPU and then draw both
+the image and the graph into our one canvas as textured quads.
 
-```js
-  ctx.fillStyle = '#fff';
+The main graph code just draws a vertical line for each bin multiplied by some
+scale and the height of the graph.
 
-  for (let x = 0; x < numBins; ++x) {
-    const v = histogram[x] * scale * height;
-    ctx.fillRect(x, height - v, 1, v);
+```rust
+  for x in 0..num_bins {
+    let v = (histogram[x] as f32 * scale * height as f32) as usize;
+    for y in (height - v.min(height))..height {
+      let o = (y * num_bins + x) * 4;
+      data[o..o + 4].copy_from_slice(&[255, 255, 255, 255]);
+    }
   }
 ```
 
 Deciding on a scale appears to be just a personal choice. If you know of a good
 formula for choosing a scale leave a comment. 😅 Based on looking around the net
-I came up with this formula for scale.
+the original author came up with this formula for scale.
 
-```js
-  const numBins = histogram.length;
-  const max = Math.max(...histogram);
-  const scale = Math.max(1 / max, 0.2 * numBins / numEntries);
+```rust
+  let num_bins = histogram.len();
+  let max = *histogram.iter().max().unwrap();
+  let scale = (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32);
 ```
 
-Where `numEntries` is the total number of pixels in the image (ie, width * height),
+Where `num_entries` is the total number of pixels in the image (ie, width * height),
 and basically we're trying to scale so the bin with the most values touches the
 top of the graph but, if that bin is too large then we have some ratio that appears
 to produce a pleasant graph.
 
-Putting it all together we create a 2D canvas and draw
+Putting it all together we generate an `ImageData` holding the graph
 
-```js
-function drawHistogram(histogram, numEntries, height = 100) {
-  const numBins = histogram.length;
-  const max = Math.max(...histogram);
-  const scale = Math.max(1 / max, 0.2 * numBins / numEntries);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = numBins;
-  canvas.height = height;
-  document.body.appendChild(canvas);
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#fff';
-
-  for (let x = 0; x < numBins; ++x) {
-    const v = histogram[x] * scale * height;
-    ctx.fillRect(x, height - v, 1, v);
+```rust
+fn histogram_to_image(histogram: &[u32], num_entries: u32, height: usize) -> ImageData {
+  let num_bins = histogram.len();
+  let max = *histogram.iter().max().unwrap();
+  let scale = (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32);
+  let mut data = vec![0u8; num_bins * height * 4];
+  for x in 0..num_bins {
+    let v = (histogram[x] as f32 * scale * height as f32) as usize;
+    for y in (height - v.min(height))..height {
+      let o = (y * num_bins + x) * 4;
+      data[o..o + 4].copy_from_slice(&[255, 255, 255, 255]);
+    }
+  }
+  ImageData {
+    data,
+    width: num_bins as u32,
+    height: height as u32,
   }
 }
 ```
 
-Now we need to load an image. We'll use the code we
-wrote in [the article on loading images](webgpu-importing-textures.html).
+Now we need to load an image. We'll use the `wgpu_fun::load_image` helper we
+wrote in [the article on loading images](webgpu-importing-textures.html). It
+already gives us an `ImageData` so, unlike the JavaScript version, we need no
+extra step to get the pixel data out of the image.
 
-```js
-async function main() {
-  const imgBitmap = await loadImageBitmap('resources/images/pexels-francesco-ungaro-96938-mid.jpg');
+```rust
+  let img =
+    wgpu_fun::load_image("resources/images/pexels-francesco-ungaro-96938-mid.jpg").await;
 ```
 
-We need get the data from an image. To do that we can draw the image
-to a 2d canvas and then use `getImageData`.
+To show the image and the graph we upload each of them to a texture with a
+simplified version of the `create_texture_from_source` function we wrote in
+[the article on loading images into textures](webgpu-importing-textures.html#a-create-texture-from-source)
+(no mips needed here)
 
-```js
-function getImageData(img) {
-  const canvas = document.createElement('canvas');
-
-  // make the canvas the same size as the image
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+```rust
+fn create_texture_from_source(
+  device: &wgpu::Device,
+  queue: &wgpu::Queue,
+  source: &ImageData,
+) -> wgpu::Texture {
+  let texture = device.create_texture(&wgpu::TextureDescriptor {
+    label: None,
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    size: wgpu::Extent3d {
+      width: source.width,
+      height: source.height,
+      depth_or_array_layers: 1,
+    },
+    mip_level_count: 1,
+    sample_count: 1,
+    dimension: wgpu::TextureDimension::D2,
+    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    view_formats: &[],
+  });
+  queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture: &texture,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+    &source.data,
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(source.width * 4),
+      rows_per_image: None,
+    },
+    wgpu::Extent3d {
+      width: source.width,
+      height: source.height,
+      depth_or_array_layers: 1,
+    },
+  );
+  texture
 }
 ```
 
-We'll also write a function to display an `ImageBitmap`
+and then draw the textures stacked top to bottom into the canvas with a
+`show_images` function
 
-```js
-function showImageBitmap(imageBitmap) {
-  const canvas = document.createElement('canvas');
-  canvas.width = imageBitmap.width;
-  canvas.height = imageBitmap.height;
-
-  const bm = canvas.getContext('bitmaprenderer');
-  bm.transferFromImageBitmap(imageBitmap);
-  document.body.appendChild(canvas);
+```rust
+fn show_images(app: App, images: Vec<wgpu::Texture>) {
+  ...
 }
 ```
 
-Let's add some CSS so our image is not displayed too big and
-give it a background color so we don't have to draw one.
+`show_images` is just the textured quad code from
+[the article on textures](webgpu-textures.html): a little shader that draws a
+quad at a pixel position and size, one uniform buffer and bind group per image,
+and a render pass that draws each texture one under the other. There's nothing
+new in it so we won't list it all here. You can see the whole thing in
+[the example's source](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/examples/src/bin/webgpu-compute-shaders-histogram-javascript.rs).
 
-```css
-canvas {
-  display: block;
-  max-width: 256px;
-  border: 1px solid #888;
-  background-color: #333;
-}
-```
+The JavaScript version adds some CSS so its canvases are not displayed too big
+and get a background color. `show_images` does the equivalent for us: it scales
+each image down if it's wider than the canvas and clears the canvas to a dark
+gray so we don't have to draw a background for the white histogram lines.
 
 And then we just need call the functions we wrote above.
 
-```js
-async function main() {
-  const imgBitmap = await loadImageBitmap('resources/images/pexels-francesco-ungaro-96938-mid.jpg');
+```rust
+async fn run() {
+  let mut app = App::new("Histogram (CPU)").await;
+  app.auto_resize = true;
 
-  const imgData = getImageData(imgBitmap);
-  const numBins = 256;
-  const histogram = computeHistogram(numBins, imgData);
+  let img =
+    wgpu_fun::load_image("resources/images/pexels-francesco-ungaro-96938-mid.jpg").await;
+  let texture = create_texture_from_source(&app.device, &app.queue, &img);
 
-  showImageBitmap(imgBitmap);
+  let num_bins = 256usize;
+  let histogram = compute_histogram(num_bins, &img);
 
-  const numEntries = imgData.width * imgData.height;
-  drawHistogram(histogram, numEntries);
+  let num_entries = texture.width() * texture.height();
+  let histogram_image = histogram_to_image(&histogram, num_entries, 100);
+  let histogram_texture = create_texture_from_source(&app.device, &app.queue, &histogram_image);
+
+  show_images(app, vec![texture, histogram_texture]);
 }
 ```
 
@@ -246,25 +283,21 @@ And here's the image histogram.
 
 {{{example url="../webgpu-compute-shaders-histogram-javascript.html"}}}
 
-Hopefully it was easy to follow what the JavaScript code is doing.
+Hopefully it was easy to follow what the CPU code is doing.
 Let's convert it to WebGPU!
 
 # <a id="a-comptuing-a-histogram"></a>Computing a histogram on the GPU
 
 Let's start with the most obvious solution. We'll directly
-convert the JavaScript `computeHistogram` function to WGSL.
+convert the Rust `compute_histogram` function to WGSL.
 
-The luminance function is pretty straight forward. Here the
-JavaScript again
+The luminance function is pretty straight forward. Here's the
+Rust again
 
-```js
-// Returns a value from 0 to 1 for luminance.
-// where r, g, b each go from 0 to 1.
-function srgbLuminance(r, g, b) {
-  // from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
-  return r * 0.2126 +
-         g * 0.7152 +
-         b * 0.0722;
+```rust
+// from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
+fn srgb_luminance(r: f32, g: f32, b: f32) -> f32 {
+  r * 0.2126 + g * 0.7152 + b * 0.0722
 }
 ```
 
@@ -288,29 +321,29 @@ fn dot(a: vec3f, b: vec3f) -> f32 {
 }
 ```
 
-Which is what we had in JavaScript. The major difference is in WGSL we'll
+Which is what we had in Rust. The major difference is in WGSL we'll
 pass in the color as a `vec3f` instead of the individual channels.
 
-For the main part of computing a histogram, here's the JavaScript again
+For the main part of computing a histogram, here's the Rust again
 
-```js
-function computeHistogram(numBins, imgData) {
-  const {width, height, data} = imgData;
-  const bins = new Array(numBins).fill(0);
-  for (let y = 0; y < height; ++y) {
-    for (let x = 0; x < width; ++x) {
-      const offset = (y * width + x) * 4;
+```rust
+fn compute_histogram(num_bins: usize, img_data: &ImageData) -> Vec<u32> {
+  let ImageData { width, height, data } = img_data;
+  let mut bins = vec![0u32; num_bins];
+  for y in 0..*height {
+    for x in 0..*width {
+      let offset = ((y * width + x) * 4) as usize;
 
-      const r = data[offset + 0] / 255;
-      const g = data[offset + 1] / 255;
-      const b = data[offset + 2] / 255;
-      const v = srgbLuminance(r, g, b);
+      let r = data[offset] as f32 / 255.0;
+      let g = data[offset + 1] as f32 / 255.0;
+      let b = data[offset + 2] as f32 / 255.0;
+      let v = srgb_luminance(r, g, b);
 
-      const bin = Math.min(numBins - 1, v * numBins) | 0;
-      ++bins[bin];
+      let bin = (v * num_bins as f32) as usize;
+      bins[bin.min(num_bins - 1)] += 1;
     }
   }
-  return bins;
+  bins
 }
 ```
 
@@ -342,8 +375,8 @@ fn srgbLuminance(color: vec3f) -> f32 {
 }
 ```
 
-Above, not much changed. In JavaScript we get the data, width, and height
-from `imgData`. In WGSL we get the width and height from the texture by
+Above, not much changed. In Rust we get the data, width, and height
+from `img_data`. In WGSL we get the width and height from the texture by
 passing it to the `textureDimensions` function.
 
 ```wgsl
@@ -354,7 +387,7 @@ passing it to the `textureDimensions` function.
 size of the mip level for that texture.
 
 We loop through all of the pixels of the texture, just like we did in
-JavaScript.
+Rust.
 
 ```wgsl
   for (var y = 0u; y < size.y; y++) {
@@ -384,24 +417,21 @@ We compute a luminance value, convert it to a bin index and increment that bin.
 
 Now the we have a compute shader, let's use it
 
-We have our pretty standard initialization code
+We have our pretty standard initialization code using the `App` helper from
+[the fundamentals article](webgpu-fundamentals.html)
 
-```js
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+```rust
+async fn run() {
+  let mut app = App::new("WebGPU Compute Shaders Histogram (slow)").await;
+  app.auto_resize = true;
 ```
 
 then we create our shader
 
-```js
-  const module = device.createShaderModule({
-    label: 'histogram shader',
-    code: /* wgsl */ `
+```rust
+  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("histogram shader"),
+    source: wgpu::ShaderSource::Wgsl(r#"
       @group(0) @binding(0) var<storage, read_write> bins: array<u32>;
       @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 
@@ -425,124 +455,154 @@ then we create our shader
           }
         }
       }
-    `,
+    "#.into()),
   });
 ```
 
 We create a compute pipeline to run the shader
 
-```js
-  const pipeline = device.createComputePipeline({
-    label: 'histogram',
-    layout: 'auto',
-    compute: {
-      module,
-    },
+```rust
+  let pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    label: Some("histogram"),
+    layout: None,
+    module: &module,
+    entry_point: None,
+    compilation_options: Default::default(),
+    cache: None,
   });
 ```
 
 After we load the image we need to make a texture and copy the data to it.
-We'll use the `createTextureFromSource` function we wrote in
+We'll use the `create_texture_from_source` function from above, our simplified
+version of the one we wrote in
 [the article on loading images into textures](webgpu-importing-textures.html#a-create-texture-from-source).
 
-```js
-  const imgBitmap = await loadImageBitmap('resources/images/pexels-francesco-ungaro-96938-mid.jpg');
-  const texture = createTextureFromSource(device, imgBitmap);
+```rust
+  let img =
+    wgpu_fun::load_image("resources/images/pexels-francesco-ungaro-96938-mid.jpg").await;
+  let texture = create_texture_from_source(&app.device, &app.queue, &img);
 ```
 
 We need to create a storage buffer for the shader to sum up the color values with
 
-```js
-  const numBins = 256;
-  const histogramBuffer = device.createBuffer({
-    size: numBins * 4, // 256 entries * 4 bytes per (u32)
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+```rust
+  let num_bins = 256u32;
+  let histogram_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: (num_bins * 4) as u64, // 256 entries * 4 bytes per (u32)
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    mapped_at_creation: false,
   });
 ```
 
 and a buffer to get back the results so we can draw them
 
-```js
-  const resultBuffer = device.createBuffer({
-    size: histogramBuffer.size,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+```rust
+  let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: histogram_buffer.size(),
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
   });
 ```
 
 We need a bind group to pass the texture and histogram buffer to
 our pipeline
 
-```js
-  const bindGroup = device.createBindGroup({
-    label: 'histogram bindGroup',
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: histogramBuffer },
-      { binding: 1, resource: texture },
+```rust
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("histogram bindGroup"),
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: histogram_buffer.as_entire_binding(),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: wgpu::BindingResource::TextureView(
+          &texture.create_view(&Default::default()),
+        ),
+      },
     ],
   });
 ```
 
-We can now setup the commands to run the compute shader
+We can now setup the commands to run the compute shader. Remember, in Rust a
+pass ends when the pass encoder is dropped, so we wrap it in a block instead
+of calling `pass.end()`.
 
-```js
-  const encoder = device.createCommandEncoder({ label: 'histogram encoder' });
-  const pass = encoder.beginComputePass();
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(1);
-  pass.end();
+```rust
+  let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("histogram encoder"),
+  });
+  {
+    let mut pass = encoder.begin_compute_pass(&Default::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(1, 1, 1);
+  }
 ```
 
 We need to copy the histogram buffer to the result buffer
 
-```js
-  const encoder = device.createCommandEncoder({ label: 'histogram encoder' });
-  const pass = encoder.beginComputePass();
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(1);
-  pass.end();
+```rust
+  let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("histogram encoder"),
+  });
+  {
+    let mut pass = encoder.begin_compute_pass(&Default::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(1, 1, 1);
+  }
 
-+  encoder.copyBufferToBuffer(histogramBuffer, 0, resultBuffer, 0, resultBuffer.size);
++  encoder.copy_buffer_to_buffer(&histogram_buffer, 0, &result_buffer, 0, result_buffer.size());
 ```
 
 and then execute the commands
 
-```js
-  const encoder = device.createCommandEncoder({ label: 'histogram encoder' });
-  const pass = encoder.beginComputePass();
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(1);
-  pass.end();
+```rust
+  let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("histogram encoder"),
+  });
+  {
+    let mut pass = encoder.begin_compute_pass(&Default::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(1, 1, 1);
+  }
 
-  encoder.copyBufferToBuffer(histogramBuffer, 0, resultBuffer, 0, resultBuffer.size);
+  encoder.copy_buffer_to_buffer(&histogram_buffer, 0, &result_buffer, 0, result_buffer.size());
 
-+  const commandBuffer = encoder.finish();
-+  device.queue.submit([commandBuffer]);
++  let command_buffer = encoder.finish();
++  app.queue.submit([command_buffer]);
 ```
 
 Finally we can get the data from the result buffer and pass it to our existing functions
 to draw the histogram
 
-```js
-  await resultBuffer.mapAsync(GPUMapMode.READ);
-  const histogram = new Uint32Array(resultBuffer.getMappedRange());
+```rust
+  wgpu_fun::map_async(&app.device, &result_buffer, wgpu::MapMode::Read).await;
+  let histogram: Vec<u32> = {
+    let data = result_buffer.slice(..).get_mapped_range().unwrap();
+    bytemuck::cast_slice(&data).to_vec()
+  };
+  result_buffer.unmap();
 
-  showImageBitmap(imgBitmap);
+  let num_entries = texture.width() * texture.height();
+  let histogram_image = histogram_to_image(&histogram, num_entries, 100);
+  let histogram_texture = create_texture_from_source(&app.device, &app.queue, &histogram_image);
 
-  const numEntries = texture.width * texture.height;
-  drawHistogram(histogram, numEntries);
-
-  resultBuffer.unmap();
+  show_images(app, vec![texture, histogram_texture]);
 ```
 
 And it should work
 
 {{{example url="../webgpu-compute-shaders-histogram-slow.html"}}}
 
-Timing the results I found **this is about 30x slower than the JavaScript version!!!** 😱😱😱 (YMMV).
+Timing the results, the author of the original JavaScript article found **this
+to be about 30x slower than the CPU version!!!** 😱😱😱 (YMMV).
 
 What's up with that? We designed our solution above with a single loop and used
 a single workgroup invocation with a size of 1. That means just a single "core" of
@@ -633,20 +693,23 @@ As you can see, we got rid of the loop, instead we use the
 `@builtin(global_invocation_id)` value to make each workgroup
 responsible for a single pixel. Theoretically this would mean
 all of the pixels could be processed in parallel.
-Our image is 2448 × 1505 which is almost 3.7 million pixels so
+Our image is 2448 × 1505 which is almost 3.7 million pixels so
 there are lots of chances for parallelization.
 
 The only other change needed is to actually run one workgroup
 per pixel.
 
-```js
-  const encoder = device.createCommandEncoder({ label: 'histogram encoder' });
-  const pass = encoder.beginComputePass();
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
--  pass.dispatchWorkgroups(1);
-+  pass.dispatchWorkgroups(texture.width, texture.height);
-  pass.end();
+```rust
+  let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("histogram encoder"),
+  });
+  {
+    let mut pass = encoder.begin_compute_pass(&Default::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+-    pass.dispatch_workgroups(1, 1, 1);
++    pass.dispatch_workgroups(texture.width(), texture.height(), 1);
+  }
 ```
 
 Here it is running
@@ -655,8 +718,9 @@ Here it is running
 
 What's wrong? Why doesn't this histogram match the previous histogram
 and why don't the totals match? Note: your computer might get different
-results than mine. On mine, this is the histogram from the previous
-version on the top, and then 4 results from the new version on the bottom.
+results than the ones pictured here. Below, this is the histogram from
+the previous version on the top, and then 4 results from the new version
+on the bottom.
 
 <style>
 .local-img img {
@@ -682,7 +746,8 @@ version on the top, and then 4 results from the new version on the bottom.
   </div>
 </div>
 
-Our new version gets inconsistent results (at least on my machine).
+Our new version gets inconsistent results (at least on the machine used
+for those screen captures).
 
 What happened?
 
@@ -800,22 +865,23 @@ unlock will have a stop sign 🛑 on them.
 
 <div class="webgpu_center compute-diagram"><div data-diagram="noRace"></div></div>
 
-On my machine, this new version runs at around 4x faster than JavaScript though YMMV.
+On the original author's machine, this new version ran at around 4x faster
+than the CPU version though YMMV.
 
 ## Workgroups
 
 Can we go faster? As mentioned in [the previous article](../webgpu-compute-shaders.html),
 the "workgroup" is the smallest unit of work we can ask the GPU can do. You define the size
 of a workgroup in 3 dimensions when you create the shader module, 
-and then you call `dispatchWorkgroups` to run a bunch of these workgroups.
+and then you call `dispatch_workgroups` to run a bunch of these workgroups.
 
 Workgroups can share internal storage and coordinate that storage with in the workgroup
 itself. How could we take advantage of that fact?
 
 Let's try this. We'll make our workgroup size, 256x1 (so 256 invocations per workgroup).
 We'll have each invocation work on a 256x1 section of the image. This will mean
-we will have `Math.ceil(texture.width / 256) * texture.height` total workgroups.
-For our image, which is 2448 × 1505, that would be 10 x 1505 or 15050 workgroups.
+we will have `texture.width().div_ceil(256) * texture.height()` total workgroups.
+For our image, which is 2448 × 1505, that would be 10 x 1505 or 15050 workgroups.
 
 We'll have the invocations within the workgroup use workgroup storage to sum up the
 luminance values into bins.
@@ -992,30 +1058,35 @@ fn cs(
 ```
 
 One more thing we could do, rather than hardcode `chunkWidth` and `chunkHeight`
-we could pass them in from JavaScript like this
+we could pass them in from Rust like this. We build a string with the constants
+using `format!` and prepend it to the WGSL source. We `.clone()` it because
+we'll use it again for a second shader below.
 
-```js
-+  const k = {
-+    chunkWidth: 256,
-+    chunkHeight: 1,
-+  };
-+  const sharedConstants = Object.entries(k)
-+    .map(([k, v]) => `const ${k} = ${v};`)
-+    .join('\n');
+```rust
++  let k_chunk_width = 256u32;
++  let k_chunk_height = 1u32;
++  let shared_constants = format!(
++    "
++      const chunkWidth = {k_chunk_width};
++      const chunkHeight = {k_chunk_height};
++"
++  );
 
-  const histogramChunkModule = device.createShaderModule({
-    label: 'histogram chunk shader',
-    code: /* wgsl */ `
+  let histogram_chunk_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("histogram chunk shader"),
+    source: wgpu::ShaderSource::Wgsl(
++      (shared_constants.clone() + r#"
 -      const chunkWidth = 256;
 -      const chunkHeight = 1;
-+      ${sharedConstants}
       const chunkSize = chunkWidth * chunkHeight;
       var<workgroup> bins: array<atomic<u32>, chunkSize>;
       @group(0) @binding(0) var<storage, read_write> chunks: array<array<u32, chunkSize>>;
       @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 
       ...
-    `,
++    "#)
+      .into(),
+    ),
   });
 ```
 
@@ -1057,11 +1128,11 @@ fn cs(@builtin(local_invocation_id) local_invocation_id: vec3u) {
 
 And, like before, we can inject the `chunkWidth` and `chunkHeight`.
 
-```js
-const chunkSumModule = device.createShaderModule({
-  label: 'chunk sum shader',
-  code: /* wgsl */ `
-*    ${sharedConstants}
+```rust
+let chunk_sum_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+  label: Some("chunk sum shader"),
+  source: wgpu::ShaderSource::Wgsl(
+*    (shared_constants + r#"
     const chunkSize = chunkWidth * chunkHeight;
     @group(0) @binding(0) var<storage, read_write> chunks: array<array<u32, chunkSize>>;
 
@@ -1069,7 +1140,9 @@ const chunkSumModule = device.createShaderModule({
 
     ...
     }
-  `,
+*  "#)
+    .into(),
+  ),
 });
 ```
 
@@ -1080,85 +1153,107 @@ This shader will effectively work like this
 Now that we have these 2 shaders, let's update the code to use them.
 We need to create pipelines for both shaders
 
-```js
--  const pipeline = device.createComputePipeline({
--    label: 'histogram',
--    layout: 'auto',
--    compute: {
--      module,
---    },
+```rust
+-  let pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+-    label: Some("histogram"),
+-    layout: None,
+-    module: &module,
+-    entry_point: None,
+-    compilation_options: Default::default(),
+-    cache: None,
 -  });
 
-+  const histogramChunkPipeline = device.createComputePipeline({
-+    label: 'histogram',
-+    layout: 'auto',
-+    compute: {
-+      module: histogramChunkModule,
-++    },
++  let histogram_chunk_pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
++    label: Some("histogram"),
++    layout: None,
++    module: &histogram_chunk_module,
++    entry_point: None,
++    compilation_options: Default::default(),
++    cache: None,
 +  });
 +
-+  const chunkSumPipeline = device.createComputePipeline({
-+    label: 'chunk sum',
-+    layout: 'auto',
-+    compute: {
-+      module: chunkSumModule,
-++    },
++  let chunk_sum_pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
++    label: Some("chunk sum"),
++    layout: None,
++    module: &chunk_sum_module,
++    entry_point: None,
++    compilation_options: Default::default(),
++    cache: None,
 +  });
 ```
 
 We need to create a storage buffer large enough for all our chunks so we
 compute how many chunks we need to cover the entire image.
 
-```js
-  const imgBitmap = await loadImageBitmap('resources/images/pexels-francesco-ungaro-96938-mid.jpg');
-  const texture = createTextureFromSource(device, imgBitmap);
+```rust
+  let img =
+    wgpu_fun::load_image("resources/images/pexels-francesco-ungaro-96938-mid.jpg").await;
+  let texture = create_texture_from_source(&app.device, &app.queue, &img);
 
--  const numBins = 256;
--  const histogramBuffer = device.createBuffer({
--    size: numBins * 4, // 256 entries * 4 bytes per (u32)
--    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+-  let num_bins = 256u32;
+-  let histogram_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+-    label: None,
+-    size: (num_bins * 4) as u64, // 256 entries * 4 bytes per (u32)
+-    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+-    mapped_at_creation: false,
 -  });
-+  const chunkSize = k.chunkWidth * k.chunkHeight;
-+  const chunksAcross = Math.ceil(texture.width / k.chunkWidth);
-+  const chunksDown = Math.ceil(texture.height / k.chunkHeight);
-+  const numChunks = chunksAcross * chunksDown;
-+  const chunksBuffer = device.createBuffer({
-+    size: numChunks * chunkSize * 4, // 4 bytes per (u32)
-+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
++  let chunk_size = k_chunk_width * k_chunk_height;
++  let chunks_across = texture.width().div_ceil(k_chunk_width);
++  let chunks_down = texture.height().div_ceil(k_chunk_height);
++  let num_chunks = chunks_across * chunks_down;
++  let chunks_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
++    label: None,
++    size: (num_chunks * chunk_size * 4) as u64, // 4 bytes per (u32)
++    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
++    mapped_at_creation: false,
 +  });
 ```
 
 We still need our result buffer to read the result but it's no longer
 the same size as the previous buffer
 
-```js
-  const resultBuffer = device.createBuffer({
--    size: histogramBuffer.size,
-+    size: chunkSize * 4,  // 4 bytes per (u32)
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+```rust
+  let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+-    size: histogram_buffer.size(),
++    size: (chunk_size * 4) as u64, // 4 bytes per (u32)
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
   });
 ```
 
-We need a bindGroup for each pass. One to pass the texture and chunks
+We need a bind group for each pass. One to pass the texture and chunks
 to the first shader and another to pass the chunks to the second shader
 
-```js
--  const bindGroup = device.createBindGroup({
-+  const histogramBindGroup = device.createBindGroup({
-    label: 'histogram bindGroup',
-    layout: histogramChunkPipeline.getBindGroupLayout(0),
-    entries: [
--      { binding: 0, resource: histogramBuffer },
-+      { binding: 0, resource: chunksBuffer },
-      { binding: 1, resource: texture },
+```rust
+-  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
++  let histogram_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("histogram bindGroup"),
+-    layout: &pipeline.get_bind_group_layout(0),
++    layout: &histogram_chunk_pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+-        resource: histogram_buffer.as_entire_binding(),
++        resource: chunks_buffer.as_entire_binding(),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: wgpu::BindingResource::TextureView(
+          &texture.create_view(&Default::default()),
+        ),
+      },
     ],
   });
 
-  const chunkSumBindGroup = device.createBindGroup({
-    label: 'sum bindGroup',
-    layout: chunkSumPipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: chunksBuffer },
+  let chunk_sum_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("sum bindGroup"),
+    layout: &chunk_sum_pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: chunks_buffer.as_entire_binding(),
+      },
     ],
   });
 ```
@@ -1166,34 +1261,39 @@ to the first shader and another to pass the chunks to the second shader
 Finally we can run our shaders. First, the part that reads
 the pixels and sorts them into bins, we dispatch one workgroup for each chunk.
 
-```js
-  const encoder = device.createCommandEncoder({ label: 'histogram encoder' });
-  const pass = encoder.beginComputePass();
+```rust
+  let mut encoder = app.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("histogram encoder"),
+  });
+  {
+    let mut pass = encoder.begin_compute_pass(&Default::default());
 
-+  // create a histogram for each area
--  pass.setPipeline(pipeline);
--  pass.setBindGroup(0, bindGroup);
--  pass.dispatchWorkgroups(texture.width, texture.height);
-+  pass.setPipeline(histogramChunkPipeline);
-+  pass.setBindGroup(0, histogramBindGroup);
-+  pass.dispatchWorkgroups(chunksAcross, chunksDown);
++    // create a histogram for each chunk
+-    pass.set_pipeline(&pipeline);
+-    pass.set_bind_group(0, &bind_group, &[]);
+-    pass.dispatch_workgroups(texture.width(), texture.height(), 1);
++    pass.set_pipeline(&histogram_chunk_pipeline);
++    pass.set_bind_group(0, &histogram_bind_group, &[]);
++    pass.dispatch_workgroups(chunks_across, chunks_down, 1);
 ```
 
 Then we need to run the shader that sums up the chunks. It's just 1 workgroup
 which uses 1 invocation per bin (256 invocations).
 
-```js
-+  // sum the areas
-+  pass.setPipeline(chunkSumPipeline);
-+  pass.setBindGroup(0, chunkSumBindGroup);
-+  pass.dispatchWorkgroups(1);
+```rust
++    // sum the chunks
++    pass.set_pipeline(&chunk_sum_pipeline);
++    pass.set_bind_group(0, &chunk_sum_bind_group, &[]);
++    pass.dispatch_workgroups(1, 1, 1);
+  }
 ```
 
 The rest of the code is the same.
 
 {{{example url="../webgpu-compute-shaders-histogram-optimized.html"}}}
 
-Timing this on my machine I was happy to see the first shader runs in 0.2ms!
+Timing this on his machine, the original article's author was happy to see the
+first shader runs in 0.2ms!
 It read the entire image and filled out all the chunks lickety-split!
 
 Unfortunately the part that sums up the chunks took much longer. 11ms
@@ -1224,11 +1324,11 @@ chunks. If we pass in a stride of 2 then we sum every other chunk. etc...
 
 Here are the changes to our shader
 
-```js
-const chunkSumModule = device.createShaderModule({
-  label: 'chunk sum shader',
-  code: /* wgsl */ `
-    ${sharedConstants}
+```rust
+let chunk_sum_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+  label: Some("chunk sum shader"),
+  source: wgpu::ShaderSource::Wgsl(
+    (shared_constants + r#"
     const chunkSize = chunkWidth * chunkHeight;
 
 +    struct Uniforms {
@@ -1255,7 +1355,9 @@ const chunkSumModule = device.createShaderModule({
 +                chunks[chunk1][local_invocation_id.x];
 +      chunks[chunk0][local_invocation_id.x] = sum;
     }
-  `,
+  "#)
+    .into(),
+  ),
 });
 ```
 
@@ -1270,57 +1372,65 @@ longer used.
 <div class="webgpu_center compute-diagram"><div data-diagram="reduce"></div></div>
 
 To make this new one work we need to add a uniform buffer for each stride value
-as well as a bindGroup.
+as well as a bind group. The JavaScript version creates each buffer with
+`mappedAtCreation: true` and fills it directly; here we make each buffer
+`COPY_DST` and fill it with `write_buffer`.
 
-```js
-const sumBindGroups = [];
-const numSteps = Math.ceil(Math.log2(numChunks));
-for (let i = 0; i < numSteps; ++i) {
-  const stride = 2 ** i;
-  const uniformBuffer = device.createBuffer({
+```rust
+let mut sum_bind_groups = Vec::new();
+let num_steps = (num_chunks as f32).log2().ceil() as u32;
+for i in 0..num_steps {
+  let stride = 2u32.pow(i);
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
     size: 4,
-    usage: GPUBufferUsage.UNIFORM,
-    mappedAtCreation: true,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  new Uint32Array(uniformBuffer.getMappedRange()).set([stride]);
-  uniformBuffer.unmap();
+  app.queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&stride));
 
-  const chunkSumBindGroup = device.createBindGroup({
-    layout: chunkSumPipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: chunksBuffer },
-      { binding: 1, resource: uniformBuffer },
+  let chunk_sum_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some(&format!("sum bindGroup {i}")),
+    layout: &chunk_sum_pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: chunks_buffer.as_entire_binding(),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: uniform_buffer.as_entire_binding(),
+      },
     ],
   });
-  sumBindGroups.push(chunkSumBindGroup);
+  sum_bind_groups.push(chunk_sum_bind_group);
 }
 ```
 
 Then we just need to call these with the correct number of
 dispatches until we've reduced things to 1 chunk
 
-```js
--  // sum the areas
--  pass.setPipeline(chunkSumPipeline);
--  pass.setBindGroup(0, chunkSumBindGroup);
--  pass.dispatchWorkgroups(1);
-+  // reduce the chunks
-+  const pass = encoder.beginComputePass();
-+  pass.setPipeline(chunkSumPipeline);
-+  let chunksLeft = numChunks;
-+  sumBindGroups.forEach(bindGroup => {
-+    pass.setBindGroup(0, bindGroup);
-+    const dispatchCount = Math.floor(chunksLeft / 2);
-+    chunksLeft -= dispatchCount;
-+    pass.dispatchWorkgroups(dispatchCount);
-+  });
+```rust
+-    // sum the chunks
+-    pass.set_pipeline(&chunk_sum_pipeline);
+-    pass.set_bind_group(0, &chunk_sum_bind_group, &[]);
+-    pass.dispatch_workgroups(1, 1, 1);
++    // reduce the chunks
++    pass.set_pipeline(&chunk_sum_pipeline);
++    let mut chunks_left = num_chunks;
++    for bind_group in &sum_bind_groups {
++      pass.set_bind_group(0, bind_group, &[]);
++      let dispatch_count = chunks_left / 2;
++      chunks_left -= dispatch_count;
++      pass.dispatch_workgroups(dispatch_count, 1, 1);
++    }
 ```
 
 {{{example url="../webgpu-compute-shaders-histogram-optimized-more.html"}}}
 
-Timing this version I got under 1ms on both machines I tested! 🎉🚀
+Timing this version, the original author got under 1ms on both machines he tested! 🎉🚀
 
-Here are some timings from various machines
+Here are some of his timings from various machines
 
 <div class="webgpu_center data-table">
   <div data-diagram="timings"></div>
@@ -1355,7 +1465,7 @@ Maybe one more
 
 In [the next article](webgpu-compute-shaders-histogram-part-2.html) we'll
 tweak these a little as well as change it so we
-graph the results using the GPU instead of pulling them back to JavaScript.
+graph the results using the GPU instead of pulling them back to the CPU.
 We'll also try some real time video adjustments based on having created
 an image histogram.
 
