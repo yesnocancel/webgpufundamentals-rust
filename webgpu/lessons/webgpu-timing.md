@@ -1249,3 +1249,51 @@ are quantized to 100µ seconds. In Chrome, if you enable <a href="chrome://flags
 theoretically give you more accurate timings. (Running natively, wgpu gives you
 the un-quantized values.) That said, normally 100µ second quantized values should be enough for you to compare shaders techniques for performance.
 </div>
+
+<div class="webgpu_bottombar">
+<h3>The JavaScript version of TimingHelper</h3>
+<p>
+For comparison, the JavaScript version of this helper wraps the WebGPU API by
+replacing methods at runtime — something Rust can't do. Its core looks like
+this:
+</p>
+
+```js
+  #beginTimestampPass(encoder, fnName, descriptor) {
+    if (this.#canTimestamp) {
+      assert(this.#state === 'free', 'state not free');
+      this.#state = 'need resolve';
+
+      const pass = encoder[fnName]({
+        ...descriptor,
+        ...{
+          timestampWrites: {
+            querySet: this.#querySet,
+            beginningOfPassWriteIndex: 0,
+            endOfPassWriteIndex: 1,
+          },
+        },
+      });
+
+      const resolve = () => this.#resolveTiming(encoder);
+      pass.end = (function(origFn) {
+        return function() {
+          origFn.call(this);
+          resolve();
+        };
+      })(pass.end);
+
+      return pass;
+    } else {
+      return encoder[fnName](descriptor);
+    }
+  }
+```
+
+<p>
+It injects the timestampWrites into the pass descriptor and hooks
+<code>pass.end</code> so resolving happens automatically. The Rust version
+gets the same effect with an explicit <code>resolve_timing</code> call after
+the pass drops, as described above.
+</p>
+</div>
