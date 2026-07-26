@@ -27,6 +27,12 @@ pub struct App {
     /// `Auto` (the default) behaves like `'opaque'`; use
     /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
     pub alpha_mode: wgpu::CompositeAlphaMode,
+    /// Optional override for `alpha_mode`, consulted every frame (examples
+    /// use it to read a GUI setting). When the returned mode differs from
+    /// the surface's current configuration the surface is reconfigured —
+    /// the equivalent of calling `context.configure` with a new
+    /// `alphaMode` at render time in the JS examples.
+    pub alpha_mode_fn: Option<Box<dyn Fn() -> wgpu::CompositeAlphaMode>>,
     /// With `auto_resize`, divide the observed canvas size by this (the
     /// low-res-canvas trick some lessons use, e.g. `inlineSize / 64 | 0`).
     pub resize_divisor: u32,
@@ -80,7 +86,15 @@ pub fn fail(msg: &str) {
 }
 
 impl App {
-    pub async fn new(_title: &str) -> App {
+    pub async fn new(title: &str) -> App {
+        Self::new_with_features(title, wgpu::Features::empty()).await
+    }
+
+    /// Like [`App::new`], but enables the given **optional** features on the
+    /// device if (and only if) the adapter supports them — the JS
+    /// `adapter.features.has(...)` pattern. Check `app.device.features()`
+    /// to see which ones you actually got.
+    pub async fn new_with_features(_title: &str, optional_features: wgpu::Features) -> App {
         let canvas = canvas();
         let instance = wgpu::Instance::default();
         let surface = instance
@@ -100,7 +114,10 @@ impl App {
             }
         };
         let (device, queue) = match adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: adapter.features() & optional_features,
+                ..Default::default()
+            })
             .await
         {
             Ok(pair) => pair,
@@ -118,6 +135,7 @@ impl App {
             format,
             auto_resize: false,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode_fn: None,
             resize_divisor: 1,
             surface,
             canvas,
@@ -130,7 +148,8 @@ impl App {
         let frame_fn = Rc::new(RefCell::new(frame_fn));
         // Current canvas size in device pixels, updated by the ResizeObserver.
         let size = Rc::new(Cell::new((0u32, 0u32)));
-        let configured = Rc::new(Cell::new((0u32, 0u32)));
+        let configured =
+            Rc::new(Cell::new((0u32, 0u32, wgpu::CompositeAlphaMode::Auto)));
         let start_time = web_sys::window().unwrap().performance().unwrap().now();
 
         let render = {
@@ -147,7 +166,11 @@ impl App {
                 if width == 0 || height == 0 {
                     return;
                 }
-                if configured.get() != (width, height) {
+                let alpha_mode = match &app.alpha_mode_fn {
+                    Some(f) => f(),
+                    None => app.alpha_mode,
+                };
+                if configured.get() != (width, height, alpha_mode) {
                     if app.auto_resize {
                         app.canvas.set_width(width);
                         app.canvas.set_height(height);
@@ -162,11 +185,11 @@ impl App {
                             height,
                             present_mode: wgpu::PresentMode::default(),
                             desired_maximum_frame_latency: 2,
-                            alpha_mode: app.alpha_mode,
+                            alpha_mode,
                             view_formats: vec![],
                         },
                     );
-                    configured.set((width, height));
+                    configured.set((width, height, alpha_mode));
                 }
                 let frame = match app.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame)

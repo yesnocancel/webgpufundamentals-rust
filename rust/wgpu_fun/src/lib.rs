@@ -140,6 +140,64 @@ pub fn print(msg: &str) {
     web_sys::console::log_1(&msg.into());
 }
 
+/// Milliseconds of elapsed time on a monotonic clock, like JS
+/// `performance.now()`.
+pub fn now_ms() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::OnceLock;
+        static START: OnceLock<std::time::Instant> = OnceLock::new();
+        START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().unwrap().performance().unwrap().now()
+    }
+}
+
+/// Show live status text, like the timing examples' `<pre id="info">`
+/// element that sits on top of the canvas.
+///
+/// Browser: fills the page's `#info` element (creating one styled like the
+/// original examples' if the page doesn't have it). Native: prints to
+/// stdout, at most about once a second so a per-frame update doesn't flood
+/// the terminal.
+pub fn set_info_text(text: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::cell::Cell;
+        use std::time::Instant;
+        thread_local!(static LAST: Cell<Option<Instant>> = const { Cell::new(None) });
+        LAST.with(|last| {
+            let now = Instant::now();
+            if last
+                .get()
+                .map_or(true, |t| now.duration_since(t).as_secs_f64() >= 1.0)
+            {
+                last.set(Some(now));
+                println!("{}", text.trim_end());
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let elem = document.get_element_by_id("info").unwrap_or_else(|| {
+            let pre = document.create_element("pre").unwrap();
+            pre.set_id("info");
+            pre.set_attribute(
+                "style",
+                "position:absolute;top:0;left:0;margin:0;padding:0.5em;\
+                 background-color:rgba(0,0,0,0.8);color:white;",
+            )
+            .unwrap();
+            document.body().unwrap().append_child(&pre).unwrap();
+            pre
+        });
+        elem.set_text_content(Some(text));
+    }
+}
+
 /// Log a line of output where the user can see it: appends a `<pre>` element
 /// to the page in the browser (like several JS examples' `log()` helper),
 /// prints to stdout natively.

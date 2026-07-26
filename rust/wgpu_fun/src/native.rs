@@ -29,6 +29,12 @@ pub struct App {
     /// `Auto` (the default) behaves like `'opaque'`; use
     /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
     pub alpha_mode: wgpu::CompositeAlphaMode,
+    /// Optional override for `alpha_mode`, consulted every frame (examples
+    /// use it to read a GUI setting). When the returned mode differs from
+    /// the surface's current configuration the surface is reconfigured —
+    /// the equivalent of calling `context.configure` with a new
+    /// `alphaMode` at render time in the JS examples.
+    pub alpha_mode_fn: Option<Box<dyn Fn() -> wgpu::CompositeAlphaMode>>,
     /// Browser-only low-res-canvas trick; ignored natively (surfaces must
     /// match the window size). Kept so examples compile on both platforms.
     pub resize_divisor: u32,
@@ -45,6 +51,14 @@ struct TestConfig {
 
 impl App {
     pub async fn new(title: &str) -> App {
+        Self::new_with_features(title, wgpu::Features::empty()).await
+    }
+
+    /// Like [`App::new`], but enables the given **optional** features on the
+    /// device if (and only if) the adapter supports them — the JS
+    /// `adapter.features.has(...)` pattern. Check `app.device.features()`
+    /// to see which ones you actually got.
+    pub async fn new_with_features(title: &str, optional_features: wgpu::Features) -> App {
         crate::settings::load_settings_from_env();
         let instance = wgpu::Instance::default();
         let adapter = instance
@@ -52,7 +66,10 @@ impl App {
             .await
             .expect("no compatible GPU adapter found");
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: adapter.features() & optional_features,
+                ..Default::default()
+            })
             .await
             .expect("failed to create GPU device");
 
@@ -90,10 +107,18 @@ impl App {
             format,
             auto_resize: false,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode_fn: None,
             resize_divisor: 1,
             instance,
             title: title.to_string(),
             test,
+        }
+    }
+
+    fn current_alpha_mode(&self) -> wgpu::CompositeAlphaMode {
+        match &self.alpha_mode_fn {
+            Some(f) => f(),
+            None => self.alpha_mode,
         }
     }
 
@@ -111,6 +136,7 @@ impl App {
             frame_fn: Box::new(frame_fn),
             window: None,
             surface: None,
+            configured_alpha_mode: None,
             start_time: Instant::now(),
         };
         event_loop.run_app(&mut handler).expect("event loop error");
@@ -212,6 +238,7 @@ struct WinitApp {
     frame_fn: Box<dyn FnMut(&Frame)>,
     window: Option<Arc<Window>>,
     surface: Option<wgpu::Surface<'static>>,
+    configured_alpha_mode: Option<wgpu::CompositeAlphaMode>,
     start_time: Instant,
 }
 
@@ -224,6 +251,7 @@ impl WinitApp {
         if size.width == 0 || size.height == 0 {
             return;
         }
+        let alpha_mode = self.app.current_alpha_mode();
         surface.configure(
             &self.app.device,
             &wgpu::SurfaceConfiguration {
@@ -234,10 +262,11 @@ impl WinitApp {
                 height: size.height,
                 present_mode: wgpu::PresentMode::default(),
                 desired_maximum_frame_latency: 2,
-                alpha_mode: self.app.alpha_mode,
+                alpha_mode,
                 view_formats: vec![],
             },
         );
+        self.configured_alpha_mode = Some(alpha_mode);
     }
 }
 
@@ -309,6 +338,9 @@ impl ApplicationHandler for WinitApp {
                 let size = window.inner_size();
                 if size.width == 0 || size.height == 0 {
                     return;
+                }
+                if self.configured_alpha_mode != Some(self.app.current_alpha_mode()) {
+                    self.configure_surface();
                 }
                 use wgpu::CurrentSurfaceTexture as Cst;
                 let mut retried = false;

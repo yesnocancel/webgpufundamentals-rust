@@ -95,20 +95,31 @@ To keep it simple, lets take our responsive triangle example at the end of [the 
 
 ### Set our pipeline to render to a multisample texture
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'our hardcoded red triangle pipeline',
-    layout: 'auto',
-    vertex: {
-      module,
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("our hardcoded red triangle pipeline"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-+    multisample: {
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+-    multisample: Default::default(),
++    multisample: wgpu::MultisampleState {
 +      count: 4,
++      ..Default::default()
 +    },
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
@@ -119,32 +130,37 @@ texture.
 
 Our final texture is the canvas's texture. Since the canvas might change size, like when the user resizes the window, we'll create this texture when we render.
 
-```js
-+  let multisampleTexture;
+```rust
++  let mut multisample_texture: Option<wgpu::Texture> = None;
 
-  function render() {
-+    // Get the current texture from the canvas context
-+    const canvasTexture = context.getCurrentTexture();
-+
+  app.run(RenderMode::Once, move |frame: &Frame| {
 +    // If the multisample texture doesn't exist or
 +    // is the wrong size then make a new one.
-+    if (!multisampleTexture ||
-+        multisampleTexture.width !== canvasTexture.width ||
-+        multisampleTexture.height !== canvasTexture.height) {
-+
++    if multisample_texture
++        .as_ref()
++        .is_none_or(|t| t.width() != frame.width || t.height() != frame.height)
++    {
 +      // If we have an existing multisample texture destroy it.
-+      if (multisampleTexture) {
-+        multisampleTexture.destroy();
++      if let Some(texture) = multisample_texture.take() {
++        texture.destroy();
 +      }
 +
 +      // Create a new multisample texture that matches our
 +      // canvas's size
-+      multisampleTexture = device.createTexture({
-+        format: canvasTexture.format,
-+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-+        size: [canvasTexture.width, canvasTexture.height],
-*        sampleCount: 4,
-+      });
++      multisample_texture = Some(frame.device.create_texture(&wgpu::TextureDescriptor {
++        label: None,
++        format: frame.format,
++        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
++        size: wgpu::Extent3d {
++          width: frame.width,
++          height: frame.height,
++          depth_or_array_layers: 1,
++        },
+*        sample_count: 4,
++        mip_level_count: 1,
++        dimension: wgpu::TextureDimension::D2,
++        view_formats: &[],
++      }));
 +    }
 
   ...
@@ -152,24 +168,26 @@ Our final texture is the canvas's texture. Since the canvas might change size, l
 
 The code above creates a multisample texture if (a) we don't have one
 or (b) the one we have does not match the size of the canvas.
-We create a texture the same size as the canvas but we add `sampleCount: 4`
+We create a texture the same size as the canvas but we add `sample_count: 4`
 to make it a multisample texture.
 
 ### Set our render pass to render to the multisample texture and *resolve* to the final texture (our canvas)
 
-```js
--    // Get the current texture from the canvas context and
--    // set it as the texture to render to.
--    renderPassDescriptor.colorAttachments[0].view =
--        context.getCurrentTexture().createView();
-
-+    // Set the multisample texture as the texture to render to
-+    renderPassDescriptor.colorAttachments[0].view =
-+        multisampleTexture.createView();
-+    // Set the canvas texture as the texture to "resolve"
-+    // the multisample texture to.
-+    renderPassDescriptor.colorAttachments[0].resolveTarget =
-+        canvasTexture.createView();
+```rust
++    let multisample_view = multisample_texture
++        .as_ref()
++        .unwrap()
++        .create_view(&Default::default());
+      ...
+      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+-        // the canvas texture as the texture to render to
+-        view: frame.view,
+-        resolve_target: None,
++        // Render to the multisample texture...
++        view: &multisample_view,
++        // ...and "resolve" it to the canvas texture.
++        resolve_target: Some(frame.view),
+        ...
 ```
 
 *Resolving* is the process of taking the multisample texture and converting it to a
@@ -333,26 +351,18 @@ you'd expect them to always be inside.
 To try it out let also make our example be lower resolution so it's easier
 to see the results
 
-```js
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
--      const width = entry.contentBoxSize[0].inlineSize;
--      const height = entry.contentBoxSize[0].blockSize;
-+      const width = entry.contentBoxSize[0].inlineSize / 16 | 0;
-+      const height = entry.contentBoxSize[0].blockSize / 16 | 0;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-      // re-render
-      render();
-    }
-  });
-  observer.observe(canvas);
+```rust
+  let mut app = App::new("multisample center issue").await;
+  app.auto_resize = true;
++  app.resize_divisor = 16;
 ```
 
-and some CSS
+(`resize_divisor` is our helper's version of dividing the `ResizeObserver`
+sizes by 16.)
 
-```js
+and some CSS in the example's page
+
+```css
 canvas {
 +  image-rendering: pixelated;
 +  image-rendering: crisp-edges;

@@ -155,7 +155,9 @@ async fn run() {
         },
     );
 
-    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let sampler = app
+        .device
+        .create_sampler(&wgpu::SamplerDescriptor::default());
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
