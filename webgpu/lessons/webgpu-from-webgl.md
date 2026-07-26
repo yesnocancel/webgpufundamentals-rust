@@ -125,7 +125,7 @@ likeWebGPU(inputs);
 Here, we pass in our parameters in an array. Notice we have to know the
 locations (indices) for each input. We need to know that `position` is index 0,
 `normal` is at index 2 etc. Keeping the locations for the code inside
-(WGSL) and outside (JavaScript/WASM) in sync in WebGPU is entirely your
+(WGSL) and outside (Rust or JavaScript) in sync in WebGPU is entirely your
 responsibility.
 
 ### Other notable differences
@@ -565,29 +565,43 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const tex = device.createTexture({
-  size: [2, 2],
-  format: 'rgba8unorm',
-  usage:
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.COPY_DST,
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let tex = device.create_texture(&wgpu::TextureDescriptor {
+  label: None,
+  size: wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+  format: wgpu::TextureFormat::Rgba8Unorm,
+  usage: wgpu::TextureUsages::TEXTURE_BINDING |
+         wgpu::TextureUsages::COPY_DST,
+  mip_level_count: 1,
+  sample_count: 1,
+  dimension: wgpu::TextureDimension::D2,
+  view_formats: &[],
 });
-device.queue.writeTexture(
-    { texture: tex },
-    new Uint8Array([
+queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture: &tex,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+    &[
       255, 255, 128, 255,
       128, 255, 255, 255,
       255, 128, 255, 255,
       255, 128, 128, 255,
-    ]),
-    { bytesPerRow: 8, rowsPerImage: 2 },
-    { width: 2, height: 2 },
+    ],
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(8),
+      rows_per_image: Some(2),
+    },
+    wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
 );
 
-const sampler = device.createSampler({
-  magFilter: 'nearest',
-  minFilter: 'nearest',
+let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+  mag_filter: wgpu::FilterMode::Nearest,
+  min_filter: wgpu::FilterMode::Nearest,
+  ..Default::default()
 });
 {{/escapehtml}}</code></pre>
   </div>
@@ -619,8 +633,11 @@ const fs = createShader(gl, gl.FRAGMENT_SHADER, fSrc);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const shaderModule = device.createShaderModule({code: shaderSrc});
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+  label: None,
+  source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+});
 {{/escapehtml}}</code></pre>
   </div>
 </div>
@@ -633,7 +650,8 @@ the error messages with a call to `gl.getShaderInfoLog`. If you didn't do this
 no errors are shown. You'd likely just get an error later when you tried to use
 the shader program.
 
-In WebGPU, most implementations will print an error to the JavaScript console.
+In WebGPU, most implementations will print an error by default — to the
+JavaScript console in the browser, or via wgpu's error reporting natively.
 Of course you can still check for errors yourself but it's really nice that
 if you do nothing you'll still get some useful info.
 
@@ -686,55 +704,73 @@ gl.enable(gl.CULL_FACE);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const pipeline = device.createRenderPipeline({
-  layout: 'auto',
-  vertex: {
-    module: shaderModule,
-    buffers: [
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+const SAMPLE_COUNT: u32 = 4; // can be 1 or 4
+
+let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+  label: Some("fake lighting"),
+  layout: None,
+  vertex: wgpu::VertexState {
+    module: &shader_module,
+    entry_point: None,
+    compilation_options: Default::default(),
+    buffers: &[
       // position
-      {
-        arrayStride: 3 * 4, // 3 floats, 4 bytes each
-        attributes: [
-          {shaderLocation: 0, offset: 0, format: 'float32x3'},
-        ],
-      },
+      Some(wgpu::VertexBufferLayout {
+        array_stride: 3 * 4, // 3 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+          shader_location: 0,
+          offset: 0,
+          format: wgpu::VertexFormat::Float32x3,
+        }],
+      }),
       // normals
-      {
-        arrayStride: 3 * 4, // 3 floats, 4 bytes each
-        attributes: [
-          {shaderLocation: 1, offset: 0, format: 'float32x3'},
-        ],
-      },
+      Some(wgpu::VertexBufferLayout {
+        array_stride: 3 * 4, // 3 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+          shader_location: 1,
+          offset: 0,
+          format: wgpu::VertexFormat::Float32x3,
+        }],
+      }),
       // texcoords
-      {
-        arrayStride: 2 * 4, // 2 floats, 4 bytes each
-        attributes: [
-          {shaderLocation: 2, offset: 0, format: 'float32x2',},
-        ],
-      },
+      Some(wgpu::VertexBufferLayout {
+        array_stride: 2 * 4, // 2 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+          shader_location: 2,
+          offset: 0,
+          format: wgpu::VertexFormat::Float32x2,
+        }],
+      }),
     ],
   },
-  fragment: {
-    module: shaderModule,
-    targets: [
-      {format: presentationFormat},
-    ],
-  },
-  primitive: {
-    topology: 'triangle-list',
-    cullMode: 'back',
-  },
-  depthStencil: {
-    depthWriteEnabled: true,
-    depthCompare: 'less',
-    format: 'depth24plus',
-  },
-  ...(canvasInfo.sampleCount > 1 && {
-      multisample: {
-        count: canvasInfo.sampleCount,
-      },
+  fragment: Some(wgpu::FragmentState {
+    module: &shader_module,
+    entry_point: None,
+    compilation_options: Default::default(),
+    targets: &[Some(format.into())],
   }),
+  primitive: wgpu::PrimitiveState {
+    topology: wgpu::PrimitiveTopology::TriangleList,
+    cull_mode: Some(wgpu::Face::Back),
+    ..Default::default()
+  },
+  depth_stencil: Some(wgpu::DepthStencilState {
+    depth_write_enabled: Some(true),
+    depth_compare: Some(wgpu::CompareFunction::Less),
+    format: wgpu::TextureFormat::Depth24Plus,
+    stencil: Default::default(),
+    bias: Default::default(),
+  }),
+  multisample: wgpu::MultisampleState {
+    count: SAMPLE_COUNT,
+    ..Default::default()
+  },
+  multiview_mask: None,
+  cache: None,
 });
 {{/escapehtml}}</code></pre>
   </div>
@@ -742,27 +778,29 @@ const pipeline = device.createRenderPipeline({
 
 Parts to note:
 
-Shader linking happens when you call `createRenderPipeline` and in fact
-`createRenderPipeline` is a slow call as your shaders might be adjusted
+Shader linking happens when you call `create_render_pipeline` and in fact
+`create_render_pipeline` is a slow call as your shaders might be adjusted
 internally depending on the settings. You can see, for `vertex` and `fragment`
-we specify a shader `module` and specify which function to call via `entryPoint`.
-WebGPU then needs to make sure those 2 functions are compatible with each other
-in the same way that linking two shaders into a program in WebGL checks the shaders
-are compatible with each other.
+we specify a shader `module` and which function to call via `entry_point`.
+Passing `None` means "use the only entry point for this stage"; we could also
+name one explicitly with `Some("myVSMain")`. WebGPU then needs to make sure
+those 2 functions are compatible with each other in the same way that linking
+two shaders into a program in WebGL checks the shaders are compatible with each
+other.
 
 In WebGL we call `gl.vertexAttribPointer` to attach the current `ARRAY_BUFFER`
 buffer to an attribute *and* to specify how to pull data out of that buffer. In
 WebGPU we only specify how to pull data out of buffers when creating the
 pipeline. We specify what buffers to use later.
 
-In the example above you can see `buffers` is an array of objects.
-Those objects are called `GPUVertexBufferLayout`. Within each one is
-an array of attributes. Here we're setting up to get our data from
+In the example above you can see `buffers` is a slice of
+`wgpu::VertexBufferLayout`s. Within each one is
+a slice of attributes. Here we're setting up to get our data from
 3 different buffers. If we interleaved the data into one buffer
-we'd only need one `GPUVertexBufferLayout` but its `attribute` array
+we'd only need one `wgpu::VertexBufferLayout` but its `attributes` slice
 would have 3 entries.
 
-Also note, here is a place where we have to match `shaderLocation` to
+Also note, here is a place where we have to match `shader_location` to
 what we used in the shader.
 
 In WebGPU we set up the primitive type, cull mode, and depth settings here.
@@ -776,9 +814,12 @@ their own pipeline.
 
 The last part, `multisample`, we need if we're drawing to a multi-sampled
 destination texture. I put that in here because by default, WebGL will use a
-multi sampled texture for the canvas. To emulate that requires adding a
-`multisample` property. `presentationFormat` and `canvasInfo.sampleCount` are
-something we'll cover below.
+multi sampled texture for the canvas. To emulate that requires setting the
+`multisample` field. `format` (the canvas texture format, `app.format`) and
+`SAMPLE_COUNT` are something we'll cover below.
+
+One more difference: `layout: None` is the equivalent of JavaScript's
+`layout: 'auto'` — WebGPU derives the bind group layout from the shaders.
 
 ### Preparing for uniforms
 
@@ -794,34 +835,39 @@ const u_worldViewProjectionLoc = gl.getUniformLocation(program, 'u_worldViewProj
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const vUniformBufferSize = 2 * 16 * 4; // 2 mat4s * 16 floats per mat * 4 bytes per float
-const fUniformBufferSize = 3 * 4;      // 1 vec3 * 3 floats per vec3 * 4 bytes per float
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let vs_uniform_buffer_size = 2 * 16 * 4; // 2 mat4s * 16 floats per mat * 4 bytes per float
+let fs_uniform_buffer_size = 3 * 4; // 1 vec3 * 3 floats per vec3 * 4 bytes per float
 
-const vsUniformBuffer = device.createBuffer({
-  size: vUniformBufferSize,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+let vs_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+  label: None,
+  size: u64::max(16, vs_uniform_buffer_size),
+  usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+  mapped_at_creation: false,
 });
-const fsUniformBuffer = device.createBuffer({
-  size: fUniformBufferSize,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+let fs_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+  label: None,
+  size: u64::max(16, fs_uniform_buffer_size),
+  usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+  mapped_at_creation: false,
 });
-const vsUniformValues = new Float32Array(2 * 16); // 2 mat4s
-const worldViewProjection = vsUniformValues.subarray(0, 16);
-const worldInverseTranspose = vsUniformValues.subarray(16, 32);
-const fsUniformValues = new Float32Array(3);  // 1 vec3
-const lightDirection = fsUniformValues.subarray(0, 3);
+
+// CPU side values, filled out at render time:
+// a [f32; 2 * 16] where [0..16] is worldViewProjection
+// and [16..32] is worldInverseTranspose, and
+// a [f32; 3] holding lightDirection
 {{/escapehtml}}</code></pre>
   </div>
 </div>
 
 In WebGL we look up the locations of the uniforms. In WebGPU we create buffers
-to hold the values of the uniforms. The code above then creates TypedArray views
-into larger CPU side TypedArrays that hold the values for the uniforms. Notice
-`vUniformBufferSize` and `fUniformBufferSize` are hand computed. Similarly, when
-creating views into the typed arrays the offsets and sizes are hand computed.
-It's entirely up to you to do those calculations. Unlike WebGL, WebGPU provides
-no API to query these offsets and sizes.
+to hold the values of the uniforms. At render time we'll fill out plain `f32`
+arrays on the CPU and copy their bytes into those buffers. Notice
+`vs_uniform_buffer_size` and `fs_uniform_buffer_size` are hand computed.
+Similarly, the ranges of the CPU side array each uniform occupies (`[0..16]`,
+`[16..32]`) are hand computed. It's entirely up to you to do those
+calculations. Unlike WebGL, WebGPU provides no API to query these offsets and
+sizes.
 
 Note, a similar process exists for WebGL2 using Uniform Blocks but if
 you've never used Uniform Blocks then this will be new.
@@ -845,15 +891,29 @@ gl.bindTexture(gl.TEXTURE_2D, tex);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
 // can happen at init time
-const bindGroup = device.createBindGroup({
-  layout: pipeline.getBindGroupLayout(0),
-  entries: [
-    { binding: 0, resource: vsUniformBuffer  },
-    { binding: 1, resource: fsUniformBuffer  },
-    { binding: 2, resource: sampler },
-    { binding: 3, resource: tex },
+let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+  label: None,
+  layout: &pipeline.get_bind_group_layout(0),
+  entries: &[
+    wgpu::BindGroupEntry {
+      binding: 0,
+      resource: vs_uniform_buffer.as_entire_binding(),
+    },
+    wgpu::BindGroupEntry {
+      binding: 1,
+      resource: fs_uniform_buffer.as_entire_binding(),
+    },
+    wgpu::BindGroupEntry {
+      binding: 2,
+      resource: wgpu::BindingResource::Sampler(&sampler),
+    },
+    wgpu::BindGroupEntry {
+      binding: 3,
+      resource: wgpu::BindingResource::TextureView(
+          &tex.create_view(&Default::default())),
+    },
   ],
 });
 {{/escapehtml}}</code></pre>
@@ -875,23 +935,34 @@ gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const renderPassDescriptor = {
-  colorAttachments: [
-    {
-      // view: undefined, // Assigned later
-      // resolveTarget: undefined, // Assigned Later
-      clearValue: [0.5, 0.5, 0.5, 1],
-      loadOp: 'clear',
-      storeOp: 'store',
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+// built fresh each frame at render time since it
+// borrows that frame's texture views
+let render_pass_descriptor = wgpu::RenderPassDescriptor {
+  label: None,
+  color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+    view,            // this frame's texture view (assigned below)
+    resolve_target,  // assigned below
+    ops: wgpu::Operations {
+      load: wgpu::LoadOp::Clear(wgpu::Color {
+        r: 0.5,
+        g: 0.5,
+        b: 0.5,
+        a: 1.0,
+      }),
+      store: wgpu::StoreOp::Store,
     },
-  ],
-  depthStencilAttachment: {
-    // view: undefined,  // Assigned later
-    depthClearValue: 1,
-    depthLoadOp: 'clear',
-    depthStoreOp: 'store',
-  },
+    depth_slice: None,
+  })],
+  depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+    view: &depth_view,
+    depth_ops: Some(wgpu::Operations {
+      load: wgpu::LoadOp::Clear(1.0),
+      store: wgpu::StoreOp::Store,
+    }),
+    stencil_ops: None,
+  }),
+  ..Default::default()
 };
 {{/escapehtml}}</code></pre>
   </div>
@@ -901,6 +972,12 @@ Note that many of the settings in WebGPU are related to where we want to render.
 In WebGL, when rendering to the canvas, all of this was handled for us. When
 rendering to a framebuffer in WebGL these settings are the equivalent of calls to
 `gl.framebufferTexture2D` and/or `gl.framebufferRenderbuffer`.
+
+In JavaScript you'd typically create this descriptor object once and just
+re-assign the `view` properties each frame. In Rust the descriptor borrows the
+texture views for the current frame, so we build it fresh each frame — it's
+just a plain struct, so that's cheap. We'll see where `view`,
+`resolve_target`, and `depth_view` come from in the drawing section below.
 
 ### Setting Uniforms
 
@@ -916,14 +993,19 @@ gl.uniformMatrix4fv(u_worldViewProjectionLoc, false, m4.multiply(viewProjection,
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-m4.transpose(m4.inverse(world), worldInverseTranspose);
-m4.multiply(viewProjection, world, worldViewProjection);
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let world_inverse_transpose = world.inverse().transpose();
+let world_view_projection = view_projection * world;
 
-v3.normalize([1, 8, -10], lightDirection);
+let light_direction = Vec3::new(1.0, 8.0, -10.0).normalize();
 
-device.queue.writeBuffer(vsUniformBuffer, 0, vsUniformValues);
-device.queue.writeBuffer(fsUniformBuffer, 0, fsUniformValues);
+let mut vs_uniform_values = [0.0f32; 2 * 16]; // 2 mat4s
+vs_uniform_values[0..16].copy_from_slice(&world_view_projection.to_cols_array());
+vs_uniform_values[16..32].copy_from_slice(&world_inverse_transpose.to_cols_array());
+let fs_uniform_values: [f32; 3] = light_direction.to_array(); // 1 vec3
+
+queue.write_buffer(&vs_uniform_buffer, 0, bytemuck::cast_slice(&vs_uniform_values));
+queue.write_buffer(&fs_uniform_buffer, 0, bytemuck::cast_slice(&fs_uniform_values));
 {{/escapehtml}}</code></pre>
   </div>
 </div>
@@ -931,8 +1013,11 @@ device.queue.writeBuffer(fsUniformBuffer, 0, fsUniformValues);
 In the WebGL case we compute a value and pass it to `gl.uniform???` with
 the appropriate location.
 
-In the WebGPU case we write values into our typed arrays and then copy the
-contents of those typed arrays to the corresponding GPU buffers.
+In the WebGPU case we copy values into our CPU side arrays at the offsets we
+computed by hand and then copy the contents of those arrays to the
+corresponding GPU buffers. (The math here uses
+[glam](https://docs.rs/glam)'s `Mat4` and `Vec3` where the WebGL example uses
+its own `m4`/`v3` helpers.)
 
 Note: In WebGL2, if we were using Uniform Blocks, this process is almost
 exactly the same except we'd call `gl.bufferSubData` to upload the typed array
@@ -961,90 +1046,79 @@ function resizeCanvasToDisplaySize(canvas) {
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
 // At init time
-const canvas = document.querySelector('canvas');
-const context = canvas.getContext('webgpu');
+// (App::new creates a surface for the canvas/window and
+// configures it with the preferred format, `app.format`)
+let mut app = App::new("WebGPU Cube").await;
+// keep the drawing buffer sized to the canvas
+app.auto_resize = true;
 
-const presentationFormat = navigator.gpu.getPreferredFormat(adapter);
-context.configure({
-  device,
-  format: presentationFormat,
-});
+const SAMPLE_COUNT: u32 = 4; // can be 1 or 4
 
-const canvasInfo = {
-  canvas,
-  presentationFormat,
-  // these are filled out in resizeToDisplaySize
-  renderTarget: undefined,
-  renderTargetView: undefined,
-  depthTexture: undefined,
-  depthTextureView: undefined,
-  sampleCount: 4,  // can be 1 or 4
-};
+// these are (re)created at render time
+let mut render_target: Option<wgpu::Texture> = None;
+let mut depth_texture: Option<wgpu::Texture> = None;
 
 // --- At render time ---
 
-function resizeToDisplaySize(device, canvasInfo) {
-  const {
-    canvas,
-    context,
-    renderTarget,
-    presentationFormat,
-    depthTexture,
-    sampleCount,
-  } = canvasInfo;
-  const width = Math.max(1, Math.min(device.limits.maxTextureDimension2D, canvas.clientWidth));
-  const height = Math.max(1, Math.min(device.limits.maxTextureDimension2D, canvas.clientHeight));
-
-  const needResize = !canvasInfo.renderTarget ||
-                     width !== canvas.width ||
-                     height !== canvas.height;
-  if (needResize) {
-    if (renderTarget) {
-      renderTarget.destroy();
-    }
-    if (depthTexture) {
-      depthTexture.destroy();
-    }
-
-    canvas.width = width;
-    canvas.height = height;
-
-    if (sampleCount > 1) {
-      const newRenderTarget = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: presentationFormat,
-        sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      });
-      canvasInfo.renderTarget = newRenderTarget;
-      canvasInfo.renderTargetView = newRenderTarget.createView();
-    }
-
-    const newDepthTexture = device.createTexture({
-      size: [canvas.width, canvas.height,
-      format: 'depth24plus',
-      sampleCount,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    canvasInfo.depthTexture = newDepthTexture;
-    canvasInfo.depthTextureView = newDepthTexture.createView();
+// recreate the render target and depth texture on size change
+if depth_texture
+    .as_ref()
+    .is_none_or(|t| t.width() != frame.width || t.height() != frame.height)
+{
+  if let Some(t) = render_target.take() {
+    t.destroy();
   }
-  return needResize;
+  if let Some(t) = depth_texture.take() {
+    t.destroy();
+  }
+  if SAMPLE_COUNT > 1 {
+    render_target = Some(frame.device.create_texture(&wgpu::TextureDescriptor {
+      label: None,
+      size: wgpu::Extent3d {
+        width: frame.width,
+        height: frame.height,
+        depth_or_array_layers: 1,
+      },
+      format: frame.format,
+      sample_count: SAMPLE_COUNT,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+      mip_level_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      view_formats: &[],
+    }));
+  }
+  depth_texture = Some(frame.device.create_texture(&wgpu::TextureDescriptor {
+    label: None,
+    size: wgpu::Extent3d {
+      width: frame.width,
+      height: frame.height,
+      depth_or_array_layers: 1,
+    },
+    format: wgpu::TextureFormat::Depth24Plus,
+    sample_count: SAMPLE_COUNT,
+    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    mip_level_count: 1,
+    dimension: wgpu::TextureDimension::D2,
+    view_formats: &[],
+  }));
 }
 {{/escapehtml}}</code></pre>
   </div>
 </div>
 
-You can see above there's a bunch of work to do. If we need to resize, 
-we need to manually destroy the old textures (color and depth) and create
-new ones. We also need to check that we don't go over the limits, something
-WebGL handled for us, at least for the canvas.
+You can see above there's a bunch of work to do. Our `App` helper watches the
+canvas/window size and re-configures the surface (that's the `auto_resize`
+part, clamped to `device.limits().max_texture_dimension_2d`), but the color
+and depth textures are on us: each frame, if their size doesn't match the
+frame's size, we need to manually destroy the old textures (color and depth)
+and create new ones. Going over the limits is something we have to check
+ourselves too, something WebGL handled for us, at least for the canvas.
 
-Above, the property `sampleCount` is effectively the analog of `antialias`
-property of the WebGL context's creation attributes. `sampleCount: 4` would be
-the equivalent of WebGL's `antialias: true` (the default), whereas `sampleCount: 1`
+Above, `SAMPLE_COUNT` is effectively the analog of the `antialias`
+property of the WebGL context's creation attributes. `SAMPLE_COUNT` of 4 would be
+the equivalent of WebGL's `antialias: true` (the default), whereas a `SAMPLE_COUNT` of 1
 would be the equivalent of `antialias: false` when creating a WebGL context.
 
 Another thing not shown above, WebGL would try not to run out of memory meaning
@@ -1056,25 +1130,23 @@ The reasons WebGL did this are (1) stretching a canvas across multiple monitors
 might make the size larger than the GPU can handle (2) the system might be low
 on memory and instead of just crashing, WebGL would return a smaller drawingbuffer.
 
-In WebGPU, checking those 2 situations is up to you. We're checking for situation (1)
-above. For situation (2) we'd have to check for out of memory ourselves and like
-everything else in WebGPU, doing so is asynchronous.
+In WebGPU, checking those 2 situations is up to you. Situation (1) is what the
+clamp to `device.limits().max_texture_dimension_2d` handles. For situation (2)
+we'd have to check for out of memory ourselves and like everything else in
+WebGPU, doing so is asynchronous.
 
-```js
-device.pushErrorScope('out-of-memory');
-context.configure({...});
-if (sampleCount > 1) {
-  const newRenderTarget = device.createTexture({...});
-  ...
+```rust
+let scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+if SAMPLE_COUNT > 1 {
+  render_target = Some(device.create_texture(/* ... */));
+  // ...
 }
 
-const newDepthTexture = device.createTexture({...});
-...
-device.popErrorScope().then(error => {
-  if (error) {
-    // we're out of memory, try a smaller size?
-  }
-});
+depth_texture = Some(device.create_texture(/* ... */));
+// ...
+if let Some(error) = scope.pop().await {
+  // we're out of memory, try a smaller size?
+}
 ```
 
 ### Drawing
@@ -1111,27 +1183,32 @@ gl.drawElements(gl.TRIANGLES, 6 * 6, gl.UNSIGNED_SHORT, 0);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-if (canvasInfo.sampleCount === 1) {
-    const colorTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view = colorTexture.createView();
-} else {
-  renderPassDescriptor.colorAttachments[0].view = canvasInfo.renderTargetView;
-  renderPassDescriptor.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
-}
-renderPassDescriptor.depthStencilAttachment.view = canvasInfo.depthTextureView;
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let render_target_view = render_target.as_ref()
+    .map(|t| t.create_view(&Default::default()));
+let depth_view = depth_texture.as_ref().unwrap()
+    .create_view(&Default::default());
 
-const commandEncoder = device.createCommandEncoder();
-const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-passEncoder.setPipeline(pipeline);
-passEncoder.setBindGroup(0, bindGroup);
-passEncoder.setVertexBuffer(0, positionBuffer);
-passEncoder.setVertexBuffer(1, normalBuffer);
-passEncoder.setVertexBuffer(2, texcoordBuffer);
-passEncoder.setIndexBuffer(indicesBuffer, 'uint16');
-passEncoder.drawIndexed(indices.length);
-passEncoder.end();
-device.queue.submit([commandEncoder.finish()]);
+// frame.view is this frame's canvas texture view
+let (view, resolve_target) = if SAMPLE_COUNT == 1 {
+  (frame.view, None)
+} else {
+  (render_target_view.as_ref().unwrap(), Some(frame.view))
+};
+
+let mut encoder = frame.device.create_command_encoder(&Default::default());
+{
+  // the render pass descriptor we went over above
+  let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+  pass.set_pipeline(&pipeline);
+  pass.set_bind_group(0, &bind_group, &[]);
+  pass.set_vertex_buffer(0, position_buffer.slice(..));
+  pass.set_vertex_buffer(1, normal_buffer.slice(..));
+  pass.set_vertex_buffer(2, texcoord_buffer.slice(..));
+  pass.set_index_buffer(indices_buffer.slice(..), wgpu::IndexFormat::Uint16);
+  pass.draw_indexed(0..num_indices, 0, 0..1);
+}
+frame.queue.submit([encoder.finish()]);
 {{/escapehtml}}</code></pre>
   </div>
 </div>
@@ -1140,14 +1217,16 @@ Note that I repeated the WebGL attribute setup code here. In WebGL, this can
 happen at init time or at render time. In WebGPU we set up how to pull data out
 of the buffers at init time, but we set the actual buffers to use at render time.
 
-In WebGPU, we need to update our render pass descriptor to use the textures
-we may have just updated in `resizeToDisplaySize`. Then we need to create a 
-command encoder and begin a render pass.
+In WebGPU, we build our render pass descriptor with the views of the textures
+we may have just recreated in the resize check above. Then we need to create a
+command encoder and begin a render pass. (The render pass ends when `pass` is
+dropped, which is what the `{ }` block is for — the equivalent of JavaScript's
+`passEncoder.end()`.)
 
 Inside the render pass we set the pipeline, which is kind of like the equivalent of
 `gl.useProgram`. We then set our bind group which supplies our sampler, texture,
 and the 2 buffers for our uniforms. We set the vertex buffers to match
-what we declared earlier. Finally, we set an index buffer and call `drawIndexed`,
+what we declared earlier. Finally, we set an index buffer and call `draw_indexed`,
 which is the equivalent of calling `gl.drawElements`.
 
 Back in WebGL we needed to call `gl.viewport`. In WebGPU, the pass encoder defaults
@@ -1168,11 +1247,11 @@ WebGPU
 {{{example url="../webgpu-cube.html"}}}
 
 Another important thing to notice, We're issuing instructions to something
-referred to as the `device.queue`. Notice that when we uploaded the values
-for the uniforms we called `device.queue.writeBuffer` and then when we created
-a command encoder and submitted it with `device.queue.submit`. That should
-make it pretty clear that we can't update the buffers between draw calls within
-the same command encoder. If we want to draw multiple things we'd need
+referred to as the queue (the `queue` we got with the device). Notice that when
+we uploaded the values for the uniforms we called `queue.write_buffer` and then
+when we created a command encoder and submitted it with `queue.submit`. That
+should make it pretty clear that we can't update the buffers between draw calls
+within the same command encoder. If we want to draw multiple things we'd need
 multiple buffers or multiple sets of values in a single buffer.
 
 # Drawing Multiple Things
@@ -1204,60 +1283,78 @@ so we also need a different bind group per object.
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-  const vUniformBufferSize = 2 * 16 * 4; // 2 mat4s * 16 floats per mat * 4 bytes per float
-  const fUniformBufferSize = 3 * 4;      // 1 vec3 * 3 floats per vec3 * 4 bytes per float
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+  let vs_uniform_buffer_size = 2 * 16 * 4; // 2 mat4s * 16 floats per mat * 4 bytes per float
+  let fs_uniform_buffer_size = 3 * 4; // 1 vec3 * 3 floats per vec3 * 4 bytes per float
 
-  const fsUniformBuffer = device.createBuffer({
-    size: Math.max(16, fUniformBufferSize),
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  let fs_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: u64::max(16, fs_uniform_buffer_size),
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const fsUniformValues = new Float32Array(3);  // 1 vec3
-  const lightDirection = fsUniformValues.subarray(0, 3);
 
-+  const numObjects = 100;
-+  const objectInfos = [];
++  struct ObjectInfo {
++    vs_uniform_buffer: wgpu::Buffer,
++    bind_group: wgpu::BindGroup,
++    translation: Vec3,
++  }
 +
-+  for (let i = 0; i < numObjects; ++i) {
-    const vsUniformBuffer = device.createBuffer({
-      size: Math.max(16, vUniformBufferSize),
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  let num_objects = 100;
++  let mut object_infos: Vec<ObjectInfo> = Vec::new();
++  let tex_view = tex.create_view(&Default::default());
++
++  for i in 0..num_objects {
+    let vs_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: None,
+      size: u64::max(16, vs_uniform_buffer_size),
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 
-    const vsUniformValues = new Float32Array(2 * 16); // 2 mat4s
-    const worldViewProjection = vsUniformValues.subarray(0, 16);
-    const worldInverseTranspose = vsUniformValues.subarray(16, 32);
-
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: vsUniformBuffer  },
-        { binding: 1, resource: fsUniformBuffer  },
-        { binding: 2, resource: sampler },
-        { binding: 3, resource: tex },
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &pipeline.get_bind_group_layout(0),
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: vs_uniform_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: fs_uniform_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: wgpu::BindingResource::Sampler(&sampler),
+        },
+        wgpu::BindGroupEntry {
+          binding: 3,
+          resource: wgpu::BindingResource::TextureView(&tex_view),
+        },
       ],
     });
 
-+    const across = Math.sqrt(numObjects) | 0;
-+    const x = (i % across - (across - 1) / 2) * 3;
-+    const y = ((i / across | 0) - (across - 1) / 2) * 3;
++    let across = (num_objects as f32).sqrt() as i32;
++    let x = ((i % across) as f32 - (across - 1) as f32 / 2.0) * 3.0;
++    let y = ((i / across) as f32 - (across - 1) as f32 / 2.0) * 3.0;
 +
-+    objectInfos.push({
-+      vsUniformBuffer,  // needed to update the buffer
-+      vsUniformValues,  // needed to update the buffer
-+      worldViewProjection,  // needed so we can update this object's worldViewProject
-+      worldInverseTranspose,  // needed so we can update this object's worldInverseTranspose
-+      bindGroup, // needed to render this object
-+      translation: [x, y, 0],
++    object_infos.push(ObjectInfo {
++      vs_uniform_buffer, // needed to update the buffer
++      bind_group,        // needed to render this object
++      translation: Vec3::new(x, y, 0.0),
 +    });
 +  }
 {{/escapehtml}}</code></pre>
   </div>
 </div>
 
-Note that in this example we're sharing the `fsUniforms`, its buffer and values
-which contains the lighting direction we included `fsUniformBuffer` in the bind group
-but it's defined outside of the loop as there is only 1.
+Note that in this example we're sharing the fragment shader uniforms — the
+buffer holding the lighting direction. We included `fs_uniform_buffer` in each
+object's bind group but it's created outside of the loop as there is only 1.
+Also notice each object only needs to keep its uniform buffer, bind group, and
+translation around; the CPU side uniform values array is just a temporary we
+fill out per object at render time.
 
 For rendering we'll setup the shared parts, then for each object, update its uniform values,
 copy those to the corresponding uniform buffer, and encode the command to draw it.
@@ -1322,69 +1419,62 @@ copy those to the corresponding uniform buffer, and encode the command to draw i
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-  function render(time) {
-    time *= 0.001;
-    resizeToDisplaySize(device, canvasInfo);
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
+    let time = frame.time as f32;
 
-    if (canvasInfo.sampleCount === 1) {
-        const colorTexture = context.getCurrentTexture();
-        renderPassDescriptor.colorAttachments[0].view = colorTexture.createView();
-    } else {
-      renderPassDescriptor.colorAttachments[0].view = canvasInfo.renderTargetView;
-      renderPassDescriptor.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
-    }
-    renderPassDescriptor.depthStencilAttachment.view = canvasInfo.depthTextureView;
+    // recreate the render target and depth texture on size change
+    // ... same as the single cube example ...
 
-    const commandEncoder = device.createCommandEncoder();
-    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+*    let projection = Mat4::perspective_rh(
+*        30.0f32.to_radians(),
+*        frame.width as f32 / frame.height as f32,
+*        0.5,
+*        100.0,
+*    );
+*    let eye = Vec3::new(1.0, 4.0, -46.0);
+    let target = Vec3::new(0.0, 0.0, 0.0);
+    let up = Vec3::new(0.0, 1.0, 0.0);
 
-    // Of course these could be per object but since we're drawing the same object
-    // multiple times, just set them once.
-    passEncoder.setPipeline(pipeline);
-    passEncoder.setVertexBuffer(0, positionBuffer);
-    passEncoder.setVertexBuffer(1, normalBuffer);
-    passEncoder.setVertexBuffer(2, texcoordBuffer);
-    passEncoder.setIndexBuffer(indicesBuffer, 'uint16');
-
-*    const projection = mat4.perspective(30 * Math.PI / 180, canvas.clientWidth / canvas.clientHeight, 0.5, 100);
-*    const eye = [1, 4, -46];
-    const target = [0, 0, 0];
-    const up = [0, 1, 0];
-
-    const view = mat4.lookAt(eye, target, up);
-    const viewProjection = mat4.multiply(projection, view);
+    let view = Mat4::look_at_rh(eye, target, up);
+    let view_projection = projection * view;
 
     // the lighting info is shared so set these uniforms once
-    vec3.normalize([1, 8, -10], lightDirection);
-    device.queue.writeBuffer(fsUniformBuffer, 0, fsUniformValues);
+    let light_direction = Vec3::new(1.0, 8.0, -10.0).normalize();
+    let fs_uniform_values: [f32; 3] = light_direction.to_array(); // 1 vec3
+    frame.queue.write_buffer(&fs_uniform_buffer, 0, bytemuck::cast_slice(&fs_uniform_values));
 
-+    objectInfos.forEach(({
-+      vsUniformBuffer,
-+      vsUniformValues,
-+      worldViewProjection,
-+      worldInverseTranspose,
-+      bindGroup,
-+      translation,
-+    }, ndx) => {
-      passEncoder.setBindGroup(0, bindGroup);
+    let mut encoder = frame.device.create_command_encoder(&Default::default());
+    {
+      // begins the same render pass as the single cube example
+      let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+      pass.set_pipeline(&pipeline);
 
-*      const world = mat4.translation(translation);
-*      mat4.rotateX(world, time * 0.9 + ndx, world);
-*      mat4.rotateY(world, time + ndx, world);
-      mat4.transpose(mat4.inverse(world), worldInverseTranspose);
-      mat4.multiply(viewProjection, world, worldViewProjection);
+      // Of course these could be per object but since we're drawing the same object
+      // multiple times, just set them once.
+      pass.set_vertex_buffer(0, position_buffer.slice(..));
+      pass.set_vertex_buffer(1, normal_buffer.slice(..));
+      pass.set_vertex_buffer(2, texcoord_buffer.slice(..));
+      pass.set_index_buffer(indices_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-      device.queue.writeBuffer(vsUniformBuffer, 0, vsUniformValues);
-      passEncoder.drawIndexed(indices.length);
-+    });
-    passEncoder.end();
-    device.queue.submit([commandEncoder.finish()]);
++      for (ndx, object) in object_infos.iter().enumerate() {
+        pass.set_bind_group(0, &object.bind_group, &[]);
 
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
-}
+*        let world = Mat4::from_translation(object.translation)
+*            * Mat4::from_rotation_x(time * 0.9 + ndx as f32)
+*            * Mat4::from_rotation_y(time + ndx as f32);
+        let world_inverse_transpose = world.inverse().transpose();
+        let world_view_projection = view_projection * world;
+
+        let mut vs_uniform_values = [0.0f32; 2 * 16]; // 2 mat4s
+        vs_uniform_values[0..16].copy_from_slice(&world_view_projection.to_cols_array());
+        vs_uniform_values[16..32].copy_from_slice(&world_inverse_transpose.to_cols_array());
+        frame.queue.write_buffer(&object.vs_uniform_buffer, 0, bytemuck::cast_slice(&vs_uniform_values));
+        pass.draw_indexed(0..num_indices, 0, 0..1);
++      }
+    }
+    frame.queue.submit([encoder.finish()]);
+  });
 {{/escapehtml}}</code></pre>
   </div>
 </div>

@@ -1,0 +1,315 @@
+use wgpu_fun::{App, Frame, ImageData, RenderMode};
+
+// The JS version appends two canvases to the page: one showing the image and
+// one showing the histogram (drawn with the 2D canvas API). We have one
+// WebGPU canvas, so we draw both into it: the image on top and the
+// histogram below it, each as a textured quad in pixel space.
+
+// Like the JS version's drawHistogram: draws the chosen channels with
+// 'screen' compositing (red, green, blue, white for luminance).
+fn histogram_to_image(
+    histogram: &[u32],
+    num_entries: u32,
+    channels: &[usize],
+    height: usize,
+) -> ImageData {
+    // find the highest value for each channel
+    let num_bins = histogram.len() / 4;
+    let mut max = [0u32; 4];
+    for (ndx, v) in histogram.iter().enumerate() {
+        let ch = ndx % 4;
+        max[ch] = max[ch].max(*v);
+    }
+    let scale =
+        max.map(|max| (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32));
+
+    let colors: [[f32; 3]; 4] = [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ];
+
+    let mut data = vec![0u8; num_bins * height * 4];
+    for x in 0..num_bins {
+        let offset = x * 4;
+        for y in 0..height {
+            // 'screen' composite the channels whose bar covers this pixel
+            let mut acc = [0.0f32; 3];
+            for &ch in channels {
+                let v = (histogram[offset + ch] as f32 * scale[ch] * height as f32) as usize;
+                if height - y <= v {
+                    for c in 0..3 {
+                        acc[c] = 1.0 - (1.0 - acc[c]) * (1.0 - colors[ch][c]);
+                    }
+                }
+            }
+            let o = (y * num_bins + x) * 4;
+            data[o] = (acc[0] * 255.0) as u8;
+            data[o + 1] = (acc[1] * 255.0) as u8;
+            data[o + 2] = (acc[2] * 255.0) as u8;
+            data[o + 3] = 255;
+        }
+    }
+    ImageData {
+        data,
+        width: num_bins as u32,
+        height: height as u32,
+    }
+}
+
+fn create_texture_from_source(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: &ImageData,
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        size: wgpu::Extent3d {
+            width: source.width,
+            height: source.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &source.data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(source.width * 4),
+            rows_per_image: None,
+        },
+        wgpu::Extent3d {
+            width: source.width,
+            height: source.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture
+}
+
+const DRAW_SHADER: &str = r#"
+      struct Uniforms {
+        rect: vec4f,        // x, y, width, height in pixels
+        resolution: vec2f,
+      };
+
+      struct VSOutput {
+        @builtin(position) position: vec4f,
+        @location(0) texcoord: vec2f,
+      };
+
+      @group(0) @binding(0) var<uniform> uni: Uniforms;
+      @group(0) @binding(1) var s: sampler;
+      @group(0) @binding(2) var t: texture_2d<f32>;
+
+      @vertex fn vs(@builtin(vertex_index) vNdx: u32) -> VSOutput {
+        let corners = array(
+          vec2f(0, 0), vec2f(1, 0), vec2f(0, 1),
+          vec2f(0, 1), vec2f(1, 0), vec2f(1, 1),
+        );
+        let c = corners[vNdx];
+        let px = uni.rect.xy + c * uni.rect.zw;
+        let clip = (px / uni.resolution * 2.0 - 1.0) * vec2f(1, -1);
+        var vsOut: VSOutput;
+        vsOut.position = vec4f(clip, 0, 1);
+        vsOut.texcoord = c;
+        return vsOut;
+      }
+
+      @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
+        return textureSample(t, s, vsOut.texcoord);
+      }
+"#;
+
+struct DrawnImage {
+    bind_group: wgpu::BindGroup,
+    uniform_buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+}
+
+fn show_images(app: App, images: Vec<wgpu::Texture>) {
+    let module = app
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(DRAW_SHADER.into()),
+        });
+    let pipeline = app
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("draw image"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: None,
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: None,
+                compilation_options: Default::default(),
+                targets: &[Some(app.format.into())],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    let drawn: Vec<DrawnImage> = images
+        .iter()
+        .map(|texture| {
+            let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: (4 + 2 + 2) * 4,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(
+                            &texture.create_view(&Default::default()),
+                        ),
+                    },
+                ],
+            });
+            DrawnImage {
+                bind_group,
+                uniform_buffer,
+                width: texture.width(),
+                height: texture.height(),
+            }
+        })
+        .collect();
+
+    app.run(RenderMode::Once, move |frame: &Frame| {
+        let mut encoder = frame
+            .device
+            .create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: frame.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.3,
+                            g: 0.3,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            // stack the images top to bottom, like the JS version's canvases
+            let mut y = 0.0f32;
+            for image in &drawn {
+                // scale the image down if it's wider than the canvas
+                let scale = (frame.width as f32 / image.width as f32).min(1.0);
+                let (w, h) = (image.width as f32 * scale, image.height as f32 * scale);
+                let uniforms: [f32; 8] = [
+                    0.0,
+                    y,
+                    w,
+                    h,
+                    frame.width as f32,
+                    frame.height as f32,
+                    0.0,
+                    0.0,
+                ];
+                frame
+                    .queue
+                    .write_buffer(&image.uniform_buffer, 0, bytemuck::cast_slice(&uniforms));
+                pass.set_bind_group(0, &image.bind_group, &[]);
+                pass.draw(0..6, 0..1);
+                y += h;
+            }
+        }
+        frame.queue.submit([encoder.finish()]);
+    });
+}
+
+// from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
+fn srgb_luminance(r: f32, g: f32, b: f32) -> f32 {
+    r * 0.2126 + g * 0.7152 + b * 0.0722
+}
+
+fn compute_histogram(num_bins: usize, img_data: &ImageData) -> Vec<u32> {
+    let ImageData { width, height, data } = img_data;
+    let mut bins = vec![0u32; num_bins * 4];
+    for y in 0..*height {
+        for x in 0..*width {
+            let offset = ((y * width + x) * 4) as usize;
+            let r = data[offset] as f32 / 255.0;
+            let g = data[offset + 1] as f32 / 255.0;
+            let b = data[offset + 2] as f32 / 255.0;
+            let channels = [r, g, b, srgb_luminance(r, g, b)];
+            for (ch, v) in channels.iter().enumerate() {
+                let bin = ((v * num_bins as f32) as usize).min(num_bins - 1);
+                bins[bin * 4 + ch] += 1;
+            }
+        }
+    }
+    bins
+}
+
+async fn run() {
+    let mut app = App::new("Histogram 4ch (CPU)").await;
+    app.auto_resize = true;
+
+    let img =
+        wgpu_fun::load_image("resources/images/pexels-francesco-ungaro-96938-mid.jpg").await;
+    let texture = create_texture_from_source(&app.device, &app.queue, &img);
+
+    let num_bins = 256usize;
+    let histogram = compute_histogram(num_bins, &img);
+
+    let num_entries = texture.width() * texture.height();
+    let color_histogram =
+        create_texture_from_source(&app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[0, 1, 2], 100));
+    let luminosity_histogram =
+        create_texture_from_source(&app.device, &app.queue, &histogram_to_image(&histogram, num_entries, &[3], 100));
+
+    show_images(app, vec![texture, color_histogram, luminosity_histogram]);
+}
+
+fn main() {
+    wgpu_fun::start(run());
+}
