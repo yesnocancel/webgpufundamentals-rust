@@ -32,63 +32,77 @@ struct VSOutput {
 }
 ```
 
-Then, when we create a pipeline, we set the topology to `'point-list'`
+Then, when we create a pipeline, we set the topology to `PointList`
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '1 pixel points',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: 2 * 4, // 2 floats, 4 bytes each
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("1 pixel points"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+        array_stride: 2 * 4, // 2 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x2,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-+    primitive: {
-+      topology: 'point-list',
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
++    primitive: wgpu::PrimitiveState {
++      topology: wgpu::PrimitiveTopology::PointList,
++      ..Default::default()
 +    },
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
-Let's fill a vertex buffer with some random clips space points
+Let's fill a vertex buffer with some random clips space points, using the
+same deterministic `rand(min, max)` helper as the earlier lessons
 
-```js
-  const rand = (min, max) => min + Math.random() * (max - min);
-
-  const kNumPoints = 100;
-  const vertexData = new Float32Array(kNumPoints * 2);
-  for (let i = 0; i < kNumPoints; ++i) {
-    const offset = i * 2;
-    vertexData[offset + 0] = rand(-1, 1);
-    vertexData[offset + 1] = rand(-1, 1);
+```rust
+  const K_NUM_POINTS: usize = 100;
+  let mut vertex_data = vec![0.0f32; K_NUM_POINTS * 2];
+  for i in 0..K_NUM_POINTS {
+    let offset = i * 2;
+    vertex_data[offset] = rand(-1.0, 1.0);
+    vertex_data[offset + 1] = rand(-1.0, 1.0);
   }
 
-  const vertexBuffer = device.createBuffer({
-    label: 'vertex buffer vertices',
-    size: vertexData.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  let vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("vertex buffer vertices"),
+    size: (vertex_data.len() * 4) as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+  app.queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
 ```
 
 And then draw 
 
-```js
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-    pass.draw(kNumPoints);
-    pass.end();
+```rust
+    let mut encoder = frame.device.create_command_encoder(&Default::default());
+    {
+      let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+      pass.set_pipeline(&pipeline);
+      pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+      pass.draw(0..K_NUM_POINTS as u32, 0..1);
+    }
 ```
 
 And with that we get 100 random yellow points
@@ -142,103 +156,118 @@ struct VSOutput {
 }
 ```
 
-In JavaScript we need to add an attribute for a size per point, we need to set
-the attributes to advance per instance by setting `stepMode: 'instance'`, and we
-can remove the topology setting since we want the default `'triangle-list'`
+In Rust we need to add an attribute for a size per point, we need to set
+the attributes to advance per instance by setting the step mode to `Instance`, and we
+can remove the topology setting since we want the default `TriangleList`
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'sizeable points',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: 2 * 4, // 2 floats, 4 bytes each
-+          arrayStride: (2 + 1) * 4, // 3 floats, 4 bytes each
-+          stepMode: 'instance',
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-+            {shaderLocation: 1, offset: 8, format: 'float32'},  // size
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("sizeable points"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: 2 * 4, // 2 floats, 4 bytes each
++        array_stride: (2 + 1) * 4, // 3 floats, 4 bytes each
+-        step_mode: wgpu::VertexStepMode::Vertex,
++        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x2,
+          },
++          // size
++          wgpu::VertexAttribute {
++            shader_location: 1,
++            offset: 8,
++            format: wgpu::VertexFormat::Float32,
++          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
--    primitive: {
--      topology: 'point-list',
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+-    primitive: wgpu::PrimitiveState {
+-      topology: wgpu::PrimitiveTopology::PointList,
+-      ..Default::default()
 -    },
++    primitive: Default::default(),
+    ...
   });
 ```
 
 Let's add a random size per point to our vertex data
 
-```js
-  const kNumPoints = 100;
--  const vertexData = new Float32Array(kNumPoints * 2);
-+  const vertexData = new Float32Array(kNumPoints * 3);
-  for (let i = 0; i < kNumPoints; ++i) {
--    const offset = i * 2;
-+    const offset = i * 3;
-    vertexData[offset + 0] = rand(-1, 1);
-    vertexData[offset + 1] = rand(-1, 1);
-+    vertexData[offset + 2] = rand(1, 32);
+```rust
+  const K_NUM_POINTS: usize = 100;
+-  let mut vertex_data = vec![0.0f32; K_NUM_POINTS * 2];
++  let mut vertex_data = vec![0.0f32; K_NUM_POINTS * 3];
+  for i in 0..K_NUM_POINTS {
+-    let offset = i * 2;
++    let offset = i * 3;
+    vertex_data[offset] = rand(-1.0, 1.0);
+    vertex_data[offset + 1] = rand(-1.0, 1.0);
++    vertex_data[offset + 2] = rand(1.0, 32.0);
   }
 ```
 
 We need a uniform buffer so we can pass in the resolution
 
-```js
-  const uniformValues = new Float32Array(2);
-  const uniformBuffer = device.createBuffer({
-    size: uniformValues.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+  let mut uniform_values = [0.0f32; 2];
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: (uniform_values.len() * 4) as u64,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const kResolutionOffset = 0;
-  const resolutionValue = uniformValues.subarray(
-      kResolutionOffset, kResolutionOffset + 2);
+  const K_RESOLUTION_OFFSET: usize = 0;
 ```
 
 And we need a bind group to bind the uniform buffer
 
-```js
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: uniformBuffer },
-    ],
+```rust
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[wgpu::BindGroupEntry {
+      binding: 0,
+      resource: uniform_buffer.as_entire_binding(),
+    }],
   });
 ```
 
 Then at render time we can update the uniform buffer with the current
 resolution.
 
-```js
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    const canvasTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
-
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
 +    // Update the resolution in the uniform buffer
-+    resolutionValue.set([canvasTexture.width, canvasTexture.height]);
-+    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
++    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
++        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
++    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 then set our bind group and render an instance per point
 
-```js
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-+    pass.setBindGroup(0, bindGroup);
--    pass.draw(kNumPoints);
-+    pass.draw(6, kNumPoints);
-    pass.end();
+```rust
+    let mut encoder = frame.device.create_command_encoder(&Default::default());
+    {
+      let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+      pass.set_pipeline(&pipeline);
+      pass.set_vertex_buffer(0, vertex_buffer.slice(..));
++      pass.set_bind_group(0, &bind_group, &[]);
+-      pass.draw(0..K_NUM_POINTS as u32, 0..1);
++      pass.draw(0..6, 0..K_NUM_POINTS as u32);
+    }
 ```
 
 And now we have sizable points
@@ -297,88 +326,84 @@ And of course use a texture in the fragment shader
 }
 ```
 
-We'll create a simple texture using a canvas like we covered in
-[the article on importing textures](webgpu-importing-textures.html).
+The JS version draws a 🥑 emoji into a small canvas; we load a pre-made
+32x32 image of the same emoji like we covered in
+[the article on importing textures](webgpu-importing-textures.html), and
+premultiply its alpha ourselves (the JS version asks the browser for that
+with `premultipliedAlpha: true`).
 
-```js
-  const ctx = new OffscreenCanvas(32, 32).getContext('2d');
-  ctx.font = '27px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('🥑', 16, 16);
+```rust
+  let mut source = wgpu_fun::load_image("resources/images/emoji/avocado.png").await;
+  for pixel in source.data.chunks_mut(4) {
+    let a = pixel[3] as u32;
+    pixel[0] = (pixel[0] as u32 * a / 255) as u8;
+    pixel[1] = (pixel[1] as u32 * a / 255) as u8;
+    pixel[2] = (pixel[2] as u32 * a / 255) as u8;
+  }
 
-  const texture = device.createTexture({
-    size: [32, 32],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING |
-           GPUTextureUsage.COPY_DST |
-           GPUTextureUsage.RENDER_ATTACHMENT,
+  let texture = app.device.create_texture(&wgpu::TextureDescriptor {
+    size: wgpu::Extent3d { width: 32, height: 32, depth_or_array_layers: 1 },
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    usage: wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+    ...
   });
-  device.queue.copyExternalImageToTexture(
-    { source: ctx.canvas, flipY: true },
-    { texture, premultipliedAlpha: true },
-    [32, 32],
-  );
+  // upload, flipping Y like the JS version
+  app.queue.write_texture(/* ... flipped rows of source.data ... */);
 ```
 
 And we need a sampler and we need to add them to our bind group
 
-```js
-  const sampler = device.createSampler({
-    minFilter: 'linear',
-    magFilter: 'linear',
+```rust
+  let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    min_filter: wgpu::FilterMode::Linear,
+    mag_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
   });
 
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: uniformBuffer },
-+      { binding: 1, resource: sampler },
-+      { binding: 2, resource: texture },
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
++      wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
++      wgpu::BindGroupEntry {
++        binding: 2,
++        resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
++      },
     ],
+    ...
   });
 ```
 
 Let's also turn on blending so we get [transparency](webgpu-transparency.html)
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'sizeable points with texture',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (2 + 1) * 4, // 3 floats, 4 bytes each
-          stepMode: 'instance',
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-            {shaderLocation: 1, offset: 8, format: 'float32'},  // size
-          ],
-        },
-      ],
-    },
-    fragment: {
-      module,
--      targets: [{ format: presentationFormat }],
-+      targets: [
-+        {
-+         format: presentationFormat,
-+          blend: {
-+            color: {
-+              srcFactor: 'one',
-+              dstFactor: 'one-minus-src-alpha',
-+              operation: 'add',
-+            },
-+            alpha: {
-+              srcFactor: 'one',
-+              dstFactor: 'one-minus-src-alpha',
-+              operation: 'add',
-+            },
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("sizeable points with texture"),
+    ...
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+-      targets: &[Some(app.format.into())],
++      targets: &[Some(wgpu::ColorTargetState {
++        format: app.format,
++        blend: Some(wgpu::BlendState {
++          color: wgpu::BlendComponent {
++            src_factor: wgpu::BlendFactor::One,
++            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
++            operation: wgpu::BlendOperation::Add,
 +          },
-+        },
-+      ],
-    },
++          alpha: wgpu::BlendComponent {
++            src_factor: wgpu::BlendFactor::One,
++            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
++            operation: wgpu::BlendOperation::Add,
++          },
++        }),
++        write_mask: Default::default(),
++      })],
+    }),
   });
 ```
 
@@ -436,50 +461,51 @@ struct VSOutput {
 
 We need to add the rotation attribute to our pipeline
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'sizeable rotatable points with texture',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (2 + 1) * 4, // 3 floats, 4 bytes each
-+          arrayStride: (2 + 1 + 1) * 4, // 4 floats, 4 bytes each
-          stepMode: 'instance',
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-            {shaderLocation: 1, offset: 8, format: 'float32'},  // size
-+            {shaderLocation: 2, offset: 12, format: 'float32'},  // rotation
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("sizeable rotatable points with texture"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      ...
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: (2 + 1) * 4, // 3 floats, 4 bytes each
++        array_stride: (2 + 1 + 1) * 4, // 4 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute { shader_location: 0, offset: 0, format: wgpu::VertexFormat::Float32x2 },
+          // size
+          wgpu::VertexAttribute { shader_location: 1, offset: 8, format: wgpu::VertexFormat::Float32 },
++          // rotation
++          wgpu::VertexAttribute { shader_location: 2, offset: 12, format: wgpu::VertexFormat::Float32 },
+        ],
+      })],
     },
     ...
 ```
 
 We need to add rotation to our vertex data
 
-```js
-  const kNumPoints = 100;
--  const vertexData = new Float32Array(kNumPoints * 3);
-+  const vertexData = new Float32Array(kNumPoints * 4);
-  for (let i = 0; i < kNumPoints; ++i) {
--    const offset = i * 3;
-+    const offset = i * 4;
-    vertexData[offset + 0] = rand(-1, 1);
-    vertexData[offset + 1] = rand(-1, 1);
-*    vertexData[offset + 2] = rand(10, 64);
-+    vertexData[offset + 3] = rand(0, Math.PI * 2);
+```rust
+  const K_NUM_POINTS: usize = 100;
+-  let mut vertex_data = vec![0.0f32; K_NUM_POINTS * 3];
++  let mut vertex_data = vec![0.0f32; K_NUM_POINTS * 4];
+  for i in 0..K_NUM_POINTS {
+-    let offset = i * 3;
++    let offset = i * 4;
+    vertex_data[offset] = rand(-1.0, 1.0);
+    vertex_data[offset + 1] = rand(-1.0, 1.0);
+*    vertex_data[offset + 2] = rand(10.0, 64.0);
++    vertex_data[offset + 3] = rand(0.0, std::f32::consts::PI * 2.0);
   }
-
 ```
 
 Let's also change the texture from 🥑 to 👉
 
-```js
--  ctx.fillText('🥑', 16, 16);
-+  ctx.fillText('👉', 16, 16);
+```rust
+-  let mut source = wgpu_fun::load_image("resources/images/emoji/avocado.png").await;
++  let mut source = wgpu_fun::load_image("resources/images/emoji/pointing-right.png").await;
 ```
 
 {{{example url="../webgpu-points-w-rotation.html" }}}
@@ -492,23 +518,22 @@ The simple answer is just add in the quad values after doing
 For example, here's some code to make 3d positions for a
 [fibonacci sphere](https://www.google.com/search?q=fibonacci+sphere).
 
-```js
-function createFibonacciSphereVertices({
-  numSamples,
-  radius,
-}) {
-  const vertices = [];
-  const increment = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < numSamples; ++i) {
-    const offset = 2 / numSamples;
-    const y = ((i * offset) - 1) + (offset / 2);
-    const r = Math.sqrt(1 - Math.pow(y, 2));
-    const phi = (i % numSamples) * increment;
-    const x = Math.cos(phi) * r;
-    const z = Math.sin(phi) * r;
-    vertices.push(x * radius, y * radius, z * radius);
-  }
-  return new Float32Array(vertices);
+```rust
+fn create_fibonacci_sphere_vertices(
+    FibonacciSphereOptions { num_samples, radius }: FibonacciSphereOptions,
+) -> Vec<f32> {
+    let mut vertices = Vec::new();
+    let increment = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+    for i in 0..num_samples {
+        let offset = 2.0 / num_samples as f32;
+        let y = ((i as f32 * offset) - 1.0) + (offset / 2.0);
+        let r = (1.0 - y * y).sqrt();
+        let phi = (i % num_samples) as f32 * increment;
+        let x = phi.cos() * r;
+        let z = phi.sin() * r;
+        vertices.extend_from_slice(&[x * radius, y * radius, z * radius]);
+    }
+    vertices
 }
 ```
 
@@ -546,116 +571,115 @@ struct VSOutput {
 
 Here's our pipeline and vertex buffer
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '3d points with fixed size',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (3) * 4, // 3 floats, 4 bytes each
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("3d points with fixed size"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+        array_stride: (3) * 4, // 3 floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [
-        {
-         format: presentationFormat,
-        },
-      ],
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: wgpu::PrimitiveState {
+      topology: wgpu::PrimitiveTopology::PointList,
+      ..Default::default()
     },
-    primitive: {
-      topology: 'point-list',
-    },
+    ...
   });
 
-  const vertexData = createFibonacciSphereVertices({
-    radius: 1,
-    numSamples: 1000,
+  let vertex_data = create_fibonacci_sphere_vertices(FibonacciSphereOptions {
+    radius: 1.0,
+    num_samples: 1000,
   });
-  const kNumPoints = vertexData.length / 3;
+  let k_num_points = (vertex_data.len() / 3) as u32;
 
-  const vertexBuffer = device.createBuffer({
-    label: 'vertex buffer vertices',
-    size: vertexData.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  let vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("vertex buffer vertices"),
+    size: (vertex_data.len() * 4) as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+  app.queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
 ```
 
-And, a uniform buffer and uniform values for our matrix as well
-as a bindGroup to pass the uniform buffer our shader.
+And, a uniform buffer for our matrix as well
+as a bind group to pass the uniform buffer our shader.
 
-```js
-  const uniformValues = new Float32Array(16);
-  const uniformBuffer = device.createBuffer({
-    size: uniformValues.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: 16 * 4,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const kMatrixOffset = 0;
-  const matrixValue = uniformValues.subarray(
-      kMatrixOffset, kMatrixOffset + 16);
 
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: uniformBuffer },
-    ],
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[wgpu::BindGroupEntry {
+      binding: 0,
+      resource: uniform_buffer.as_entire_binding(),
+    }],
   });
 ```
 
 And the code to draw using a projection matrix, camera, and other
-3d math.
+3d math (via [`glam`](https://docs.rs/glam)).
 
-```js
-  function render(time) {
-    time *= 0.001;
-
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    const canvasTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
+```rust
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
+    let time = frame.time as f32;
 
     // Set the matrix in the uniform buffer
-    const fov = 90 * Math.PI / 180;
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(fov, aspect, 0.1, 50);
-    const view = mat4.lookAt(
-      [0, 0, 1.5],  // position
-      [0, 0, 0],    // target
-      [0, 1, 0],    // up
+    let fov = 90.0f32.to_radians();
+    let aspect = frame.width as f32 / frame.height as f32;
+    let projection = Mat4::perspective_rh(fov, aspect, 0.1, 50.0);
+    let view = Mat4::look_at_rh(
+      Vec3::new(0.0, 0.0, 1.5), // position
+      Vec3::new(0.0, 0.0, 0.0), // target
+      Vec3::new(0.0, 1.0, 0.0), // up
     );
-    const viewProjection = mat4.multiply(projection, view);
-    mat4.rotateY(viewProjection, time, matrixValue);
-    mat4.rotateX(matrixValue, time * 0.5, matrixValue);
+    let view_projection = projection * view;
+    let matrix = view_projection
+        * Mat4::from_rotation_y(time)
+        * Mat4::from_rotation_x(time * 0.5);
 
     // Copy the uniform values to the GPU
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&matrix.to_cols_array()));
 
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(kNumPoints);
-    pass.end();
+    let mut encoder = frame.device.create_command_encoder(&Default::default());
+    {
+      let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+      pass.set_pipeline(&pipeline);
+      pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+      pass.set_bind_group(0, &bind_group, &[]);
+      pass.draw(0..k_num_points, 0..1);
+    }
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-
-    requestAnimationFrame(render);
-  }
-
-  requestAnimationFrame(render);
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
+  });
 ```
 
-We also switched to a `requestAnimationFrame` loop.
+We also switched to `RenderMode::Continuous` (a `requestAnimationFrame` loop).
 
 {{{example url="../webgpu-points-3d-1px.html"}}}
 
@@ -708,91 +732,79 @@ struct VSOutput {
 Unlike the previous example we won't use a different size for each vertex.
 Instead we'll pass a single size for all vertices.
 
-```js
--  const uniformValues = new Float32Array(16);
-+  const uniformValues = new Float32Array(16 + 2 + 1 + 1);
-  const uniformBuffer = device.createBuffer({
-    size: uniformValues.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+-  let uniform_buffer_len = 16;
++  // matrix, resolution, size, padding
++  let uniform_buffer_len = 16 + 2 + 1 + 1;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: (uniform_buffer_len * 4) as u64,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const kMatrixOffset = 0;
-+  const kResolutionOffset = 16;
-+  const kSizeOffset = 18;
-  const matrixValue = uniformValues.subarray(
-      kMatrixOffset, kMatrixOffset + 16);
-+  const resolutionValue = uniformValues.subarray(
-+      kResolutionOffset, kResolutionOffset + 2);
-+  const sizeValue = uniformValues.subarray(
-+      kSizeOffset, kSizeOffset + 1);
+  const K_MATRIX_OFFSET: usize = 0;
++  const K_RESOLUTION_OFFSET: usize = 16;
++  const K_SIZE_OFFSET: usize = 18;
 ```
 
 We need to set the resolution as we did above, and we need to set a size
 
-```js
-  function render(time) {
+```rust
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
     ...
-+    // Set the size in the uniform buffer
-+    sizeValue[0] = 10;
-
-    const fov = 90 * Math.PI / 180;
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(fov, aspect, 0.1, 50);
-    const view = mat4.lookAt(
-      [0, 0, 1.5],  // position
-      [0, 0, 0],    // target
-      [0, 1, 0],    // up
-    );
-    const viewProjection = mat4.multiply(projection, view);
-    mat4.rotateY(viewProjection, time, matrixValue);
-    mat4.rotateX(matrixValue, time * 0.5, matrixValue);
-
+    let mut uniform_values = [0.0f32; 16 + 2 + 1 + 1];
+    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
+        .copy_from_slice(&matrix.to_cols_array());
 +    // Update the resolution in the uniform buffer
-+    resolutionValue.set([canvasTexture.width, canvasTexture.height]);
++    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
++        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
++    // Set the size in the uniform buffer
++    uniform_values[K_SIZE_OFFSET] = 10.0;
 
     // Copy the uniform values to the GPU
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 And, like we did before, we need to switch from drawing points to drawing
 instanced quads
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '3d points',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (3) * 4, // 3 floats, 4 bytes each
-+          stepMode: 'instance',
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("3d points"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      ...
+      buffers: &[Some(wgpu::VertexBufferLayout {
+        array_stride: (3) * 4, // 3 floats, 4 bytes each
+-        step_mode: wgpu::VertexStepMode::Vertex,
++        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [
-        {
-         format: presentationFormat,
-        },
-      ],
-    },
--    primitive: {
--      topology: 'point-list',
+    ...
+-    primitive: wgpu::PrimitiveState {
+-      topology: wgpu::PrimitiveTopology::PointList,
+-      ..Default::default()
 -    },
++    primitive: Default::default(),
   });
 
   ...
 
-  function render(time) {
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
 
     ...
 
--    pass.draw(kNumPoints);
-+    pass.draw(6, kNumPoints);
+-    pass.draw(0..k_num_points, 0..1);
++    pass.draw(0..6, 0..k_num_points);
 
     ...
 ```
