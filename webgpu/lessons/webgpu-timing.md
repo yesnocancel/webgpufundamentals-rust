@@ -6,7 +6,9 @@ Let's go over various things you might want
 to time for performance. We'll time 3 things:
 
 * The frame rate in frames per second (fps)
-* The time spent in JavaScript per frame
+* The time spent on the CPU per frame (the original
+  JavaScript examples call this "js" time and we'll keep
+  that label so the numbers are easy to compare)
 * The time spent on the GPU per frame
 
 First, let's take a circle example from
@@ -28,166 +30,227 @@ to the same buffer as the scale. First we'll change the
 render pipeline to move the offset to the same buffer
 as the scale.
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'per vertex color',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: 2 * 4 + 4, // 2 floats, 4 bytes each + 4 bytes
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-            {shaderLocation: 4, offset: 8, format: 'unorm8x4'},   // perVertexColor
-          ],
-        },
-        {
--          arrayStride: 4 + 2 * 4, // 4 bytes + 2 floats, 4 bytes each
-+          arrayStride: 4, // 4 bytes
-          stepMode: 'instance',
-          attributes: [
-            {shaderLocation: 1, offset: 0, format: 'unorm8x4'},   // color
--            {shaderLocation: 2, offset: 4, format: 'float32x2'},  // offset
-          ],
-        },
-        {
--          arrayStride: 2 * 4, // 2 floats, 4 bytes each
-+          arrayStride: 4 * 4, // 4 floats, 4 bytes each
-          stepMode: 'instance',
-          attributes: [
--            {shaderLocation: 3, offset: 0, format: 'float32x2'},   // scale
-+            {shaderLocation: 2, offset: 0, format: 'float32x2'},  // offset
--            {shaderLocation: 3, offset: 0, format: 'float32x2'},   // scale
-+            {shaderLocation: 3, offset: 8, format: 'float32x2'},   // scale
-          ],
-        },
-      ],
-    },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-  });
+```rust
+  let pipeline = app
+    .device
+    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("per vertex color"),
+      layout: None,
+      vertex: wgpu::VertexState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        buffers: &[
+          Some(wgpu::VertexBufferLayout {
+            array_stride: 2 * 4 + 4, // 2 floats, 4 bytes each + 4 bytes
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+              // position
+              wgpu::VertexAttribute {
+                shader_location: 0,
+                offset: 0,
+                format: wgpu::VertexFormat::Float32x2,
+              },
+              // perVertexColor
+              wgpu::VertexAttribute {
+                shader_location: 4,
+                offset: 8,
+                format: wgpu::VertexFormat::Unorm8x4,
+              },
+            ],
+          }),
+          Some(wgpu::VertexBufferLayout {
+-            array_stride: 4 + 2 * 4, // 4 bytes + 2 floats, 4 bytes each
++            array_stride: 4, // 4 bytes
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+              // color
+              wgpu::VertexAttribute {
+                shader_location: 1,
+                offset: 0,
+                format: wgpu::VertexFormat::Unorm8x4,
+              },
+-              // offset
+-              wgpu::VertexAttribute {
+-                shader_location: 2,
+-                offset: 4,
+-                format: wgpu::VertexFormat::Float32x2,
+-              },
+            ],
+          }),
+          Some(wgpu::VertexBufferLayout {
+-            array_stride: 2 * 4, // 2 floats, 4 bytes each
++            array_stride: 4 * 4, // 4 floats, 4 bytes each
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+-              // scale
+-              wgpu::VertexAttribute {
+-                shader_location: 3,
+-                offset: 0,
+-                format: wgpu::VertexFormat::Float32x2,
+-              },
++              // offset
++              wgpu::VertexAttribute {
++                shader_location: 2,
++                offset: 0,
++                format: wgpu::VertexFormat::Float32x2,
++              },
++              // scale
++              wgpu::VertexAttribute {
++                shader_location: 3,
++                offset: 8,
++                format: wgpu::VertexFormat::Float32x2,
++              },
+            ],
+          }),
+        ],
+      },
+      fragment: Some(wgpu::FragmentState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        targets: &[Some(app.format.into())],
+      }),
+      primitive: Default::default(),
+      depth_stencil: None,
+      multisample: Default::default(),
+      multiview_mask: None,
+      cache: None,
+    });
 ```
 
 Then we'll change the part that sets up the vertex buffers
-to move the offsets together with the scales.
+to move the offsets together with the scales. Each object
+now also gets a velocity, and since the offset changes every
+frame it moves from the static data into `ObjectInfo`.
 
-```js
+```rust
+struct ObjectInfo {
+  scale: f32,
++  offset: [f32; 2],
++  velocity: [f32; 2],
+}
+```
+
+```rust
   // create 2 vertex buffers
-  const staticUnitSize =
--    4 +     // color is 4 bytes
--    2 * 4;  // offset is 2 32bit floats (4bytes each)
-+    4;     // color is 4 bytes
-  const changingUnitSize =
--    2 * 4;  // scale is 2 32bit floats (4bytes each)
-+    2 * 4 + // offset is 2 32bit floats (4bytes each)
-+    2 * 4;  // scale is 2 32bit floats (4bytes each)
-  const staticVertexBufferSize = staticUnitSize * kNumObjects;
-  const changingVertexBufferSize = changingUnitSize * kNumObjects;
+-  let static_unit_size = 4 + // color is 4 bytes
+-    2 * 4; // offset is 2 32bit floats (4bytes each)
+-  let changing_unit_size = 2 * 4; // scale is 2 32bit floats (4bytes each)
++  let static_unit_size = 4; // color is 4 bytes
++  let changing_unit_size = 2 * 4 + // offset is 2 32bit floats (4bytes each)
++    2 * 4; // scale is 2 32bit floats (4bytes each)
+  let static_vertex_buffer_size = static_unit_size * k_num_objects;
+  let changing_vertex_buffer_size = changing_unit_size * k_num_objects;
 
-  const staticVertexBuffer = device.createBuffer({
-    label: 'static vertex for objects',
-    size: staticVertexBufferSize,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  let static_vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("static vertex for objects"),
+    size: static_vertex_buffer_size as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const changingVertexBuffer = device.createBuffer({
-    label: 'changing storage for objects',
-    size: changingVertexBufferSize,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  let changing_vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("changing storage for objects"),
+    size: changing_vertex_buffer_size as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
--  const kOffsetOffset = 1;
+  let k_color_offset = 0;
+-  let k_offset_offset = 1;
 +
--  const kScaleOffset = 0;
-+  const kOffsetOffset = 0;
-+  const kScaleOffset = 2;
+-  let k_scale_offset = 0;
++  let k_offset_offset = 0;
++  let k_scale_offset = 2;
 
   {
-    const staticVertexValuesU8 = new Uint8Array(staticVertexBufferSize);
--    const staticVertexValuesF32 = new Float32Array(staticVertexValuesU8.buffer);
-    for (let i = 0; i < kNumObjects; ++i) {
-      const staticOffsetU8 = i * staticUnitSize;
--      const staticOffsetF32 = staticOffsetU8 / 4;
+-    let mut static_vertex_values_f32 = vec![0.0f32; static_vertex_buffer_size / 4];
++    let mut static_vertex_values_u8 = vec![0u8; static_vertex_buffer_size];
+    for i in 0..k_num_objects {
+      let static_offset_u8 = i * static_unit_size;
+-      let static_offset_f32 = static_offset_u8 / 4;
 
       // These are only set once so set them now
-      staticVertexValuesU8.set(        // set the color
-          [rand() * 255, rand() * 255, rand() * 255, 255],
-          staticOffsetU8 + kColorOffset);
+-      // a u8 view of the same data as static_vertex_values_f32
+-      let static_vertex_values_u8: &mut [u8] =
+-        bytemuck::cast_slice_mut(&mut static_vertex_values_f32);
+      static_vertex_values_u8[static_offset_u8 + k_color_offset..][..4].copy_from_slice(&[
+        (rand(0.0, 1.0) * 255.0) as u8,
+        (rand(0.0, 1.0) * 255.0) as u8,
+        (rand(0.0, 1.0) * 255.0) as u8,
+        255,
+      ]); // set the color
 
--      staticVertexValuesF32.set(      // set the offset
--          [rand(-0.9, 0.9), rand(-0.9, 0.9)],
--          staticOffsetF32 + kOffsetOffset);
+-      static_vertex_values_f32[static_offset_f32 + k_offset_offset..][..2]
+-        .copy_from_slice(&[rand(-0.9, 0.9), rand(-0.9, 0.9)]); // set the offset
 
-      objectInfos.push({
+      object_infos.push(ObjectInfo {
         scale: rand(0.2, 0.5),
 +        offset: [rand(-0.9, 0.9), rand(-0.9, 0.9)],
 +        velocity: [rand(-0.1, 0.1), rand(-0.1, 0.1)],
       });
     }
--    device.queue.writeBuffer(staticVertexBuffer, 0, staticVertexValuesF32);
-+    device.queue.writeBuffer(staticVertexBuffer, 0, staticVertexValuesU8);
+-    app.queue.write_buffer(
+-      &static_vertex_buffer,
+-      0,
+-      bytemuck::cast_slice(&static_vertex_values_f32),
+-    );
++    app.queue
++      .write_buffer(&static_vertex_buffer, 0, &static_vertex_values_u8);
   }
 ```
 
 At render time we can update the offsets of the circles based on their velocity and then upload those to the GPU.
 
-```js
-+  const euclideanModulo = (x, a) => x - a * Math.floor(x / a);
+```rust
++  let euclidean_modulo = |x: f32, a: f32| x - a * (x / a).floor();
 
-+  let then = 0;
--  function render() {
-  function render(now) {
-+    now *= 0.001;  // convert to seconds
-+    const deltaTime = now - then;
++  let mut then = 0.0;
+-  app.run(RenderMode::Once, move |frame: &Frame| {
++  app.run(RenderMode::Continuous, move |frame: &Frame| {
++    let now = frame.time;
++    let delta_time = (now - then) as f32;
 +    then = now;
 
 ...
       // set the scales for each object
--    objectInfos.forEach(({scale}, ndx) => {
--      const offset = ndx * (changingUnitSize / 4);
--      vertexValues.set([scale / aspect, scale], offset + kScaleOffset); // set the scale
-+    objectInfos.forEach(({scale, offset, veloctiy}, ndx) => {
+-    for (ndx, ObjectInfo { scale }) in object_infos.iter().enumerate() {
++    for ndx in 0..object_infos.len() {
++      let ObjectInfo {
++        scale,
++        offset,
++        velocity,
++      } = &mut object_infos[ndx];
 +      // -1.5 to 1.5
-+      offset[0] = euclideanModulo(offset[0] + velocity[0] * deltaTime + 1.5, 3) - 1.5;
-+      offset[1] = euclideanModulo(offset[1] + velocity[1] * deltaTime + 1.5, 3) - 1.5;
++      offset[0] = euclidean_modulo(offset[0] + velocity[0] * delta_time + 1.5, 3.0) - 1.5;
++      offset[1] = euclidean_modulo(offset[1] + velocity[1] * delta_time + 1.5, 3.0) - 1.5;
 
-+      const off = ndx * (changingUnitSize / 4);
-+      vertexValues.set(offset, off + kOffsetOffset);
-      vertexValues.set([scale / aspect, scale], off + kScaleOffset);
-    });
++      let off = ndx * (changing_unit_size / 4);
++      vertex_values[off + k_offset_offset..][..2].copy_from_slice(offset);
++      vertex_values[off + k_scale_offset..][..2]
++        .copy_from_slice(&[*scale / aspect, *scale]);
+    }
 
 ...
 
-+    requestAnimationFrame(render);
-  }
-+  requestAnimationFrame(render);
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
--      // re-render
--      render();
-    }
   });
-  observer.observe(canvas);
 ```
 
-We also switched to a rAF loop[^rAF].
+We also switched to a rAF loop[^rAF] by passing
+`RenderMode::Continuous` — our helper's render loop calls our
+frame function via `requestAnimationFrame` in the browser, and
+`frame.time` gives us the time in seconds, so there's nothing
+left to convert. (In the JavaScript version this is where
+you'd call `requestAnimationFrame(render)` yourself and
+multiply the passed-in milliseconds by 0.001.)
 
 [^rAF]: `rAF` is short for `requestAnimationFrame`
 
-<a id="a-euclidianModulo"></a>The code above uses `euclideanModulo` to update the offset.
-`euclideanModulo` returns the remainder of a division where
-the remainder is always positive, whereas the `%` operator returns the remainder in the same direction as the value.
+<a id="a-euclidianModulo"></a>The code above uses `euclidean_modulo` to update the offset.
+`euclidean_modulo` returns the remainder of a division where
+the remainder is always positive, whereas Rust's `%` operator returns the remainder in the same direction as the value.
 For example
 
 <div class="webgpu_center">
@@ -219,7 +282,7 @@ To put it another way, here's a graph of the `%` operator vs `euclideanModulo`
   <div>v % 2</div>
 </div>
 
-So, the code above takes the offset, which is in clip space, and adds 1.5. It then takes the `euclideanModulo`
+So, the code above takes the offset, which is in clip space, and adds 1.5. It then takes the `euclidean_modulo`
 by 3 which will give us a number that is wrapped between 0.0 and 3.0
 and then subtracts 1.5.  This gives us numbers
 that stay between -1.5 and +1.5 and lets them wrap
@@ -230,47 +293,58 @@ the circles don't wrap until they are off the screen. [^offscreen]
 but it seemed best not to bloat the code with complicated checks for size.
 
 To give us something to adjust, lets make it so we can
-set how many circles to draw.
+set how many circles to draw. Like the original JavaScript
+examples, our page keeps a settings GUI in page JavaScript;
+its onChange handler calls into the wasm module, and our
+frame code reads the current value with
+`wgpu_fun::setting_f64` (natively there's no panel and the
+default is used).
 
-```js
--  const kNumObjects = 100;
-+  const kNumObjects = 10000;
+```rust
+-  let k_num_objects = 100;
++  let k_num_objects = 10000;
 
 
 ...
 
-  const settings = {
-    numObjects: 100,
-  };
-
-  const gui = new GUI();
-  gui.add(settings, 'numObjects', 0, kNumObjects, 1);
+    // read the settings the GUI on the page sets
++    let num_objects = wgpu_fun::setting_f64("numObjects", 100.0) as usize;
 
   ...
 
     // set the scale and offset for each object
--    objectInfos.forEach(({scale, offset, veloctiy}, ndx) => {
-+    for (let ndx = 0; ndx < settings.numObjects; ++ndx) {
-+      const {scale, offset, velocity} = objectInfos[ndx];
+-    for ndx in 0..object_infos.len() {
++    for ndx in 0..num_objects {
+      let ObjectInfo {
+        scale,
+        offset,
+        velocity,
+      } = &mut object_infos[ndx];
 
       // -1.5 to 1.5
-      offset[0] = euclideanModulo(offset[0] + velocity[0] * deltaTime + 1.5, 3) - 1.5;
-      offset[1] = euclideanModulo(offset[1] + velocity[1] * deltaTime + 1.5, 3) - 1.5;
+      offset[0] = euclidean_modulo(offset[0] + velocity[0] * delta_time + 1.5, 3.0) - 1.5;
+      offset[1] = euclidean_modulo(offset[1] + velocity[1] * delta_time + 1.5, 3.0) - 1.5;
 
-      const off = ndx * (changingUnitSize / 4);
-      vertexValues.set(offset, off + kOffsetOffset);
-      vertexValues.set([scale / aspect, scale], off + kScaleOffset);
--    });
-+    }
+      let off = ndx * (changing_unit_size / 4);
+      vertex_values[off + k_offset_offset..][..2].copy_from_slice(offset);
+      vertex_values[off + k_scale_offset..][..2]
+        .copy_from_slice(&[*scale / aspect, *scale]);
+    }
 
     // upload all offsets and scales at once
--    device.queue.writeBuffer(changingVertexBuffer, 0, vertexValues);
-+    device.queue.writeBuffer(
-        changingVertexBuffer, 0,
-        vertexValues, 0, settings.numObjects * changingUnitSize / 4);
+-    frame.queue.write_buffer(
+-      &changing_vertex_buffer,
+-      0,
+-      bytemuck::cast_slice(&vertex_values),
+-    );
++    frame.queue.write_buffer(
++      &changing_vertex_buffer,
++      0,
++      bytemuck::cast_slice(&vertex_values[..num_objects * (changing_unit_size / 4)]),
++    );
 
--    pass.draw(numVertices, kNumObjects);
-+    pass.draw(numVertices, settings.numObjects);
+-    pass.draw(0..num_vertices, 0..k_num_objects as u32);
++    pass.draw(0..num_vertices, 0..num_objects as u32);
 ```
 
 So now we should have something that animates
@@ -280,7 +354,7 @@ the number of circles.
 {{{example url="../webgpu-timing-animated.html"}}}
 
 To that, let's add frames per second (fps) and
-time spent in JavaScript
+time spent on the CPU
 
 First we need a way to display this info so lets
 add an `<pre>` element positioned on top of the canvas.
@@ -313,35 +387,45 @@ canvas {
 +}
 ```
 
+Our Rust code fills that element with
+`wgpu_fun::set_info_text` (a tiny helper: in the browser it
+sets the text of `#info`; natively it prints to stdout, at
+most about once a second).
+
 We already have the data needed to display
-frames per second. It's the `deltaTime` we
+frames per second. It's the `delta_time` we
 computed above.
 
-For JavaScript time, we can record the time
-our `requestAnimationFrame` started and the
-time it ended.
+For CPU time, we can record the time
+our frame callback started and the
+time it ended. JavaScript uses `performance.now()`
+for this, which returns milliseconds on a monotonic
+clock; `wgpu_fun::now_ms` is the same thing
+(`performance.now()` in the browser, `std::time::Instant`
+natively).
 
-```js
-  let then = 0;
-  function render(now) {
-    now *= 0.001;  // convert to seconds
-    const deltaTime = now - then;
+```rust
+  let mut then = 0.0;
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
+    let now = frame.time;
+    let delta_time = (now - then) as f32;
     then = now;
 
-+    const startTime = performance.now();
++    let start_time = wgpu_fun::now_ms();
 
     ...
 
-+    const jsTime = performance.now() - startTime;
++    let js_time = wgpu_fun::now_ms() - start_time;
 
-+    infoElem.textContent = `\
-+fps: ${(1 / deltaTime).toFixed(1)}
-+js: ${jsTime.toFixed(1)}ms
-+`;
-
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
++    wgpu_fun::set_info_text(&format!(
++      "\
++fps: {:.1}
++js: {:.1}ms
++",
++      1.0 / delta_time,
++      js_time,
++    ));
+  });
 ```
 
 And that gives us our first two timing measurements.
@@ -353,45 +437,51 @@ And that gives us our first two timing measurements.
 WebGPU provides an **optional** `'timestamp-query'` feature for checking how long an operation takes on the GPU.
 Since it's an optional feature we need to see if it
 exists and request it like we covered in [the article on limits and features](webgpu-limits-and-features.html).
+In wgpu the feature is `wgpu::Features::TIMESTAMP_QUERY`, and
+the JS pattern of checking `adapter.features.has(...)` before
+requiring the feature on the device is what
+`App::new_with_features` does for us: it requests the given
+optional features only if the adapter supports them.
 
-```js
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
--  const device = await adapter?.requestDevice();
-+  const canTimestamp = adapter.features.has('timestamp-query');
-+  const device = await adapter?.requestDevice({
-+    requiredFeatures: [
-+      ...(canTimestamp ? ['timestamp-query'] : []),
-+     ],
-+  });
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+```rust
+async fn run() {
+-  let mut app = App::new("WebGPU Timing - Step 2 - FPS/JS Time").await;
++  // ask for the timestamp-query feature if the adapter supports it
++  let mut app = App::new_with_features(
++    "WebGPU Timing - w/timestamp",
++    wgpu::Features::TIMESTAMP_QUERY,
++  )
++  .await;
+  app.auto_resize = true;
++  let can_timestamp = app
++    .device
++    .features()
++    .contains(wgpu::Features::TIMESTAMP_QUERY);
 ```
 
-Above, we set `canTimestamp` to true or false based on if the adapter supports
-the `'timestamp-query'` feature. If it does we require that feature when we
-create our device.
+Above, we set `can_timestamp` to true or false based on if the device ended up
+with the `TIMESTAMP_QUERY` feature, which it only does if the adapter supports
+it.
 
 With the feature enabled we can ask WebGPU for *timestamps* for a render pass or
-compute pass. You do this by making a `GPUQuerySet` and adding it to your
-compute or render pass. A `GPUQuerySet` is effectively an array of query
+compute pass. You do this by making a `QuerySet` and adding it to your
+compute or render pass. A `QuerySet` is effectively an array of query
 results. You tell WebGPU which element in the array to record the time the pass started
 and which element in the array to record when the pass ended. You can then copy those
 timestamps to a buffer and map the buffer to read the results.[^mapping-not-necessary]
 
 [^mapping-not-necessary]: Copying the query results to mappable buffer is only for
-the purpose of reading the values from JavaScript. If your use-case only needs the
+the purpose of reading the values from Rust. If your use-case only needs the
 results to stay on the GPU, for example as input to something else, then you don't need
 to copy the results to a mappable buffer.
 
 So, first we create a query set.
 
-```js
-  const querySet = device.createQuerySet({
-     type: 'timestamp',
-     count: 2,
+```rust
+  let query_set = app.device.create_query_set(&wgpu::QuerySetDescriptor {
+    label: None,
+    ty: wgpu::QueryType::Timestamp,
+    count: 2,
   });
 ```
 
@@ -401,53 +491,61 @@ both a start and end timestamp.
 We need a buffer to convert the querySet info
 into data we can access.
 
-```js
-  const resolveBuffer = device.createBuffer({
-    size: querySet.count * 8,
-    usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+```rust
+  let resolve_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: query_set.count() as u64 * 8,
+    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+    mapped_at_creation: false,
   });
 ```
 
 Each element in a querySet takes 8 bytes.
 We need to give it a usage of `QUERY_RESOLVE`
 and, if we want be able to read the results
-back in JavaScript we need the `COPY_SRC` usage
+back in Rust we need the `COPY_SRC` usage
 so we can copy the result to a mappable buffer.
 
 Finally we create a mappable buffer to read the
 results.
 
-```js
-  const resultBuffer = device.createBuffer({
-    size: resolveBuffer.size,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+```rust
+  let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: resolve_buffer.size(),
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
   });
 ```
 
 We need to wrap this code in a way that only
 creates these things if the feature exists, otherwise we'll
-get an error trying to make a `'timestamp'` querySet.
+get an error trying to make a `Timestamp` querySet. In Rust
+that's what `Option` is for: `bool::then` gives us a `Some`
+with all three resources when `can_timestamp` is true and a
+`None` when it isn't.
 
-```js
-+  const { querySet, resolveBuffer, resultBuffer } = (() => {
-+    if (!canTimestamp) {
-+      return {};
-+    }
-
-    const querySet = device.createQuerySet({
-       type: 'timestamp',
-       count: 2,
+```rust
++  let query_resources = can_timestamp.then(|| {
+    let query_set = app.device.create_query_set(&wgpu::QuerySetDescriptor {
+      label: None,
+      ty: wgpu::QueryType::Timestamp,
+      count: 2,
     });
-    const resolveBuffer = device.createBuffer({
-      size: querySet.count * 8,
-      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    let resolve_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: None,
+      size: query_set.count() as u64 * 8,
+      usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+      mapped_at_creation: false,
     });
-    const resultBuffer = device.createBuffer({
-      size: resolveBuffer.size,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: None,
+      size: resolve_buffer.size(),
+      usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+      mapped_at_creation: false,
     });
-+    return {querySet, resolveBuffer, resultBuffer };
-+  })();
++    (query_set, resolve_buffer, result_buffer)
++  });
 ```
 
 In our render pass descriptor we tell it the
@@ -455,106 +553,171 @@ querySet to use and the index of the elements
 in the querySet to write the start and ending
 timestamps.
 
-```js
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass with timing',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
-        clearValue: [0.3, 0.3, 0.3, 1],
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
-    ...(canTimestamp && {
-      timestampWrites: {
-        querySet,
-        beginningOfPassWriteIndex: 0,
-        endOfPassWriteIndex: 1,
-      },
-    }),
-  };
+```rust
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass with timing"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color {
+              r: 0.3,
+              g: 0.3,
+              b: 0.3,
+              a: 1.0,
+            }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
++        timestamp_writes: query_resources.as_ref().map(|(query_set, _, _)| {
++          wgpu::RenderPassTimestampWrites {
++            query_set,
++            beginning_of_pass_write_index: Some(0),
++            end_of_pass_write_index: Some(1),
++          }
++        }),
+        ..Default::default()
+      });
 ```
 
-Above, if the feature exists, we add a `timestampWrites` section to our
-renderPassDescriptor and pass in the querySet and tell it to write the start to
-element 0 of the set and the end to element 1.
+Above, if the feature exists, `query_resources` is a `Some` and we map it to a
+`timestamp_writes` section for our render pass descriptor, passing in the
+querySet and telling it to write the start to
+element 0 of the set and the end to element 1. If it doesn't exist the `map`
+produces `None` and no timestamps are written.
 
-After we end the pass, we need to call `resolveQuerySet`. This takes the results
-of the query and puts them in a buffer. We pass it the querySet, the first index
-in the query set where to start resolving, the number of entries to resolve, a
+After we end the pass, we need to call `resolve_query_set`. This takes the results
+of the query and puts them in a buffer. We pass it the querySet, the range
+in the query set to resolve, a
 buffer to resolve to, and an offset in that buffer where to store the result.
 
-```js
-    pass.end();
+```rust
+    } // the pass ends when it drops here
 
-+    if (canTimestamp) {
-+      encoder.resolveQuerySet(querySet, 0, querySet.count, resolveBuffer, 0);
++    if let Some((query_set, resolve_buffer, result_buffer)) = &query_resources {
++      encoder.resolve_query_set(query_set, 0..query_set.count(), resolve_buffer, 0);
 +    }
 ```
 
-We also want to copy the `resolveBuffer` to our `resultsBuffer` so we can map it
-and look at the results in JavaScript. We have an issue though. We can not copy
-to our `resultsBuffer` while it's mapped. Fortunately buffers have a `mapState`
-property we can check. If it's set to `unmapped`, the value it starts with, then
-it's safe to copy to it. Other values are `'pending'`, the value it becomes the
-moment we call `mapAsync`, and `'mapped'`, the value it is when `mapAsync`
-resolves. After we `unmap` it it goes back to `'unmapped'`.
+We also want to copy the `resolve_buffer` to our `result_buffer` so we can map it
+and look at the results in Rust. We have an issue though. We can not copy
+to our `result_buffer` while it's mapped. In JavaScript, buffers have a
+`mapState` property you can check for this. wgpu buffers don't expose one, so
+we track it ourselves: an `AtomicBool` that is true whenever the buffer is
+in the JS `'unmapped'` state — the value it starts with — and false from the
+moment we call `map_async` until we `unmap` it. (It's atomic and wrapped in
+an `Arc` because, as we'll see below, the map callback that flips it back
+may run outside our frame function.)
 
-```js
-    if (canTimestamp) {
-      encoder.resolveQuerySet(querySet, 0, 2, resolveBuffer, 0);
-+      if (resultBuffer.mapState === 'unmapped') {
-+        encoder.copyBufferToBuffer(resolveBuffer, 0, resultBuffer, 0, resultBuffer.size);
+```rust
++  // wgpu buffers have no JS-style `mapState` property, so we track
++  // whether resultBuffer is 'unmapped' (safe to copy to / map) ourselves.
++  let result_buffer_unmapped = Arc::new(AtomicBool::new(true));
+```
+
+```rust
+    if let Some((query_set, resolve_buffer, result_buffer)) = &query_resources {
+      encoder.resolve_query_set(query_set, 0..query_set.count(), resolve_buffer, 0);
++      if result_buffer_unmapped.load(Ordering::Relaxed) {
++        encoder.copy_buffer_to_buffer(
++          resolve_buffer,
++          0,
++          result_buffer,
++          0,
++          result_buffer.size(),
++        );
 +      }
     }
 ```
 
-After we've submitted the command buffer we can map the `resultBuffer`. Like
-above, only want to map it if it's `'unmapped'`.
+After we've submitted the command buffer we can map the `result_buffer`. Like
+above, we only want to map it if it's unmapped.
 
-```js
-+  let gpuTime = 0;
+```rust
++  let gpu_time = Arc::new(Mutex::new(0.0f64));
 
    ...
 
-   function render(now) {
+   app.run(RenderMode::Continuous, move |frame: &Frame| {
 
     ...
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
 
-+    if (canTimestamp && resultBuffer.mapState === 'unmapped') {
-+      resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-+        const times = new BigUint64Array(resultBuffer.getMappedRange());
-+        gpuTime = Number(times[1] - times[0]);
-+        resultBuffer.unmap();
-+      });
++    if let Some((_, _, result_buffer)) = &query_resources {
++      if result_buffer_unmapped.load(Ordering::Relaxed) {
++        result_buffer_unmapped.store(false, Ordering::Relaxed);
++        let result_buffer = result_buffer.clone();
++        let result_buffer_unmapped = result_buffer_unmapped.clone();
++        let gpu_time = gpu_time.clone();
++        result_buffer.clone().map_async(wgpu::MapMode::Read, .., move |result| {
++          result.expect("failed to map result buffer");
++          {
++            let view = result_buffer.slice(..).get_mapped_range().unwrap();
++            let times: &[i64] = bytemuck::cast_slice(&view);
++            *gpu_time.lock().unwrap() =
++              (times[1] - times[0]) as f64 * timestamp_period;
++          }
++          result_buffer.unmap();
++          result_buffer_unmapped.store(true, Ordering::Relaxed);
++        });
++      }
 +    }
++    // mapAsync results are delivered when the device is polled; the
++    // browser does that for us, natively we poll once per frame.
++    let _ = frame.device.poll(wgpu::PollType::Poll);
 ```
 
-Query set results are in nanoseconds and are stored in 64bit integers. To read
-them in JavaScript we can use a `BigUint64Array` typedarray view. Using
-`BigUint64Array` requires special care. When you read an element from a
-`BigUint64Array` the type is a `bigint`, not a `number` so you can't use it with
-with lots of math functions. Also, when you convert them to numbers they may
-lose precision because a `number` can only hold integers of 53 bits in size.
-So, first we subtract the 2 `bigint`s which stays a `bigint`. Then we convert
-the result to a number so we can use it as normal.
+This is the Rust translation of JavaScript's
+`resultBuffer.mapAsync(GPUMapMode.READ).then(...)`: `map_async` takes a
+callback that runs when the mapping is complete, some frames later. There's
+one platform difference: in the browser, the browser delivers those callbacks
+on its own; natively they're delivered when we poll the device, so we add a
+non-blocking `device.poll` once per frame (it's a no-op on the web).
 
-In the code above, we are are only copying the results to `resultBuffer` some
+In WebGPU, query set results are in nanoseconds and are stored in 64bit
+integers. wgpu is a little lower-level: on native, timestamps are in GPU
+"ticks", and `queue.get_timestamp_period()` tells us how many nanoseconds
+one tick is (on the web it's always 1.0). So we grab that once, at init
+time:
+
+```rust
++  // timestamps are in GPU ticks; this many nanoseconds each (1.0 on the web)
++  let timestamp_period = app.queue.get_timestamp_period() as f64;
+```
+
+To read the timestamps, where JavaScript needs a `BigUint64Array` view of the
+mapped data, we `bytemuck::cast_slice` the mapped bytes to a `&[i64]`. Note:
+*signed* 64bit integers — it's legal for a query's beginning time to be
+greater than its end time, and subtracting two `u64`s would panic in that
+case, just like JavaScript first subtracts the two `bigint`s before
+converting to a `number` to avoid losing precision. We subtract, convert to
+`f64` and multiply by the timestamp period to get nanoseconds.
+
+In the code above, we are are only copying the results to `result_buffer` some
 times, when it's not mapped. That means we'll only be reading the time on some
 frames. Most likely every other frame but there is no strict guarantee how long
-it will take until `mapAsync` resolves. Because of that, we update `gpuTime`
+it will take until the map completes. Because of that, we update `gpu_time` —
+shared between the frame function and the map callback via `Arc<Mutex<f64>>` —
 which we can use at anytime to get the last recorded time.
 
-```js
-    infoElem.textContent = `\
-fps: ${(1 / deltaTime).toFixed(1)}
-js: ${jsTime.toFixed(1)}ms
-+gpu: ${canTimestamp ? `${(gpuTime / 1000).toFixed(1)}µs` : 'N/A'}
-`;
+```rust
+    wgpu_fun::set_info_text(&format!(
+      "\
+fps: {:.1}
+js: {:.1}ms
++gpu: {}
+",
+      1.0 / delta_time,
+      js_time,
++      if can_timestamp {
++        format!("{:.1}µs", *gpu_time.lock().unwrap() / 1000.0)
++      } else {
++        "N/A".to_string()
++      },
+    ));
 ```
 
 And with that we get a GPU time from WebGPU
@@ -563,30 +726,43 @@ And with that we get a GPU time from WebGPU
 
 For me, the numbers change too often to see anything
 useful. One way to fix that is to compute a rolling
-average. Here's a class to help compute a rolling
+average. Here's a struct to help compute a rolling
 average.
 
-```js
+```rust
 // Note: We disallow negative values as this is used for timestamp queries
 // where it's possible for a query to return a beginning time greater than the
 // end time. See: https://gpuweb.github.io/gpuweb/#timestamp
-class NonNegativeRollingAverage {
-  #total = 0;
-  #samples = [];
-  #cursor = 0;
-  #numSamples;
-  constructor(numSamples = 30) {
-    this.#numSamples = numSamples;
-  }
-  addSample(v) {
-    if (!Number.isNaN(v) && Number.isFinite(v) && v >= 0) {
-      this.#total += v - (this.#samples[this.#cursor] || 0);
-      this.#samples[this.#cursor] = v;
-      this.#cursor = (this.#cursor + 1) % this.#numSamples;
+struct NonNegativeRollingAverage {
+  total: f64,
+  samples: Vec<f64>,
+  cursor: usize,
+  num_samples: usize,
+}
+
+impl NonNegativeRollingAverage {
+  fn new() -> Self {
+    Self {
+      total: 0.0,
+      samples: Vec::new(),
+      cursor: 0,
+      num_samples: 30,
     }
   }
-  get() {
-    return this.#total / this.#samples.length;
+
+  fn add_sample(&mut self, v: f64) {
+    if !v.is_nan() && v.is_finite() && v >= 0.0 {
+      if self.samples.len() <= self.cursor {
+        self.samples.push(0.0);
+      }
+      self.total += v - self.samples[self.cursor];
+      self.samples[self.cursor] = v;
+      self.cursor = (self.cursor + 1) % self.num_samples;
+    }
+  }
+
+  fn get(&self) -> f64 {
+    self.total / self.samples.len() as f64
   }
 }
 ```
@@ -596,44 +772,71 @@ oldest value is subtracted from the total as the new value is added.
 
 We can use it like this.
 
-```js
-+const fpsAverage = new NonNegativeRollingAverage();
-+const jsAverage = new NonNegativeRollingAverage();
-+const gpuAverage = new NonNegativeRollingAverage();
+```rust
++  let mut fps_average = NonNegativeRollingAverage::new();
++  let mut js_average = NonNegativeRollingAverage::new();
++  let gpu_average = Arc::new(Mutex::new(NonNegativeRollingAverage::new()));
 
-function render(now) {
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
   ...
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
 
-    if (canTimestamp && resultBuffer.mapState === 'unmapped') {
-      resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-        const times = new BigUint64Array(resultBuffer.getMappedRange());
-        gpuTime = Number(times[1] - times[0]);
-+        gpuAverage.addSample(gpuTime / 1000);
-        resultBuffer.unmap();
-      });
+    if let Some((_, _, result_buffer)) = &query_resources {
+      if result_buffer_unmapped.load(Ordering::Relaxed) {
+        result_buffer_unmapped.store(false, Ordering::Relaxed);
+        let result_buffer = result_buffer.clone();
+        let result_buffer_unmapped = result_buffer_unmapped.clone();
+        let gpu_time = gpu_time.clone();
++        let gpu_average = gpu_average.clone();
+        result_buffer.clone().map_async(wgpu::MapMode::Read, .., move |result| {
+          result.expect("failed to map result buffer");
+          {
+            let view = result_buffer.slice(..).get_mapped_range().unwrap();
+            let times: &[i64] = bytemuck::cast_slice(&view);
+-            *gpu_time.lock().unwrap() =
+-              (times[1] - times[0]) as f64 * timestamp_period;
++            let time = (times[1] - times[0]) as f64 * timestamp_period;
++            *gpu_time.lock().unwrap() = time;
++            gpu_average.lock().unwrap().add_sample(time / 1000.0);
+          }
+          result_buffer.unmap();
+          result_buffer_unmapped.store(true, Ordering::Relaxed);
+        });
+      }
     }
+    // mapAsync results are delivered when the device is polled; the
+    // browser does that for us, natively we poll once per frame.
+    let _ = frame.device.poll(wgpu::PollType::Poll);
 
-    const jsTime = performance.now() - startTime;
+    let js_time = wgpu_fun::now_ms() - start_time;
 
-+    fpsAverage.addSample(1 / deltaTime);
-+    jsAverage.addSample(jsTime);
++    fps_average.add_sample(1.0 / delta_time as f64);
++    js_average.add_sample(js_time);
 
-    infoElem.textContent = `\
--fps: ${(1 / deltaTime).toFixed(1)}
--js: ${jsTime.toFixed(1)}ms
--gpu: ${canTimestamp ? `${(gpuTime / 1000).toFixed(1)}µs` : 'N/A'}
-+fps: ${fpsAverage.get().toFixed(1)}
-+js: ${jsAverage.get().toFixed(1)}ms
-+gpu: ${canTimestamp ? `${gpuAverage.get().toFixed(1)}µs` : 'N/A'}
-`;
-
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
-}
+    wgpu_fun::set_info_text(&format!(
+      "\
+fps: {:.1}
+js: {:.1}ms
+gpu: {}
+",
+-      1.0 / delta_time,
+-      js_time,
+-      if can_timestamp {
+-        format!("{:.1}µs", *gpu_time.lock().unwrap() / 1000.0)
+-      } else {
+-        "N/A".to_string()
+-      },
++      fps_average.get(),
++      js_average.get(),
++      if can_timestamp {
++        format!("{:.1}µs", gpu_average.lock().unwrap().get())
++      } else {
++        "N/A".to_string()
++      },
+    ));
+  });
 ```
 
 And now the numbers are a little more stable.
@@ -647,244 +850,308 @@ wrong. We had to make 3 things, a querySet and 2 buffers. We had to change our
 renderPassDescriptor. We had to resolve the results and copy to a mappable
 buffer.
 
-One way to make this less tedious would be to make a class to helps us do the
+One way to make this less tedious would be to make a struct that helps us do the
 timing. Here's one example of a helper that might help with some of these issues.
 
-```js
-function assert(cond, msg = '') {
-  if (!cond) {
-    throw new Error(msg);
-  }
+The original JavaScript helper does two things Rust can't do: it *replaces*
+`pass.end` and `encoder.finish` at runtime so resolving happens automatically,
+and it patches `GPUQueue.prototype.submit` to track unsubmitted command
+buffers so it can complain if you read a result before submitting. In Rust
+there's no monkeypatching, and a pass "ends" by being dropped, so our version
+makes the resolve step an explicit call and keeps the same state machine and
+assertions for everything else.
+
+```rust
+// See https://webgpufundamentals.org/webgpu/lessons/webgpu-timing.html
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum State {
+  Free,
+  NeedResolve,
+  WaitForResult,
 }
 
-// We track command buffers so we can generate an error if
-// we try to read the result before the command buffer has been executed.
-const s_unsubmittedCommandBuffer = new Set();
+struct TimingHelper {
+  can_timestamp: bool,
+  device: wgpu::Device,
+  // timestamps are in GPU ticks; this many nanoseconds each (1.0 on the web)
+  timestamp_period: f64,
+  query_set: Option<wgpu::QuerySet>,
+  resolve_buffer: Option<wgpu::Buffer>,
+  result_buffer: Option<wgpu::Buffer>,
+  result_buffers: Arc<Mutex<Vec<wgpu::Buffer>>>,
+  // state can be Free, NeedResolve, WaitForResult
+  state: State,
+}
 
-/* global GPUQueue */
-GPUQueue.prototype.submit = (function(origFn) {
-  return function(commandBuffers) {
-    origFn.call(this, commandBuffers);
-    commandBuffers.forEach(cb => s_unsubmittedCommandBuffer.delete(cb));
-  };
-})(GPUQueue.prototype.submit);
-
-// See https://webgpufundamentals.org/webgpu/lessons/webgpu-timing.html
-export default class TimingHelper {
-  #canTimestamp;
-  #device;
-  #querySet;
-  #resolveBuffer;
-  #resultBuffer;
-  #commandBuffer;
-  #resultBuffers = [];
-  // state can be 'free', 'need resolve', 'wait for result'
-  #state = 'free';
-
-  constructor(device) {
-    this.#device = device;
-    this.#canTimestamp = device.features.has('timestamp-query');
-    if (this.#canTimestamp) {
-      this.#querySet = device.createQuerySet({
-         type: 'timestamp',
-         count: 2,
+impl TimingHelper {
+  fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    let can_timestamp = device
+      .features()
+      .contains(wgpu::Features::TIMESTAMP_QUERY);
+    let (query_set, resolve_buffer) = if can_timestamp {
+      let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: None,
+        ty: wgpu::QueryType::Timestamp,
+        count: 2,
       });
-      this.#resolveBuffer = device.createBuffer({
-        size: this.#querySet.count * 8,
-        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: query_set.count() as u64 * 8,
+        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
       });
-    }
-  }
-
-  #beginTimestampPass(encoder, fnName, descriptor) {
-    if (this.#canTimestamp) {
-      assert(this.#state === 'free', 'state not free');
-      this.#state = 'need resolve';
-
-      const pass = encoder[fnName]({
-        ...descriptor,
-        ...{
-          timestampWrites: {
-            querySet: this.#querySet,
-            beginningOfPassWriteIndex: 0,
-            endOfPassWriteIndex: 1,
-          },
-        },
-      });
-
-      const resolve = () => this.#resolveTiming(encoder);
-      const trackCommandBuffer = (cb) => this.#trackCommandBuffer(cb);
-      pass.end = (function(origFn) {
-        return function() {
-          origFn.call(this);
-          resolve();
-        };
-      })(pass.end);
-
-      encoder.finish = (function(origFn) {
-        return function() {
-          const cb = origFn.call(this);
-          trackCommandBuffer(cb);
-          return cb;
-        };
-      })(encoder.finish);
-
-      return pass;
+      (Some(query_set), Some(resolve_buffer))
     } else {
-      return encoder[fnName](descriptor);
+      (None, None)
+    };
+    Self {
+      can_timestamp,
+      device: device.clone(),
+      timestamp_period: queue.get_timestamp_period() as f64,
+      query_set,
+      resolve_buffer,
+      result_buffer: None,
+      result_buffers: Arc::new(Mutex::new(Vec::new())),
+      state: State::Free,
     }
   }
 
-  beginRenderPass(encoder, descriptor = {}) {
-    return this.#beginTimestampPass(encoder, 'beginRenderPass', descriptor);
+  fn begin_render_pass<'encoder>(
+    &mut self,
+    encoder: &'encoder mut wgpu::CommandEncoder,
+    descriptor: &wgpu::RenderPassDescriptor<'_>,
+  ) -> wgpu::RenderPass<'encoder> {
+    if self.can_timestamp {
+      assert!(self.state == State::Free, "state not free");
+      self.state = State::NeedResolve;
+
+      encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
+          query_set: self.query_set.as_ref().unwrap(),
+          beginning_of_pass_write_index: Some(0),
+          end_of_pass_write_index: Some(1),
+        }),
+        ..descriptor.clone()
+      })
+    } else {
+      encoder.begin_render_pass(descriptor)
+    }
   }
 
-  beginComputePass(encoder, descriptor = {}) {
-    return this.#beginTimestampPass(encoder, 'beginComputePass', descriptor);
-  }
-
-  #trackCommandBuffer(cb) {
-    if (!this.#canTimestamp) {
+  // In JS this runs automatically when pass.end() is called. In Rust a
+  // pass ends when it's dropped, so call this right after.
+  fn resolve_timing(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    if !self.can_timestamp {
       return;
     }
-    assert(this.#state === 'need finish', 'you must call encoder.finish');
-    this.#commandBuffer = cb;
-    s_unsubmittedCommandBuffer.add(cb);
-    this.#state = 'wait for result';
-  }
-
-  #resolveTiming(encoder) {
-    if (!this.#canTimestamp) {
-      return;
-    }
-    assert(
-      this.#state === 'need resolve',
-      'you must use timerHelper.beginComputePass or timerHelper.beginRenderPass',
+    assert!(
+      self.state == State::NeedResolve,
+      "you must use timing_helper.begin_render_pass or timing_helper.begin_compute_pass",
     );
-    this.#state = 'need finish';
+    self.state = State::WaitForResult;
 
-    this.#resultBuffer = this.#resultBuffers.pop() || this.#device.createBuffer({
-      size: this.#resolveBuffer.size,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    let query_set = self.query_set.as_ref().unwrap();
+    let resolve_buffer = self.resolve_buffer.as_ref().unwrap();
+    let result_buffer = self.result_buffers.lock().unwrap().pop().unwrap_or_else(|| {
+      self.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: resolve_buffer.size(),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+      })
     });
 
-    encoder.resolveQuerySet(this.#querySet, 0, this.#querySet.count, this.#resolveBuffer, 0);
-    encoder.copyBufferToBuffer(this.#resolveBuffer, 0, this.#resultBuffer, 0, this.#resultBuffer.size);
+    encoder.resolve_query_set(query_set, 0..query_set.count(), resolve_buffer, 0);
+    encoder.copy_buffer_to_buffer(resolve_buffer, 0, &result_buffer, 0, result_buffer.size());
+    self.result_buffer = Some(result_buffer);
   }
 
-  async getResult() {
-    if (!this.#canTimestamp) {
-      return 0;
+  // In JS this is async and returns the duration; in Rust the mapping
+  // completes through a callback, so we pass the duration (in
+  // nanoseconds) to a callback. Call after submitting the command buffer.
+  fn get_result(&mut self, callback: impl FnOnce(f64) + Send + 'static) {
+    if !self.can_timestamp {
+      callback(0.0);
+      return;
     }
-    assert(
-      this.#state === 'wait for result',
-      'you must call encoder.finish and submit the command buffer before you can read the result',
+    assert!(
+      self.state == State::WaitForResult,
+      "you must call resolve_timing and submit the command buffer before you can read the result",
     );
-    assert(!!this.#commandBuffer); // internal check
-    assert(
-      !s_unsubmittedCommandBuffer.has(this.#commandBuffer),
-      'you must submit the command buffer before you can read the result',
-    );
-    this.#commandBuffer = undefined;
-    this.#state = 'free';
+    self.state = State::Free;
 
-    const resultBuffer = this.#resultBuffer;
-    await resultBuffer.mapAsync(GPUMapMode.READ);
-    const times = new BigUint64Array(resultBuffer.getMappedRange());
-    const duration = Number(times[1] - times[0]);
-    resultBuffer.unmap();
-    this.#resultBuffers.push(resultBuffer);
-    return duration;
+    let result_buffer = self.result_buffer.take().unwrap();
+    let result_buffers = self.result_buffers.clone();
+    let timestamp_period = self.timestamp_period;
+    result_buffer.clone().map_async(wgpu::MapMode::Read, .., move |result| {
+      result.expect("failed to map result buffer");
+      let duration = {
+        let view = result_buffer.slice(..).get_mapped_range().unwrap();
+        let times: &[i64] = bytemuck::cast_slice(&view);
+        (times[1] - times[0]) as f64 * timestamp_period
+      };
+      result_buffer.unmap();
+      result_buffers.lock().unwrap().push(result_buffer);
+      callback(duration);
+    });
   }
 }
 ```
 
-The asserts are there to helps us not use this class wrong. For example if we
-end a pass but don't resolve it or, if we resolve it and try to read the result
-but we haven't submitted.
+The asserts are there to helps us not use this struct wrong. For example if we
+begin a pass but don't resolve it or, if we resolve it and try to read the result
+twice.
 
-With this class, we can remove much of the code we had before. 
+Some notes on the mechanics: instead of a single `result_buffer` that we
+skip on frames where it's still mapped, the helper keeps a free-list of
+result buffers (`result_buffers`) and takes — or creates — one per pass, so
+every pass gets timed. The list is behind `Arc<Mutex<...>>` because the map
+callback, which returns a buffer to the list, may run outside our frame
+function. And since wgpu timestamps are in GPU ticks, the helper takes the
+`Queue` in `new` so it can grab `get_timestamp_period()` and hand results
+back already converted to nanoseconds like the JavaScript version.
 
-```js
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
-  const canTimestamp = adapter.features.has('timestamp-query');
-  const device = await adapter?.requestDevice({
-    requiredFeatures: [
-      ...(canTimestamp ? ['timestamp-query'] : []),
-     ],
-  });
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+With this struct, we can remove much of the code we had before. 
 
-+  const timingHelper = new TimingHelper(device);
+```rust
+async fn run() {
+  // ask for the timestamp-query feature if the adapter supports it
+  let mut app = App::new_with_features(
+    "WebGPU Timing - w/TimingHelper",
+    wgpu::Features::TIMESTAMP_QUERY,
+  )
+  .await;
+  app.auto_resize = true;
+  let can_timestamp = app
+    .device
+    .features()
+    .contains(wgpu::Features::TIMESTAMP_QUERY);
+
++  let mut timing_helper = TimingHelper::new(&app.device, &app.queue);
 
   ...
 
--  const { querySet, resolveBuffer, resultBuffer } = (() => {
--    if (!canTimestamp) {
--      return {};
--    }
+-  let query_resources = can_timestamp.then(|| {
+-    let query_set = app.device.create_query_set(&wgpu::QuerySetDescriptor {
+-      label: None,
+-      ty: wgpu::QueryType::Timestamp,
+-      count: 2,
+-    });
+-    let resolve_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+-      label: None,
+-      size: query_set.count() as u64 * 8,
+-      usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+-      mapped_at_creation: false,
+-    });
+-    let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+-      label: None,
+-      size: resolve_buffer.size(),
+-      usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+-      mapped_at_creation: false,
+-    });
+-    (query_set, resolve_buffer, result_buffer)
+-  });
 -
--    const querySet = device.createQuerySet({
--       type: 'timestamp',
--       count: 2,
--    });
--    const resolveBuffer = device.createBuffer({
--      size: querySet.count * 8,
--      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
--    });
--    const resultBuffer = device.createBuffer({
--      size: resolveBuffer.size,
--      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
--    });
--    return {querySet, resolveBuffer, resultBuffer };
--  })();
+-  // wgpu buffers have no JS-style `mapState` property, so we track
+-  // whether resultBuffer is 'unmapped' (safe to copy to / map) ourselves.
+-  let result_buffer_unmapped = Arc::new(AtomicBool::new(true));
+-
+-  // timestamps are in GPU ticks; this many nanoseconds each (1.0 on the web)
+-  let timestamp_period = app.queue.get_timestamp_period() as f64;
+-
+-  let gpu_time = Arc::new(Mutex::new(0.0f64));
 
   ...
 
-  function render(now) {
+  app.run(RenderMode::Continuous, move |frame: &Frame| {
 
     ...
 
--    const pass = encoder.beginRenderPass(renderPassDescriptor);
-+    const pass = timingHelper.beginRenderPass(encoder, renderPassDescriptor);
+-      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+-        label: Some("our basic canvas renderPass with timing"),
++      let mut pass = timing_helper.begin_render_pass(&mut encoder, &wgpu::RenderPassDescriptor {
++        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          ...
+        })],
+-        timestamp_writes: query_resources.as_ref().map(|(query_set, _, _)| {
+-          wgpu::RenderPassTimestampWrites {
+-            query_set,
+-            beginning_of_pass_write_index: Some(0),
+-            end_of_pass_write_index: Some(1),
+-          }
+-        }),
+        ..Default::default()
+      });
 
     ...
 
-    pass.end();
+    } // the pass ends when it drops here
 
--    if (canTimestamp) {
--      encoder.resolveQuerySet(querySet, 0, querySet.count, resolveBuffer, 0);
--      if (resultBuffer.mapState === 'unmapped') {
--        encoder.copyBufferToBuffer(resolveBuffer, 0, resultBuffer, 0, resultBuffer.size);
+-    if let Some((query_set, resolve_buffer, result_buffer)) = &query_resources {
+-      encoder.resolve_query_set(query_set, 0..query_set.count(), resolve_buffer, 0);
+-      if result_buffer_unmapped.load(Ordering::Relaxed) {
+-        encoder.copy_buffer_to_buffer(
+-          resolve_buffer,
+-          0,
+-          result_buffer,
+-          0,
+-          result_buffer.size(),
+-        );
 -      }
 -    }
++    timing_helper.resolve_timing(&mut encoder);
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
 
-+    timingHelper.getResult().then(gpuTime => {
-+        gpuAverage.addSample(gpuTime / 1000);
-+    });
+-    if let Some((_, _, result_buffer)) = &query_resources {
+-      if result_buffer_unmapped.load(Ordering::Relaxed) {
+-        result_buffer_unmapped.store(false, Ordering::Relaxed);
+-        let result_buffer = result_buffer.clone();
+-        let result_buffer_unmapped = result_buffer_unmapped.clone();
+-        let gpu_time = gpu_time.clone();
+-        let gpu_average = gpu_average.clone();
+-        result_buffer.clone().map_async(wgpu::MapMode::Read, .., move |result| {
+-          result.expect("failed to map result buffer");
+-          {
+-            let view = result_buffer.slice(..).get_mapped_range().unwrap();
+-            let times: &[i64] = bytemuck::cast_slice(&view);
+-            let time = (times[1] - times[0]) as f64 * timestamp_period;
+-            *gpu_time.lock().unwrap() = time;
+-            gpu_average.lock().unwrap().add_sample(time / 1000.0);
+-          }
+-          result_buffer.unmap();
+-          result_buffer_unmapped.store(true, Ordering::Relaxed);
+-        });
+-      }
+-    }
++    {
++      let gpu_average = gpu_average.clone();
++      timing_helper.get_result(move |gpu_time| {
++        gpu_average.lock().unwrap().add_sample(gpu_time / 1000.0);
++      });
++    }
+    // mapAsync results are delivered when the device is polled; the
+    // browser does that for us, natively we poll once per frame.
+    let _ = frame.device.poll(wgpu::PollType::Poll);
 
     ...
 ```
 
 {{{example url="../webgpu-timing-with-timing-helper.html"}}}
 
-A few points about the `TimingHelper` class:
+A few points about the `TimingHelper` struct:
 
-* You still have to manually request the `'timestamp-query'` feature when you
-  create your device but, the class handles whether it exists or not on the
+* You still have to manually request the `TIMESTAMP_QUERY` feature when you
+  create your device but, the struct handles whether it exists or not on the
   device.
 
-* When you call `timerHelper.beginRenderPass` or `timerHelper.beginComputePass`
-  it automatically adds the appropriate properties to the pass descriptor. It
-  also returns a pass encoder who's `end` function automatically resolves the
-  queries.
+* When you call `timing_helper.begin_render_pass` (or a
+  `begin_compute_pass` you'd write the same way) it automatically adds the
+  appropriate `timestamp_writes` to the pass descriptor. Unlike the
+  JavaScript version it can't hook the pass's `end`, so you call
+  `timing_helper.resolve_timing(&mut encoder)` yourself after the pass drops.
 
 * It's designed so if you use it wrong it will complain.
 
@@ -893,32 +1160,42 @@ A few points about the `TimingHelper` class:
   There are a bunch of tradeoffs here and without more exploration it's not
   clear what would be best.
 
-  A class that handles multiple passes could be useful but, ideally, you'd use a
-  single `GPUQuerySet` that has enough space for all of your passes, rather than
-  1 `GPUQuerySet` per pass.
+  A struct that handles multiple passes could be useful but, ideally, you'd use a
+  single `QuerySet` that has enough space for all of your passes, rather than
+  1 `QuerySet` per pass.
 
   But, in order to do that you'd either need to have the user tell you up front
   the maximum number of passes they'll use. Or, you need to make the code more
-  complicated where it starts with a small `GPUQuerySet` and deletes it and
+  complicated where it starts with a small `QuerySet` and deletes it and
   makes a new larger one if you use more. But then, at least for 1 frame, you'd
-  need to handle having multiple `GPUQuerySet`s
+  need to handle having multiple `QuerySet`s
 
   All of that seemed overkill so for now it seemed best to make it handle one
   pass and you can build on top of it until you decide it needs to be changed.
 
 You could also make a `NoTimingHelper`.
 
-```js
-class NoTimingHelper {
-  constructor() { }
-  beginRenderPass(encoder, descriptor = {}) {
-    return encoder.beginTimestampPass(descriptor);
+```rust
+struct NoTimingHelper;
+
+impl NoTimingHelper {
+  fn new(_device: &wgpu::Device, _queue: &wgpu::Queue) -> Self {
+    Self
   }
 
-  beginComputePass(encoder, descriptor = {}) {
-    return encoder.beginComputePass(descriptor);
+  fn begin_render_pass<'encoder>(
+    &mut self,
+    encoder: &'encoder mut wgpu::CommandEncoder,
+    descriptor: &wgpu::RenderPassDescriptor<'_>,
+  ) -> wgpu::RenderPass<'encoder> {
+    encoder.begin_render_pass(descriptor)
   }
-  async getResult() { return 0; }
+
+  fn resolve_timing(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
+
+  fn get_result(&mut self, callback: impl FnOnce(f64) + Send + 'static) {
+    callback(0.0);
+  }
 }
 ```
 
@@ -927,7 +1204,7 @@ to change too much code.
 
 In any case, I've used the `TimingHelper` class to time the various
 examples from [the articles on using compute shaders to compute image histograms](webgpu-compute-shaders-histogram.html). Here's
-a list of them. Since only the video example runs continuously it's probably
+a list of them (the original JavaScript versions). Since only the video example runs continuously it's probably
 the best example
 
 * <a target="_blank" href="../webgpu-compute-shaders-histogram-video-w-timing.html">4 channel video histogram</a>
@@ -967,8 +1244,8 @@ was 20% faster than the compute pass method on one machine, and 8% faster on ano
 The point is, you can't just use timestamp-query in isolation to tell you how fast something
 will run.
 
-<div class="webgpu_bottombar">By default the <code>'timestamp-query'</code> time values
+<div class="webgpu_bottombar">In the browser, by default the <code>'timestamp-query'</code> time values
 are quantized to 100µ seconds. In Chrome, if you enable <a href="chrome://flags/#enable-webgpu-developer-features" target="_blank">"enable-webgpu-developer-features"</a> in <a href="chrome://flags/#enable-webgpu-developer-features" target="_blank">about:flags</a>, the time values may not be quantized. This would
-theoretically give you more accurate timings. That said, normally 100µ second quantized values should be enough for you to compare shaders techniques for performance.
+theoretically give you more accurate timings. (Running natively, wgpu gives you
+the un-quantized values.) That said, normally 100µ second quantized values should be enough for you to compare shaders techniques for performance.
 </div>
-

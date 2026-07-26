@@ -28,6 +28,8 @@ web-sys = { workspace = true, features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
+    "HtmlElement",
+    "Performance",
     "ResizeObserver",
     "ResizeObserverEntry",
     "ResizeObserverSize",

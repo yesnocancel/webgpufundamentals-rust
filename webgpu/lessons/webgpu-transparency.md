@@ -13,15 +13,15 @@ The first thing we need to be aware of, there is transparent and blending within
 but there is also transparency and blending with a WebGPU canvas and the HTML page.
 
 By default a WebGPU canvas is opaque. Its alpha channel is ignored. To make it not
-ignored we have to set its `alphaMode` to `'premultiplied'` when we call `configure`.
-The default is `'opaque'`
+ignored we have to set its `alphaMode` to `'premultiplied'`. In wgpu that option is
+the *composite alpha mode* of the surface configuration; `wgpu_fun` passes its
+`alpha_mode` field along when it configures the surface (the equivalent of calling
+`configure` on the canvas context). The default, `Auto`, behaves like `'opaque'`.
 
-```js
-  context.configure({
-    device,
-    format: presentationFormat,
-+    alphaMode: 'premultiplied',
-  });
+```rust
+  let mut app = App::new("WebGPU Canvas alphaMode premultiplied").await;
+  app.auto_resize = true;
++  app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 ```
 
 It's important to understand what `alphaMode: 'premultiplied'` means. It means,
@@ -31,62 +31,47 @@ by the alpha value.
 Let's make the smallest example we can. We'll just create a render pass and set
 the clear color.
 
-```js
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+```rust
+use wgpu_fun::{App, Frame, RenderMode};
 
-  // Get a WebGPU context from the canvas and configure it
-  const canvas = document.querySelector('canvas');
-  const context = canvas.getContext('webgpu');
-  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({
-    device,
-    format: presentationFormat,
-+    alphaMode: 'premultiplied',
-  });
+async fn run() {
+  let mut app = App::new("WebGPU Canvas alphaMode premultiplied").await;
+  app.auto_resize = true;
++  app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
-  const clearValue = [1, 0, 0, 0.01];
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
-        clearValue,
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
-  };
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    let clear_value = [1.0, 0.0, 0.0, 0.01];
 
-  function render() {
-    const encoder = device.createCommandEncoder({ label: 'clear encoder' });
-    const canvasTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
-
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-      render();
+    let mut encoder = frame.device.create_command_encoder(
+      &wgpu::CommandEncoderDescriptor { label: Some("clear encoder") });
+    {
+      let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color {
+              r: clear_value[0],
+              g: clear_value[1],
+              b: clear_value[2],
+              a: clear_value[3],
+            }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
     }
+
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
   });
-  observer.observe(canvas);
+}
+
+fn main() {
+  wgpu_fun::start(run());
 }
 ```
 
@@ -106,51 +91,70 @@ canvas {
 ```
 
 To that let's add a UI so we can set the alpha and color of
-the clear value as well as whether or not it's premultiplied
+the clear value as well as whether or not it's premultiplied.
+
+The settings panel itself is plain DOM UI, so on the converted pages it stays
+in the page's JavaScript. Its change handlers hand the values to our Rust
+code through the wasm module's `set_setting_*` functions
 
 ```js
 +import GUI from '../3rdparty/muigui-0.x.module.js';
-
-...
-
-+  const color = [1, 0, 0];
-+  const settings = {
-+    premultiply: false,
-+    color,
-+    alpha: 0.01,
-+  };
++import init, * as wasm from './wasm/webgpu-canvas-alphamode-premultiplied/webgpu-canvas-alphamode-premultiplied.js';
++await init();
 +
-+  const gui = new GUI().onChange(render);
-+  gui.add(settings, 'premultiply');
-+  gui.add(settings, 'alpha', 0, 1);
-+  gui.addColor(settings, 'color');
++const color = [1, 0, 0];
++const settings = {
++  premultiply: false,
++  color,
++  alpha: 0.01,
++};
++
++// send the current settings to the wasm module (which re-renders)
++function update() {
++  wasm.set_setting_bool('premultiply', settings.premultiply);
++  wasm.set_setting_num('alpha', settings.alpha);
++  wasm.set_setting_num('color0', color[0]);
++  wasm.set_setting_num('color1', color[1]);
++  wasm.set_setting_num('color2', color[2]);
++}
++
++const gui = new GUI().onChange(update);
++gui.add(settings, 'premultiply');
++gui.add(settings, 'alpha', 0, 1);
++gui.addColor(settings, 'color');
+```
 
-  function render() {
-    const encoder = device.createCommandEncoder({ label: 'clear encoder' });
-    const canvasTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
+and in Rust we read the current values with `wgpu_fun::setting_bool` and
+friends. Changing a setting automatically triggers a re-render.
 
-+    const { alpha } = settings;
-+    clearValue[3] = alpha;
-+    if (settings.premultiply) {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+-    let clear_value = [1.0, 0.0, 0.0, 0.01];
++    // read the settings the GUI on the page sets
++    let premultiply = wgpu_fun::setting_bool("premultiply", false);
++    let alpha = wgpu_fun::setting_f64("alpha", 0.01);
++    let color = [
++      wgpu_fun::setting_f64("color0", 1.0),
++      wgpu_fun::setting_f64("color1", 0.0),
++      wgpu_fun::setting_f64("color2", 0.0),
++    ];
++
++    let mut clear_value = [0.0, 0.0, 0.0, alpha];
++    if premultiply {
 +      // premultiply the colors by the alpha
-+      clearValue[0] = color[0] * alpha;
-+      clearValue[1] = color[1] * alpha;
-+      clearValue[2] = color[2] * alpha;
++      clear_value[0] = color[0] * alpha;
++      clear_value[1] = color[1] * alpha;
++      clear_value[2] = color[2] * alpha;
 +    } else {
 +      // use un-premultiplied colors
-+      clearValue[0] = color[0];
-+      clearValue[1] = color[1];
-+      clearValue[2] = color[2];
++      clear_value[0] = color[0];
++      clear_value[1] = color[1];
++      clear_value[2] = color[2];
 +    }
 
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+    let mut encoder = frame.device.create_command_encoder(
+      &wgpu::CommandEncoderDescriptor { label: Some("clear encoder") });
+    ...
 ```
 
 If we run that I hope you'll see an issue
@@ -205,13 +209,15 @@ colors then in the shader you could premultiply with code like this.
    return vec4f(color.rgb * color.a, color.a)`;
 ```
 
-The function, `copyExternalImageToTexture` which we covered in
-[the article on importing textures](webgpu-importing-textures.html)
-takes a `premultipliedAlpha: true` option. ([see below](#copyExternalImageToTexture)) 
-This means when you load the image into the texture by calling
-`copyExternalImageToTexture` you can tell WebGPU to premultiply the colors for
-you as it copies them to the texture. That way when you call `textureSample` the value
-you get will already be premultiplied.
+The JavaScript API's `copyExternalImageToTexture` function, which we covered in
+[the article on importing textures](webgpu-importing-textures.html),
+takes a `premultipliedAlpha: true` option. ([see below](#copyExternalImageToTexture))
+This means when you load the image into the texture
+you can tell WebGPU to premultiply the colors for
+you as it copies them to the texture. In Rust we upload pixels with
+`write_texture`, so we do that multiplication ourselves as we copy — we'll do
+exactly that in the blending example below. Either way, when you call
+`textureSample` the value you get will already be premultiplied.
 
 The point of this section was
 
@@ -222,8 +228,8 @@ The point of this section was
 2. To introduce the concept of premultiplied alpha colors 
 
    How you get premultiplied colors is up to you. In the 
-   example above we created a premultiplied `clearValue`
-   in JavaScript.
+   example above we created a premultiplied `clear_value`
+   in Rust.
 
    We can also return colors from fragment shaders (and/or)
    other shaders. We might provide premultiplied colors
@@ -269,30 +275,30 @@ for one of the two cases.
 
 A few other changes, we'll add in the CSS above to make the
 canvas have a CSS checkerboard background. We'll also set
-`alphaMode: 'premultiplied'`. And we'll set the `clearValue`
-to `[0, 0, 0, 0]`
+the alpha mode to premultiplied. And we'll set the clear value
+to `0, 0, 0, 0`
 
-```js
-  context.configure({
-    device,
-    format: presentationFormat,
-+    alphaMode: 'premultiplied',
-  });
+```rust
+  let mut app = App::new("WebGPU Fragment Shader Discard").await;
+  app.auto_resize = true;
++  app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
   ...
 
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
--        clearValue: [0.3, 0.3, 0.3, 1],
-+        clearValue: [0, 0, 0, 0],
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
-  };
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+-            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.3, g: 0.3, b: 0.3, a: 1.0 }),
++            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
 ...
 
 ```
@@ -334,97 +340,102 @@ Finally we get to blend settings. When you create a render pipeline, for each
 `target` in the fragment shader, you can set blending state. In other words,
 here's a typical pipeline from our other examples so far
 
-```js
-    const pipeline = device.createRenderPipeline({
-      label: 'hardcoded textured quad pipeline',
-      layout: pipelineLayout,
-      vertex: {
-        module,
+```rust
+    let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("hardcoded textured quad pipeline"),
+      layout: Some(&pipeline_layout),
+      vertex: wgpu::VertexState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        buffers: &[],
       },
-      fragment: {
-        module,
-        targets: [
-          {
-            format: presentationFormat,
-          },
-        ],
-      },
+      fragment: Some(wgpu::FragmentState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        targets: &[Some(app.format.into())],
+      }),
+      primitive: Default::default(),
+      depth_stencil: None,
+      multisample: Default::default(),
+      multiview_mask: None,
+      cache: None,
     });
 ```
 
-And here it is with blending added to `target[0]`.
+And here it is with blending added to `targets[0]`. The `app.format.into()`
+shorthand made a `ColorTargetState` with no blending; now we write it out in
+full so we can fill in the `blend` field.
 
-```js
-    const pipeline = device.createRenderPipeline({
-      label: 'hardcoded textured quad pipeline',
-      layout: pipelineLayout,
-      vertex: {
-        module,
-      },
-      fragment: {
-        module,
-        targets: [
-          {
-            format: presentationFormat,
-+            blend: {
-+              color: {
-+                srcFactor: 'one',
-+                dstFactor: 'one-minus-src-alpha'
-+              },
-+              alpha: {
-+                srcFactor: 'one',
-+                dstFactor: 'one-minus-src-alpha'
-+              },
+```rust
+      fragment: Some(wgpu::FragmentState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+-        targets: &[Some(app.format.into())],
++        targets: &[Some(wgpu::ColorTargetState {
++          format: app.format,
++          blend: Some(wgpu::BlendState {
++            color: wgpu::BlendComponent {
++              src_factor: wgpu::BlendFactor::One,
++              dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
++              ..Default::default()
 +            },
-          },
-        ],
-      },
-    });
++            alpha: wgpu::BlendComponent {
++              src_factor: wgpu::BlendFactor::One,
++              dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
++              ..Default::default()
++            },
++          }),
++          write_mask: wgpu::ColorWrites::ALL,
++        })],
+      }),
 ```
 
 The full list of default settings are:
 
-```js
-blend: {
-  color: {
-    operation: 'add',
-    srcFactor: 'one',
-    dstFactor: 'zero',
+```rust
+blend: Some(wgpu::BlendState {
+  color: wgpu::BlendComponent {
+    operation: wgpu::BlendOperation::Add,
+    src_factor: wgpu::BlendFactor::One,
+    dst_factor: wgpu::BlendFactor::Zero,
   },
-  alpha: {
-    operation: 'add',
-    srcFactor: 'one',
-    dstFactor: 'zero',
+  alpha: wgpu::BlendComponent {
+    operation: wgpu::BlendOperation::Add,
+    src_factor: wgpu::BlendFactor::One,
+    dst_factor: wgpu::BlendFactor::Zero,
   },
-}
+}),
 ```
 
 Where `color` is what happens to the `rgb` portion of a color and `alpha` is
 what happens to the `a` (alpha) portion.
 
-`operation` can be one of
+`operation` (a `wgpu::BlendOperation`) can be one of
 
-  * 'add'
-  * 'subtract'
-  * 'reverse-subtract'
-  * 'min'
-  * 'max'
+  * `Add`
+  * `Subtract`
+  * `ReverseSubtract`
+  * `Min`
+  * `Max`
 
-`srcFactor` and `dstFactor` can each be one of
+`src_factor` and `dst_factor` (`wgpu::BlendFactor`) can each be one of
 
-  * 'zero'
-  * 'one'
-  * 'src'
-  * 'one-minus-src'
-  * 'src-alpha'
-  * 'one-minus-src-alpha'
-  * 'dst'
-  * 'one-minus-dst'
-  * 'dst-alpha'
-  * 'one-minus-dst-alpha'
-  * 'src-alpha-saturated'
-  * 'constant'
-  * 'one-minus-constant'
+  * `Zero`
+  * `One`
+  * `Src`
+  * `OneMinusSrc`
+  * `SrcAlpha`
+  * `OneMinusSrcAlpha`
+  * `Dst`
+  * `OneMinusDst`
+  * `DstAlpha`
+  * `OneMinusDstAlpha`
+  * `SrcAlphaSaturated`
+  * `Constant`
+  * `OneMinusConstant`
 
 Most of them are relatively straight forward to understand. Think of it as
 
@@ -435,8 +446,8 @@ Most of them are relatively straight forward to understand. Think of it as
 Where `src` is the value returned by your fragment shader and `dst` is the value
 already in the texture you are drawing to.
 
-Consider the default where `operation` is `'add'`, `srcFactor` is `'one'` and
-`dstFactor` is `'zero'`. This gives us
+Consider the default where `operation` is `Add`, `src_factor` is `One` and
+`dst_factor` is `Zero`. This gives us
 
 ```
    result = add((src * 1), (dst * 0))
@@ -447,18 +458,18 @@ Consider the default where `operation` is `'add'`, `srcFactor` is `'one'` and
 
 As you can see, the default result ends up being just `src`.
 
-Of the blend factors above, 2 mention a constant, `'constant'` and
-`'one-minus-constant'`. The constant referred to here is set in a render pass
-with the `setBlendConstant` command and defaults to `[0, 0, 0, 0]`. This lets
+Of the blend factors above, 2 mention a constant, `Constant` and
+`OneMinusConstant`. The constant referred to here is set in a render pass
+with the `set_blend_constant` command and defaults to `0, 0, 0, 0`. This lets
 you change it between draws.
 
 Probably the most common setting for blending is
 
-```js
-{
-  operation: 'add',
-  srcFactor: 'one',
-  dstFactor: 'one-minus-src-alpha'
+```rust
+wgpu::BlendComponent {
+  operation: wgpu::BlendOperation::Add,
+  src_factor: wgpu::BlendFactor::One,
+  dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
 }
 ```
 
@@ -468,93 +479,175 @@ we covered above.
 
 Let's make an example that shows these options. 
 
-First let's make some JavaScript that creates two canvas 2D images
-with some alpha. We'll load these 2 canvases into WebGPU textures.
+The original JavaScript version of this article first draws two images with
+some alpha using the canvas 2D API, and loads those 2 canvases into WebGPU
+textures. We don't have a 2D canvas in Rust, so we'll compute the same two
+images pixel by pixel and get the same result.
 
-First, some code for making an image we'll use for our dst texture.
+First, some code for making an image we'll use for our dst texture: a diagonal
+rainbow gradient with diagonal stripes erased from it. The canvas version fills
+a linear gradient of `hsl` colors, then rotates by -45° and, using the
+'destination-out' composite mode, fills rectangles to erase stripes. We compute
+the same gradient and stripe coverage directly.
 
-```js
-const hsl = (h, s, l) => `hsl(${h * 360 | 0}, ${s * 100}%, ${l * 100 | 0}%)`;
-
-function createDestinationImage(size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-
-  const gradient = ctx.createLinearGradient(0, 0, size, size);
-  for (let i = 0; i <= 6; ++i) {
-    gradient.addColorStop(i / 6, hsl(i / -6, 1, 0.5));
+```rust
+// The JS version makes its colors with CSS `hsl(...)`/`hsla(...)` strings.
+// This is the same conversion CSS does (s and l fixed at 1 and 0.5 like the
+// examples use them; h is in turns, `h * 360` is degrees).
+fn hsl(h: f32) -> [f32; 3] {
+  let h = ((h * 360.0) as i32 as f32).rem_euclid(360.0) / 60.0; // `h * 360 | 0`
+  let x = 1.0 - (h % 2.0 - 1.0).abs();
+  match h as u32 {
+    0 => [1.0, x, 0.0],
+    1 => [x, 1.0, 0.0],
+    2 => [0.0, 1.0, x],
+    3 => [0.0, x, 1.0],
+    4 => [x, 0.0, 1.0],
+    _ => [1.0, 0.0, x],
   }
+}
 
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
+// Reproduces the JS createDestinationImage: a diagonal rainbow linear
+// gradient with diagonal stripes erased with the 'destination-out'
+// composite mode.
+fn create_destination_image(size: u32) -> SourceImage {
+  let sizef = size as f32;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 255)';
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.rotate(Math.PI / -4);
-  for (let i = 0; i < size * 2; i += 32) {
-    ctx.fillRect(-size, i, size * 2, 16);
+  // the 7 gradient color stops, hsl(0 / -6) ... hsl(6 / -6)
+  let stops: Vec<[f32; 3]> = (0..=6).map(|i| hsl(i as f32 / -6.0)).collect();
+
+  let mut pixels = Vec::with_capacity((size * size) as usize);
+  for y in 0..size {
+    for x in 0..size {
+      // the linear gradient runs from the top-left corner (0, 0) to
+      // the bottom-right corner (size, size)
+      let t = ((x as f32 + 0.5) + (y as f32 + 0.5)) / (sizef * 2.0);
+      let seg = (t * 6.0).clamp(0.0, 6.0);
+      let ndx = (seg as usize).min(5);
+      let f = seg - ndx as f32;
+      let color: [f32; 3] =
+          std::array::from_fn(|c| stops[ndx][c] + (stops[ndx + 1][c] - stops[ndx][c]) * f);
+
+      // erase 16 pixel tall stripes every 32 pixels, rotated by
+      // PI / -4, like the rotate + fillRect loop (4x4 supersampled
+      // to keep the anti-aliased edges the canvas gives us)
+      let mut coverage = 0.0;
+      for sy in 0..4 {
+        for sx in 0..4 {
+          let px = x as f32 + (sx as f32 + 0.5) / 4.0;
+          let py = y as f32 + (sy as f32 + 0.5) / 4.0;
+          let stripe = (px + py) / std::f32::consts::SQRT_2;
+          if stripe.rem_euclid(32.0) < 16.0 {
+            coverage += 1.0 / 16.0;
+          }
+        }
+      }
+      pixels.push([color[0], color[1], color[2], 1.0 - coverage]);
+    }
   }
-
-  return canvas;
+  to_rgba8(pixels, size, size)
 }
 ```
 
-And here it is running.
+where `SourceImage` is our stand-in for a canvas: tightly packed
+un-premultiplied rgba8 pixels
+
+```rust
+struct SourceImage {
+  data: Vec<u8>,
+  width: u32,
+  height: u32,
+}
+
+fn to_rgba8(pixels: Vec<[f32; 4]>, width: u32, height: u32) -> SourceImage {
+  let data = pixels
+    .iter()
+    .flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8))
+    .collect();
+  SourceImage { data, width, height }
+}
+```
+
+And here's the canvas 2D version it reproduces, running.
 
 {{{example url="../webgpu-blend-dest-canvas.html"}}}
 
 Here's some code for making an image we'll use for our
-src texture.
+src texture: three circles filled with radial gradients that are opaque in
+the middle and fade out to transparent, drawn with the 'screen' composite
+mode. We loop over the 3 circles and apply the screen compositing math
+ourselves.
 
-```js
-const hsla = (h, s, l, a) => `hsla(${h * 360 | 0}, ${s * 100}%, ${l * 100 | 0}%, ${a})`;
+```rust
+// Reproduces the JS createSourceImage: three circles with radial
+// hsla gradients (opaque in the middle, transparent at the edge),
+// drawn with the 'screen' composite mode.
+fn create_source_image(size: u32) -> SourceImage {
+  let sizef = size as f32;
+  let mut pixels = vec![[0.0f32; 4]; (size * size) as usize];
 
-function createSourceImage(size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.translate(size / 2, size / 2);
+  const NUM_CIRCLES: u32 = 3;
+  for i in 0..NUM_CIRCLES {
+    // the canvas version rotates PI * 2 / numCircles each time and
+    // translates by size / 6; these are the resulting circle centers
+    let angle = std::f32::consts::PI * 2.0 * (i + 1) as f32 / NUM_CIRCLES as f32;
+    let center_x = sizef / 2.0 + angle.cos() * sizef / 6.0;
+    let center_y = sizef / 2.0 + angle.sin() * sizef / 6.0;
 
-  ctx.globalCompositeOperation = 'screen';
-  const numCircles = 3;
-  for (let i = 0; i < numCircles; ++i) {
-    ctx.rotate(Math.PI * 2 / numCircles);
-    ctx.save();
-    ctx.translate(size / 6, 0);
-    ctx.beginPath();
+    let radius = sizef / 3.0;
+    let color = hsl(i as f32 / NUM_CIRCLES as f32);
 
-    const radius = size / 3;
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    for y in 0..size {
+      for x in 0..size {
+        let dx = x as f32 + 0.5 - center_x;
+        let dy = y as f32 + 0.5 - center_y;
+        let dist = (dx * dx + dy * dy).sqrt();
 
-    const gradient = ctx.createRadialGradient(0, 0, radius / 2, 0, 0, radius);
-    const h = i / numCircles;
-    gradient.addColorStop(0.5, hsla(h, 1, 0.5, 1));
-    gradient.addColorStop(1, hsla(h, 1, 0.5, 0));
+        // the radial gradient: alpha 1 from the center to half way
+        // between radius / 2 and radius, fading to 0 at radius
+        let t = ((dist - radius / 2.0) / (radius / 2.0)).clamp(0.0, 1.0);
+        let src_alpha = ((1.0 - t) * 2.0).clamp(0.0, 1.0);
+        if src_alpha <= 0.0 {
+          continue;
+        }
 
-    ctx.fillStyle = gradient;
-    ctx.fill();
-    ctx.restore();
+        // composite onto what's already there with the canvas
+        // 'screen' blend mode
+        let [dst_r, dst_g, dst_b, dst_a] = pixels[(y * size + x) as usize];
+        let out_a = src_alpha + dst_a * (1.0 - src_alpha);
+        let screen = |cb: f32, cs: f32| cb + cs - cb * cs;
+        let blend = |cb: f32, cs: f32| {
+          (src_alpha * (1.0 - dst_a) * cs
+              + src_alpha * dst_a * screen(cb, cs)
+              + (1.0 - src_alpha) * dst_a * cb)
+              / out_a
+        };
+        pixels[(y * size + x) as usize] = [
+          blend(dst_r, color[0]),
+          blend(dst_g, color[1]),
+          blend(dst_b, color[2]),
+          out_a,
+        ];
+      }
+    }
   }
-  return canvas;
+  to_rgba8(pixels, size, size)
 }
 ```
 
-And here's that running.
+And here's the canvas 2D version of that running.
 
 {{{example url="../webgpu-blend-src-canvas.html"}}}
 
 Now that we have both, we can modify the canvas importing example from
 [the article on importing textures](webgpu-import-textures.html#a-loading-canvas).
 
-First, let's make the 2 canvas images
+First, let's make the 2 images
 
-```js
-const size = 300;
-const srcCanvas = createSourceImage(size);
-const dstCanvas = createDestinationImage(size);
+```rust
+let size = 300;
+let src_image = create_source_image(size);
+let dst_image = create_destination_image(size);
 ```
 
 Let's modify the shader so it doesn't multiply
@@ -586,46 +679,100 @@ draw a long plane into the distance.
 }
 ```
 
-Let's update the `createTextureFromSource` function so we can pass `premultipliedAlpha: true/false` to
-it and it will pass it on to `copyExternalTextureToImage`.
+<a id="copyExternalImageToTexture"></a>Next, let's update the
+`copy_source_to_texture` function so we can pass `premultiplied_alpha:
+true/false` to it. This is where the JavaScript version passes
+`premultipliedAlpha: true` to `copyExternalImageToTexture`; since we upload
+with `write_texture` we do the multiplication ourselves as we copy.
 
-```js
--  function copySourceToTexture(device, texture, source, {flipY} = {}) {
-+  function copySourceToTexture(device, texture, source, {flipY, premultipliedAlpha} = {}) {
-    device.queue.copyExternalImageToTexture(
-      { source, flipY, },
--      { texture },
-+      { texture, premultipliedAlpha },
-      { width: source.width, height: source.height },
-    );
+```rust
++// The premultipliedAlpha: true option of copyExternalImageToTexture,
++// done on the CPU: multiply the colors by the alpha value as we copy.
++fn premultiply_alpha(source: &SourceImage) -> SourceImage {
++  let data = source
++    .data
++    .chunks_exact(4)
++    .flat_map(|p| {
++      let a = p[3] as f32 / 255.0;
++      [
++        (p[0] as f32 * a).round() as u8,
++        (p[1] as f32 * a).round() as u8,
++        (p[2] as f32 * a).round() as u8,
++        p[3],
++      ]
++    })
++    .collect();
++  SourceImage { data, width: source.width, height: source.height }
++}
 
-    if (texture.mipLevelCount > 1) {
-      generateMips(device, texture);
-    }
+fn copy_source_to_texture(
+  device: &wgpu::Device,
+  queue: &wgpu::Queue,
+  mip_gen: &mut MipGenerator,
+  texture: &wgpu::Texture,
+  source: &SourceImage,
++  premultiplied_alpha: bool,
+) {
++  let image = if premultiplied_alpha {
++    premultiply_alpha(source)
++  } else {
++    SourceImage {
++      data: source.data.clone(),
++      width: source.width,
++      height: source.height,
++    }
++  };
+  queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+-    &source.data,
++    &image.data,
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(image.width * 4),
+      rows_per_image: None,
+    },
+    wgpu::Extent3d {
+      width: image.width,
+      height: image.height,
+      depth_or_array_layers: 1,
+    },
+  );
+
+  if texture.mip_level_count() > 1 {
+    mip_gen.generate_mips(device, queue, texture);
   }
+}
 ```
+
+(`MipGenerator` is the render-pass based `generateMips` from
+[the article on importing textures](webgpu-importing-textures.html),
+wrapped in a struct that caches its shader module, sampler and per-format
+pipelines.)
 
 Then, let's use that to create two versions of each texture, one premultiplied, one "un-premultiplied" or "not premultiplied"
 
-```js
-  const srcTextureUnpremultipliedAlpha =
-      createTextureFromSource(
-          device, srcCanvas,
-          {mips: true});
-  const dstTextureUnpremultipliedAlpha =
-      createTextureFromSource(
-          device, dstCanvas,
-          {mips: true});
+```rust
+  let src_texture_unpremultiplied_alpha = create_texture_from_source(
+      &app.device, &app.queue, &mut mip_gen, &src_image,
+      true, false);
+  let dst_texture_unpremultiplied_alpha = create_texture_from_source(
+      &app.device, &app.queue, &mut mip_gen, &dst_image,
+      true, false);
 
-  const srcTexturePremultipliedAlpha =
-      createTextureFromSource(
-          device, srcCanvas,
-          {mips: true, premultipliedAlpha: true});
-  const dstTexturePremultipliedAlpha =
-      createTextureFromSource(
-          device, dstCanvas,
-          {mips: true, premultipliedAlpha: true});
+  let src_texture_premultiplied_alpha = create_texture_from_source(
+      &app.device, &app.queue, &mut mip_gen, &src_image,
+      true, true);
+  let dst_texture_premultiplied_alpha = create_texture_from_source(
+      &app.device, &app.queue, &mut mip_gen, &dst_image,
+      true, true);
 ```
+
+where the last 2 parameters are `mips` and `premultiplied_alpha`.
 
 Note: We could add an option to premultiply in the shader but that's
 arguably not common. Rather it's more common
@@ -636,32 +783,28 @@ select the premultiplied ones or un-premultiplied ones.
 We need a uniform buffer for each of our 2 draws just in case we want to draw
 in 2 different places or the textures are 2 different sizes.
 
-```js
-  function makeUniformBufferAndValues(device) {
-    // offsets to the various uniform values in float32 indices
-    const kMatrixOffset = 0;
-
+```rust
+  fn make_uniform_buffer_and_values(device: &wgpu::Device) -> (wgpu::Buffer, [f32; 16]) {
     // create a buffer for the uniform values
-    const uniformBufferSize =
-      16 * 4; // matrix is 16 32bit floats (4bytes each)
-    const buffer = device.createBuffer({
-      label: 'uniforms for quad',
-      size: uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    const UNIFORM_BUFFER_SIZE: u64 = 16 * 4; // matrix is 16 32bit floats (4bytes each)
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("uniforms for quad"),
+      size: UNIFORM_BUFFER_SIZE,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 
-    // create a typedarray to hold the values for the uniforms in JavaScript
-    const values = new Float32Array(uniformBufferSize / 4);
-    const matrix = values.subarray(kMatrixOffset, 16);
-    return { buffer, values, matrix };
+    // create an array of f32s to hold the matrix for the uniforms in Rust
+    let values = [0.0f32; 16];
+    (buffer, values)
   }
-  const srcUniform = makeUniformBufferAndValues(device);
-  const dstUniform = makeUniformBufferAndValues(device);
+  let (src_uniform_buffer, mut src_uniform_values) = make_uniform_buffer_and_values(&app.device);
+  let (dst_uniform_buffer, mut dst_uniform_values) = make_uniform_buffer_and_values(&app.device);
 ```
 
 We need a sampler and we need a bindGroup for each texture. This brings up an issue.
 A bindGroup needs a bindGroup layout. Most of the examples on this site
-get their layout from a pipeline by calling `somePipeline.getBindGroupLayout(groupNumber)`.
+get their layout from a pipeline by calling `some_pipeline.get_bind_group_layout(group_number)`.
 In our case though, we're going to create a pipeline based on the blend state settings
 we choose. So, we won't have the pipeline to get a bindGroupLayout from until render
 time.
@@ -674,242 +817,261 @@ The details of creating a [bindGroupLayout](GPUBindGroupLayout) and [pipelineLay
 are covered [in another article](webgpu-bind-group-layouts.html). For now, here's the code to create
 them that matches our shader module
 
-```js
-  const bindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { }, },
-      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { } },
-      { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { } },
+```rust
+  let bind_group_layout = app.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    label: None,
+    entries: &[
+      wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+      },
+      wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+          sample_type: wgpu::TextureSampleType::Float { filterable: true },
+          view_dimension: wgpu::TextureViewDimension::D2,
+          multisampled: false,
+        },
+        count: None,
+      },
+      wgpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+          ty: wgpu::BufferBindingType::Uniform,
+          has_dynamic_offset: false,
+          min_binding_size: None,
+        },
+        count: None,
+      },
     ],
   });
 
-  const pipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [
-      bindGroupLayout,
-    ],
+  let pipeline_layout = app.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    label: None,
+    bind_group_layouts: &[Some(&bind_group_layout)],
+    immediate_size: 0,
   });
 ```
 
 With the bindGroupLayout created, we can use it to make bindGroups.
 
-```js
-  const sampler = device.createSampler({
-    magFilter: 'linear',
-    minFilter: 'linear',
-    mipmapFilter: 'linear',
+```rust
+  let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    mipmap_filter: wgpu::MipmapFilterMode::Linear,
+    ..Default::default()
   });
 
+  let make_bind_group = |texture: &wgpu::Texture, uniform_buffer: &wgpu::Buffer| {
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &bind_group_layout,
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::Sampler(&sampler),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: wgpu::BindingResource::TextureView(&texture_view),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: uniform_buffer.as_entire_binding(),
+        },
+      ],
+    })
+  };
 
-  const srcBindGroupUnpremultipliedAlpha = device.createBindGroup({
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: sampler },
-      { binding: 1, resource: srcTextureUnpremultipliedAlpha },
-      { binding: 2, resource: { buffer: srcUniform.buffer }},
-    ],
-  });
-
-  const dstBindGroupUnpremultipliedAlpha = device.createBindGroup({
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: sampler },
-      { binding: 1, resource: dstTextureUnpremultipliedAlpha },
-      { binding: 2, resource: { buffer: dstUniform.buffer }},
-    ],
-  });
-
-  const srcBindGroupPremultipliedAlpha = device.createBindGroup({
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: sampler },
-      { binding: 1, resource: srcTexturePremultipliedAlpha },
-      { binding: 2, resource: { buffer: srcUniform.buffer }},
-    ],
-  });
-
-  const dstBindGroupPremultipliedAlpha = device.createBindGroup({
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: sampler },
-      { binding: 1, resource: dstTexturePremultipliedAlpha },
-      { binding: 2, resource: { buffer: dstUniform.buffer }},
-    ],
-  });
+  let src_bind_group_unpremultiplied_alpha =
+      make_bind_group(&src_texture_unpremultiplied_alpha, &src_uniform_buffer);
+  let dst_bind_group_unpremultiplied_alpha =
+      make_bind_group(&dst_texture_unpremultiplied_alpha, &dst_uniform_buffer);
+  let src_bind_group_premultiplied_alpha =
+      make_bind_group(&src_texture_premultiplied_alpha, &src_uniform_buffer);
+  let dst_bind_group_premultiplied_alpha =
+      make_bind_group(&dst_texture_premultiplied_alpha, &dst_uniform_buffer);
 ```
 
 Now that we have bindGroups and textures let's make an array of
 the premultiplied textures vs the un-premultiplied textures so we can
 easily select one set or the other
 
-```js
-  const textureSets = [
-    {
-      srcTexture: srcTexturePremultipliedAlpha,
-      dstTexture: dstTexturePremultipliedAlpha,
-      srcBindGroup: srcBindGroupPremultipliedAlpha,
-      dstBindGroup: dstBindGroupPremultipliedAlpha,
+```rust
+  struct TextureSet {
+    src_texture: wgpu::Texture,
+    dst_texture: wgpu::Texture,
+    src_bind_group: wgpu::BindGroup,
+    dst_bind_group: wgpu::BindGroup,
+  }
+
+  let texture_sets = [
+    TextureSet {
+      src_texture: src_texture_premultiplied_alpha,
+      dst_texture: dst_texture_premultiplied_alpha,
+      src_bind_group: src_bind_group_premultiplied_alpha,
+      dst_bind_group: dst_bind_group_premultiplied_alpha,
     },
-    {
-      srcTexture: srcTextureUnpremultipliedAlpha,
-      dstTexture: dstTextureUnpremultipliedAlpha,
-      srcBindGroup: srcBindGroupUnpremultipliedAlpha,
-      dstBindGroup: dstBindGroupUnpremultipliedAlpha,
+    TextureSet {
+      src_texture: src_texture_unpremultiplied_alpha,
+      dst_texture: dst_texture_unpremultiplied_alpha,
+      src_bind_group: src_bind_group_unpremultiplied_alpha,
+      dst_bind_group: dst_bind_group_unpremultiplied_alpha,
     },
   ];
 ```
 
-In our render pass descriptor we'll pull out the `clearValue` so we can more
-easily access it
-
-```js
-+  const clearValue = [0, 0, 0, 0];
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
--        clearValue: [0.3, 0.3, 0.3, 1];
-+        clearValue,
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
-  };
-```
-
 We'll need 2 render pipelines. One to draw the dest texture, this one will
-not use blending. Notice we're passing in the pipelineLayout instead of using
-`auto` as we've done in most examples so far.
+not use blending. Notice we're passing in the `pipeline_layout` instead of using
+`None` (the 'auto' layout) as we've done in most examples so far.
 
-```js
-  const dstPipeline = device.createRenderPipeline({
-    label: 'hardcoded textured quad pipeline',
-    layout: pipelineLayout,
-    vertex: {
-      module,
+```rust
+  let dst_pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("hardcoded textured quad pipeline"),
+    layout: Some(&pipeline_layout),
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
-      module,
-      targets: [ { format: presentationFormat } ],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
-The other pipeline will be created at render time with whatever blend options we choose
+The other pipeline will be created at render time, inside our frame callback,
+with whatever blend options we choose
 
-```js
-  const color = {
-    operation: 'add',
-    srcFactor: 'one',
-    dstFactor: 'one-minus-src',
-  };
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    let color = wgpu::BlendComponent {
+      operation: wgpu::BlendOperation::Add,
+      src_factor: wgpu::BlendFactor::One,
+      dst_factor: wgpu::BlendFactor::OneMinusSrc,
+    };
+    let alpha = wgpu::BlendComponent {
+      operation: wgpu::BlendOperation::Add,
+      src_factor: wgpu::BlendFactor::One,
+      dst_factor: wgpu::BlendFactor::OneMinusSrc,
+    };
 
-  const alpha = {
-    operation: 'add',
-    srcFactor: 'one',
-    dstFactor: 'one-minus-src',
-  };
-
-  function render() {
-    ...
-
-    const srcPipeline = device.createRenderPipeline({
-      label: 'hardcoded textured quad pipeline',
-      layout: pipelineLayout,
-      vertex: {
-        module,
+    let src_pipeline = frame.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("hardcoded textured quad pipeline"),
+      layout: Some(&pipeline_layout),
+      vertex: wgpu::VertexState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        buffers: &[],
       },
-      fragment: {
-        module,
-        targets: [
-          {
-            format: presentationFormat,
-            blend: {
-              color,
-              alpha,
-            },
-          },
-        ],
-      },
+      fragment: Some(wgpu::FragmentState {
+        module: &module,
+        entry_point: None,
+        compilation_options: Default::default(),
+        targets: &[Some(wgpu::ColorTargetState {
+          format: frame.format,
+          blend: Some(wgpu::BlendState { color, alpha }),
+          write_mask: wgpu::ColorWrites::ALL,
+        })],
+      }),
+      primitive: Default::default(),
+      depth_stencil: None,
+      multisample: Default::default(),
+      multiview_mask: None,
+      cache: None,
     });
 
+    ...
 ```
 
 To render we choose a texture set and then render the dst texture
-with the dstPipeline (no blending), and then on top of that we render
-the src texture with the srcPipeline (with blending)
+with the `dst_pipeline` (no blending), and then on top of that we render
+the src texture with the `src_pipeline` (with blending)
 
-```js
-+  const settings = {
-+    textureSet: 0,
-+  };
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
++    let texture_set_ndx =
++        (wgpu_fun::setting_f64("textureSet", 0.0) as usize).min(texture_sets.len() - 1);
 
-  function render() {
-    const srcPipeline = device.createRenderPipeline({
-      label: 'hardcoded textured quad pipeline',
-      layout: pipelineLayout,
-      vertex: {
-        module,
-      },
-      fragment: {
-        module,
-        targets: [
-          {
-            format: presentationFormat,
-            blend: {
-              color,
-              alpha,
-            },
-          },
-        ],
-      },
+    ...
+
+    let src_pipeline = frame.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      ...
     });
 
-+    const {
-+      srcTexture,
-+      dstTexture,
-+      srcBindGroup,
-+      dstBindGroup,
-+    } = textureSets[settings.textureSet];
++    let TextureSet {
++      src_texture,
++      dst_texture,
++      src_bind_group,
++      dst_bind_group,
++    } = &texture_sets[texture_set_ndx];
 
-    const canvasTexture = context.getCurrentTexture();
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
-
-+    function updateUniforms(uniform, canvasTexture, texture) {
-+      const projectionMatrix = mat4.ortho(0, canvasTexture.width, canvasTexture.height, 0, -1, 1);
++    let update_uniforms =
++        |uniform_buffer: &wgpu::Buffer, values: &mut [f32; 16], texture: &wgpu::Texture| {
++      let projection_matrix = glam::camera::rh::proj::directx::orthographic(
++          0.0, frame.width as f32, frame.height as f32, 0.0, -1.0, 1.0);
 +
-+      mat4.scale(projectionMatrix, [texture.width, texture.height, 1], uniform.matrix);
++      let matrix = projection_matrix
++          * Mat4::from_scale(vec3(texture.width() as f32, texture.height() as f32, 1.0));
++      values.copy_from_slice(&matrix.to_cols_array());
 +
-+      // copy the values from JavaScript to the GPU
-+      device.queue.writeBuffer(uniform.buffer, 0, uniform.values);
-+    }
-+    updateUniforms(srcUniform, canvasTexture, srcTexture);
-+    updateUniforms(dstUniform, canvasTexture, dstTexture);
++      // copy the values from Rust to the GPU
++      frame.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(values));
++    };
++    update_uniforms(&src_uniform_buffer, &mut src_uniform_values, src_texture);
++    update_uniforms(&dst_uniform_buffer, &mut dst_uniform_values, dst_texture);
 
-    const encoder = device.createCommandEncoder({ label: 'render with blending' });
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
+    let mut encoder = frame.device.create_command_encoder(
+      &wgpu::CommandEncoderDescriptor { label: Some("render quad encoder") });
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
 
-+    // draw dst
-+    pass.setPipeline(dstPipeline);
-+    pass.setBindGroup(0, dstBindGroup);
-+    pass.draw(6);  // call our vertex shader 6 times
++      // draw dst
++      pass.set_pipeline(&dst_pipeline);
++      pass.set_bind_group(0, dst_bind_group, &[]);
++      pass.draw(0..6, 0..1);  // call our vertex shader 6 times
 +
-+    // draw src
-+    pass.setPipeline(srcPipeline);
-+    pass.setBindGroup(0, srcBindGroup);
-+    pass.draw(6);  // call our vertex shader 6 times
++      // draw src
++      pass.set_pipeline(&src_pipeline);
++      pass.set_bind_group(0, src_bind_group, &[]);
++      pass.draw(0..6, 0..1);  // call our vertex shader 6 times
+    }
 
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
+  });
 ```
 
-Now let's make some UI to set these values
+Now let's make some UI to set these values. Like before, the muigui panel
+stays in the page's JavaScript
 
 ```js
 +  const operations = [
@@ -952,7 +1114,7 @@ Now let's make some UI to set these values
     textureSet: 0,
   };
 
-+  const gui = new GUI().onChange(render);
++  const gui = new GUI().onChange(update);
 +  gui.add(settings, 'textureSet', ['premultiplied alpha', 'un-premultiplied alpha']);
 +  const colorFolder = gui.addFolder('color');
 +  colorFolder.add(color, 'operation', operations);
@@ -964,28 +1126,97 @@ Now let's make some UI to set these values
 +  alphaFolder.add(alpha, 'dstFactor', factors);
 ```
 
-If the operation is `'min'` or `'max'` we must set `srcFactor` and `dstFactor` to
-`'one'` or else we'll get an error
+where `update` sends each value to the wasm module with
+`wasm.set_setting_str('colorOperation', color.operation)` etc... On the Rust
+side we read the strings and convert them to the wgpu enums with two small
+lookup functions
 
-```js
-+  function makeBlendComponentValid(blend) {
-+    const { operation } = blend;
-+    if (operation === 'min' || operation === 'max') {
-+      blend.srcFactor = 'one';
-+      blend.dstFactor = 'one';
-+    }
+```rust
+fn blend_operation(name: &str) -> wgpu::BlendOperation {
+  match name {
+    "add" => wgpu::BlendOperation::Add,
+    "subtract" => wgpu::BlendOperation::Subtract,
+    "reverse-subtract" => wgpu::BlendOperation::ReverseSubtract,
+    "min" => wgpu::BlendOperation::Min,
+    "max" => wgpu::BlendOperation::Max,
+    _ => wgpu::BlendOperation::Add,
+  }
+}
+
+fn blend_factor(name: &str) -> wgpu::BlendFactor {
+  match name {
+    "zero" => wgpu::BlendFactor::Zero,
+    "one" => wgpu::BlendFactor::One,
+    "src" => wgpu::BlendFactor::Src,
+    "one-minus-src" => wgpu::BlendFactor::OneMinusSrc,
+    "src-alpha" => wgpu::BlendFactor::SrcAlpha,
+    "one-minus-src-alpha" => wgpu::BlendFactor::OneMinusSrcAlpha,
+    "dst" => wgpu::BlendFactor::Dst,
+    "one-minus-dst" => wgpu::BlendFactor::OneMinusDst,
+    "dst-alpha" => wgpu::BlendFactor::DstAlpha,
+    "one-minus-dst-alpha" => wgpu::BlendFactor::OneMinusDstAlpha,
+    "src-alpha-saturated" => wgpu::BlendFactor::SrcAlphaSaturated,
+    "constant" => wgpu::BlendFactor::Constant,
+    "one-minus-constant" => wgpu::BlendFactor::OneMinusConstant,
+    _ => wgpu::BlendFactor::One,
+  }
+}
+```
+
+and use them when we make the blend components in the frame callback
+
+```rust
+-    let color = wgpu::BlendComponent {
+-      operation: wgpu::BlendOperation::Add,
+-      src_factor: wgpu::BlendFactor::One,
+-      dst_factor: wgpu::BlendFactor::OneMinusSrc,
+-    };
+-    let alpha = wgpu::BlendComponent {
+-      operation: wgpu::BlendOperation::Add,
+-      src_factor: wgpu::BlendFactor::One,
+-      dst_factor: wgpu::BlendFactor::OneMinusSrc,
+-    };
++    // read the settings the GUI on the page sets
++    let mut color = wgpu::BlendComponent {
++      operation: blend_operation(&wgpu_fun::setting_str("colorOperation", "add")),
++      src_factor: blend_factor(&wgpu_fun::setting_str("colorSrcFactor", "one")),
++      dst_factor: blend_factor(&wgpu_fun::setting_str("colorDstFactor", "one-minus-src")),
++    };
++    let mut alpha = wgpu::BlendComponent {
++      operation: blend_operation(&wgpu_fun::setting_str("alphaOperation", "add")),
++      src_factor: blend_factor(&wgpu_fun::setting_str("alphaSrcFactor", "one")),
++      dst_factor: blend_factor(&wgpu_fun::setting_str("alphaDstFactor", "one-minus-src")),
++    };
+```
+
+If the operation is `Min` or `Max` we must set `src_factor` and `dst_factor` to
+`One` or else we'll get an error
+
+```rust
++// if the operation is min or max, srcFactor and dstFactor must be one or
++// we'll get an error
++fn make_blend_component_valid(blend: &mut wgpu::BlendComponent) {
++  if blend.operation == wgpu::BlendOperation::Min || blend.operation == wgpu::BlendOperation::Max
++  {
++    blend.src_factor = wgpu::BlendFactor::One;
++    blend.dst_factor = wgpu::BlendFactor::One;
 +  }
++}
 
-  function render() {
-+    makeBlendComponentValid(color);
-+    makeBlendComponentValid(alpha);
-+    gui.updateDisplay();
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    ...
+
++    make_blend_component_valid(&mut color);
++    make_blend_component_valid(&mut alpha);
 
     ...
 ```
 
+(the page's `update` function applies the same fix to the GUI's own values and
+calls `gui.updateDisplay()` so the panel shows what's actually used).
+
 Let's also make it possible to set the blend constant for when we pick
-`'constant'` or `'one-minus-constant'` as a factor.
+`Constant` or `OneMinusConstant` as a factor. In the page
 
 ```js
 +  const constant = {
@@ -993,42 +1224,46 @@ Let's also make it possible to set the blend constant for when we pick
 +    alpha: 1,
 +  };
 
-  const settings = {
-    textureSet: 0,
-  };
-
-  const gui = new GUI().onChange(render);
-  gui.add(settings, 'textureSet', ['premultiplied alpha', 'un-premultiplied alpha']);
   ...
+
 +  const constantFolder = gui.addFolder('constant');
 +  constantFolder.addColor(constant, 'color');
 +  constantFolder.add(constant, 'alpha', 0, 1);
+```
 
-  ...
+and in the frame callback
 
-  function render() {
+```rust
++    let constant_color = [
++      wgpu_fun::setting_f64("constantColor0", 1.0),
++      wgpu_fun::setting_f64("constantColor1", 0.5),
++      wgpu_fun::setting_f64("constantColor2", 0.25),
++    ];
++    let constant_alpha = wgpu_fun::setting_f64("constantAlpha", 1.0);
+
     ...
 
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
+      // draw dst
+      pass.set_pipeline(&dst_pipeline);
+      pass.set_bind_group(0, dst_bind_group, &[]);
+      pass.draw(0..6, 0..1);  // call our vertex shader 6 times
 
-    // draw dst
-    pass.setPipeline(dstPipeline);
-    pass.setBindGroup(0, dstBindGroup);
-    pass.draw(6);  // call our vertex shader 6 times
-
-    // draw src
-    pass.setPipeline(srcPipeline);
-    pass.setBindGroup(0, srcBindGroup);
-+    pass.setBlendConstant([...constant.color, constant.alpha]);
-    pass.draw(6);  // call our vertex shader 6 times
-
-    pass.end();
-  }
+      // draw src
+      pass.set_pipeline(&src_pipeline);
+      pass.set_bind_group(0, src_bind_group, &[]);
++      pass.set_blend_constant(wgpu::Color {
++        r: constant_color[0],
++        g: constant_color[1],
++        b: constant_color[2],
++        a: constant_alpha,
++      });
+      pass.draw(0..6, 0..1);  // call our vertex shader 6 times
 ```
 
 As there are 13 * 13 * 5 * 13 * 13 * 5 possible settings there are
 just too many to explore so let's provide a list of presets. If
 there is no `alpha` setting we'll just repeat the `color` setting.
+The presets only set GUI values, so they live entirely in the page
 
 ```js
 +  const presets = {
@@ -1118,7 +1353,7 @@ there is no `alpha` setting we'll just repeat the `color` setting.
 +    preset: 'default (copy)',
   };
 
-  const gui = new GUI().onChange(render);
+  const gui = new GUI().onChange(update);
   gui.add(settings, 'textureSet', ['premultiplied alpha', 'un-premultiplied alpha']);
 +  gui.add(settings, 'preset', Object.keys(presets))
 +    .name('blending preset')
@@ -1132,7 +1367,11 @@ there is no `alpha` setting we'll just repeat the `color` setting.
   ...
 ```
 
-Let's also let you choose the canvas configuration for `alphaMode`.
+Let's also let you choose the canvas configuration for `alphaMode`. The JS
+version calls `context.configure` with the new mode every time it renders. In
+our setup the surface configuration lives inside `wgpu_fun`, so `App` has an
+`alpha_mode_fn` hook: it's consulted every frame and the surface is
+reconfigured whenever the returned mode changes.
 
 ```js
   const settings = {
@@ -1141,30 +1380,24 @@ Let's also let you choose the canvas configuration for `alphaMode`.
     preset: 'default (copy)',
   };
 
-  const gui = new GUI().onChange(render);
+  const gui = new GUI().onChange(update);
 +  gui.add(settings, 'alphaMode', ['opaque', 'premultiplied']).name('canvas alphaMode');
   gui.add(settings, 'textureSet', ['premultiplied alpha', 'un-premultiplied alpha']);
-
-  ...
-
-  function render() {
-    ...
-
-+    context.configure({
-+      device,
-+      format: presentationFormat,
-+      alphaMode: settings.alphaMode,
-+    });
-
-    const canvasTexture = context.getCurrentTexture();
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
-
 ```
 
-And finally, lets let you pick the clearValue for the render pass.
+```rust
+  let mut app = App::new("WebGPU Blend").await;
+  app.auto_resize = true;
++  app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
++  app.alpha_mode_fn = Some(Box::new(|| {
++    match wgpu_fun::setting_str("alphaMode", "premultiplied").as_str() {
++      "opaque" => wgpu::CompositeAlphaMode::Auto,
++      _ => wgpu::CompositeAlphaMode::PreMultiplied,
++    }
++  }));
+```
+
+And finally, lets let you pick the clear value for the render pass.
 
 ```js
 +  const clear = {
@@ -1173,38 +1406,43 @@ And finally, lets let you pick the clearValue for the render pass.
 +    premultiply: true,
 +  };
 
-  const settings = {
-    alphaMode: 'premultiplied',
-    textureSet: 0,
-    preset: 'default (copy)',
-  };
-
-  const gui = new GUI().onChange(render);
-
   ...
 
 +  const clearFolder = gui.addFolder('clear color');
 +  clearFolder.add(clear, 'premultiply');
 +  clearFolder.add(clear, 'alpha', 0, 1);
 +  clearFolder.addColor(clear, 'color');
+```
 
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    const canvasTexture = context.getCurrentTexture();
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    renderPassDescriptor.colorAttachments[0].view =
-        canvasTexture.createView();
++    let clear_color = [
++      wgpu_fun::setting_f64("clearColor0", 0.0),
++      wgpu_fun::setting_f64("clearColor1", 0.0),
++      wgpu_fun::setting_f64("clearColor2", 0.0),
++    ];
++    let clear_alpha = wgpu_fun::setting_f64("clearAlpha", 0.0);
++    let clear_premultiply = wgpu_fun::setting_bool("clearPremultiply", true);
 
-+    {
-+      const { alpha, color, premultiply } = clear;
-+      const mult = premultiply ? alpha : 1;
-+      clearValue[0] = color[0] * mult;
-+      clearValue[1] = color[1] * mult;
-+      clearValue[2] = color[2] * mult;
-+      clearValue[3] = alpha;
-+    }
+    ...
+
++    let mult = if clear_premultiply { clear_alpha } else { 1.0 };
++    let clear_value = wgpu::Color {
++      r: clear_color[0] * mult,
++      g: clear_color[1] * mult,
++      b: clear_color[2] * mult,
++      a: clear_alpha,
++    };
+
+    ...
+
+          ops: wgpu::Operations {
+-            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
++            load: wgpu::LoadOp::Clear(clear_value),
+            store: wgpu::StoreOp::Store,
+          },
 ```
 
 That was a lot of options. Maybe too many 😅. In any case, we now have an
