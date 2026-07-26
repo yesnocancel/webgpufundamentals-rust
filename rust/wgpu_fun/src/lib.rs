@@ -229,4 +229,4 @@ pub use native::{start, App};
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub use web::{start, App};
+pub use web::{fail, start, App};
