@@ -113,28 +113,29 @@ because dividing by 1 does nothing.
 
 We also need to update the code to let us set the fudgeFactor.
 
-```js
+```rust
 -  // matrix
--  const uniformBufferSize = (16) * 4;
+-  const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
 +  // matrix, fudgeFactor, padding
-+  const uniformBufferSize = (16 + 1 + 3) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (16 + 1 + 3) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kMatrixOffset = 0;
-+  const kFudgeFactorOffset = 16;
+  const K_MATRIX_OFFSET: usize = 0;
++  const K_FUDGE_FACTOR_OFFSET: usize = 16;
+```
 
-  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-+  const fudgeFactorValue = uniformValues.subarray(kFudgeFactorOffset, kFudgeFactorOffset + 1);
+The settings, in the example page's JavaScript, gain a `fudgeFactor`
+and a slider for it that pushes the value into the wasm module
 
-...
-
+```js
   const settings = {
     translation: [canvas.clientWidth / 2 - 200, canvas.clientHeight / 2 - 75, -1000],
     rotation: [degToRad(40), degToRad(25), degToRad(325)],
@@ -145,40 +146,53 @@ We also need to update the code to let us set the fudgeFactor.
 ...
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
-  gui.add(settings.translation, '2', -1000, 1000).name('translation.z');
-  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x');
-  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y');
-  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z');
-  gui.add(settings.scale, '0', -5, 5).name('scale.x');
-  gui.add(settings.scale, '1', -5, 5).name('scale.y');
-  gui.add(settings.scale, '2', -5, 5).name('scale.z');
-+  gui.add(settings, 'fudgeFactor', 0, 50);
+  gui.add(settings.translation, '0', 0, 1000).name('translation.x')
+     .onChange(v => wasm.set_setting_num('translationX', v));
+  gui.add(settings.translation, '1', 0, 1000).name('translation.y')
+     .onChange(v => wasm.set_setting_num('translationY', v));
+  gui.add(settings.translation, '2', -1000, 1000).name('translation.z')
+     .onChange(v => wasm.set_setting_num('translationZ', v));
+  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x')
+     .onChange(v => wasm.set_setting_num('rotationX', v));
+  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y')
+     .onChange(v => wasm.set_setting_num('rotationY', v));
+  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z')
+     .onChange(v => wasm.set_setting_num('rotationZ', v));
+  gui.add(settings.scale, '0', -5, 5).name('scale.x')
+     .onChange(v => wasm.set_setting_num('scaleX', v));
+  gui.add(settings.scale, '1', -5, 5).name('scale.y')
+     .onChange(v => wasm.set_setting_num('scaleY', v));
+  gui.add(settings.scale, '2', -5, 5).name('scale.z')
+     .onChange(v => wasm.set_setting_num('scaleZ', v));
++  gui.add(settings, 'fudgeFactor', 0, 50)
++     .onChange(v => wasm.set_setting_num('fudgeFactor', v));
+```
 
-...
+and in the render code we read it and set it in our uniform values
 
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
 
     ...
 
-    mat4.ortho(
-        0,                   // left
-        canvas.clientWidth,  // right
-        canvas.clientHeight, // bottom
-        0,                   // top
-        1200,                // near
-        -1000,               // far
-        matrixValue,         // dst
-    );
-    mat4.translate(matrixValue, settings.translation, matrixValue);
-    mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
-    mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
-    mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
-    mat4.scale(matrixValue, settings.scale, matrixValue);
++    let fudge_factor = wgpu_fun::setting_f64("fudgeFactor", 10.0) as f32;
 
-+    fudgeFactorValue[0] = settings.fudgeFactor;
+    let mut matrix_value = m4::ortho(
+        0.0,                   // left
+        frame.width as f32,    // right
+        frame.height as f32,   // bottom
+        0.0,                   // top
+        1200.0,                // near
+        -1000.0,               // far
+    );
+    matrix_value = m4::translate(&matrix_value, translation);
+    matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
+    matrix_value = m4::rotate_y(&matrix_value, rotation[1]);
+    matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
+    matrix_value = m4::scale(&matrix_value, scale);
+    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
+
++    uniform_values[K_FUDGE_FACTOR_OFFSET] = fudge_factor;
 ```
 
 I also adjusted the `settings` to hopefully make it easy to see the results.
@@ -193,6 +207,9 @@ I also adjusted the `settings` to hopefully make it easy to see the results.
     fudgeFactor: 10,
   };
 ```
+
+(the Rust defaults read via `wgpu_fun::setting_f64` match; for the translation
+they are computed from `frame.width` and `frame.height`)
 
 And here's the result.
 
@@ -369,36 +386,36 @@ struct VSOutput {
 
 Next let's make a function to make a Z &rarr; W matrix.
 
-```js
-function makeZToWMatrix(fudgeFactor) {
-  return [
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, fudgeFactor,
-    0, 0, 0, 1,
-  ];
+```rust
+#[rustfmt::skip]
+fn make_z_to_w_matrix(fudge_factor: f32) -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, fudge_factor,
+        0.0, 0.0, 0.0, 1.0,
+    ]
 }
 ```
 
 and we'll change the code to use it.
 
-```
--    mat4.ortho(
-+    const projection = mat4.ortho(
-        0,                   // left
-        canvas.clientWidth,  // right
-        canvas.clientHeight, // bottom
-        0,                   // top
-        1200,                // near
-        -1000,               // far
--        matrixValue,         // dst
+```rust
+-    let mut matrix_value = m4::ortho(
++    let projection = m4::ortho(
+        0.0,                   // left
+        frame.width as f32,    // right
+        frame.height as f32,   // bottom
+        0.0,                   // top
+        1200.0,                // near
+        -1000.0,               // far
     );
-+    mat4.multiply(makeZToWMatrix(settings.fudgeFactor), projection, matrixValue);
-    mat4.translate(matrixValue, settings.translation, matrixValue);
-    mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
-    mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
-    mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
-    mat4.scale(matrixValue, settings.scale, matrixValue);
++    let mut matrix_value = m4::multiply(&make_z_to_w_matrix(fudge_factor), &projection);
+    matrix_value = m4::translate(&matrix_value, translation);
+    matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
+    matrix_value = m4::rotate_y(&matrix_value, rotation[1]);
+    matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
+    matrix_value = m4::scale(&matrix_value, scale);
 ```
 
 and note, again, it's exactly the same.
@@ -440,37 +457,42 @@ compute the right values to make that happen.
 
 Here's a function to build the matrix.
 
-```js
-const mat4 = {
-  ...
-  perspective(fieldOfViewYInRadians, aspect, zNear, zFar, dst) {
-    dst = dst || new Float32Array(16);
+```rust
+mod m4 {
+    ...
+    pub fn perspective(
+        field_of_view_y_in_radians: f32,
+        aspect: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> [f32; 16] {
+        let mut dst = [0.0; 16];
 
-    const f = Math.tan(Math.PI * 0.5 - 0.5 * fieldOfViewYInRadians);
-    const rangeInv = 1 / (zNear - zFar);
+        let f = (std::f32::consts::PI * 0.5 - 0.5 * field_of_view_y_in_radians).tan();
+        let range_inv = 1.0 / (z_near - z_far);
 
-    dst[0] = f / aspect;
-    dst[1] = 0;
-    dst[2] = 0;
-    dst[3] = 0;
+        dst[0] = f / aspect;
+        dst[1] = 0.0;
+        dst[2] = 0.0;
+        dst[3] = 0.0;
 
-    dst[4] = 0;
-    dst[5] = f;
-    dst[6] = 0;
-    dst[7] = 0;
+        dst[4] = 0.0;
+        dst[5] = f;
+        dst[6] = 0.0;
+        dst[7] = 0.0;
 
-    dst[8] = 0;
-    dst[9] = 0;
-    dst[10] = zFar * rangeInv;
-    dst[11] = -1;
+        dst[8] = 0.0;
+        dst[9] = 0.0;
+        dst[10] = z_far * range_inv;
+        dst[11] = -1.0;
 
-    dst[12] = 0;
-    dst[13] = 0;
-    dst[14] = zNear * zFar * rangeInv;
-    dst[15] = 0;
+        dst[12] = 0.0;
+        dst[13] = 0.0;
+        dst[14] = z_near * z_far * range_inv;
+        dst[15] = 0.0;
 
-    return dst;
-  }
+        dst
+    }
 ```
 
 This matrix will do all our conversions for us.  It will adjust the units
@@ -496,7 +518,7 @@ back.  Set `zNear` to 23 and you'll see the front of the spinning cubes
 get clipped.  Set `zFar` to 24 and you'll see the back of the cubes get
 clipped.
 
-Let's use this function in our example.
+Let's use this function in our example. The page settings become
 
 ```js
   const settings = {
@@ -510,46 +532,60 @@ Let's use this function in our example.
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg});
-  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
-  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
-  gui.add(settings.translation, '2', -1400, 1000).name('translation.z');
-  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x');
-  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y');
-  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z');
-  gui.add(settings.scale, '0', -5, 5).name('scale.x');
-  gui.add(settings.scale, '1', -5, 5).name('scale.y');
-  gui.add(settings.scale, '2', -5, 5).name('scale.z');
--  gui.add(settings, 'fudgeFactor', 0, 50);
++  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg})
++     .onChange(v => wasm.set_setting_num('fieldOfView', v));
+  gui.add(settings.translation, '0', 0, 1000).name('translation.x')
+     .onChange(v => wasm.set_setting_num('translationX', v));
+  gui.add(settings.translation, '1', 0, 1000).name('translation.y')
+     .onChange(v => wasm.set_setting_num('translationY', v));
+  gui.add(settings.translation, '2', -1400, 1000).name('translation.z')
+     .onChange(v => wasm.set_setting_num('translationZ', v));
+  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x')
+     .onChange(v => wasm.set_setting_num('rotationX', v));
+  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y')
+     .onChange(v => wasm.set_setting_num('rotationY', v));
+  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z')
+     .onChange(v => wasm.set_setting_num('rotationZ', v));
+  gui.add(settings.scale, '0', -5, 5).name('scale.x')
+     .onChange(v => wasm.set_setting_num('scaleX', v));
+  gui.add(settings.scale, '1', -5, 5).name('scale.y')
+     .onChange(v => wasm.set_setting_num('scaleY', v));
+  gui.add(settings.scale, '2', -5, 5).name('scale.z')
+     .onChange(v => wasm.set_setting_num('scaleZ', v));
+-  gui.add(settings, 'fudgeFactor', 0, 50)
+-     .onChange(v => wasm.set_setting_num('fudgeFactor', v));
+```
 
-  ...
+and the render code uses `m4::perspective`
 
-  function render() {
-    ....
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    ...
 
--    const projection = mat4.ortho(
--        0,                   // left
--        canvas.clientWidth,  // right
--        canvas.clientHeight, // bottom
--        0,                   // top
--        1200,                // near
--        -1000,               // far
++    let field_of_view = wgpu_fun::setting_f64("fieldOfView", 100.0f64.to_radians()) as f32;
+-    let fudge_factor = wgpu_fun::setting_f64("fudgeFactor", 10.0) as f32;
+
+-    let projection = m4::ortho(
+-        0.0,                   // left
+-        frame.width as f32,    // right
+-        frame.height as f32,   // bottom
+-        0.0,                   // top
+-        1200.0,                // near
+-        -1000.0,               // far
 -    );
--    mat4.multiply(makeZToWMatrix(settings.fudgeFactor), projection, matrixValue);
-+    const aspect = canvas.clientWidth / canvas.clientHeight;
-+    mat4.perspective(
-+        settings.fieldOfView,
+-    let mut matrix_value = m4::multiply(&make_z_to_w_matrix(fudge_factor), &projection);
++    let aspect = frame.width as f32 / frame.height as f32;
++    let mut matrix_value = m4::perspective(
++        field_of_view,
 +        aspect,
-+        1,      // zNear
-+        2000,   // zFar
-+        matrixValue,
++        1.0,    // zNear
++        2000.0, // zFar
 +    );
-    mat4.translate(matrixValue, settings.translation, matrixValue);
-    mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
-    mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
-    mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
-    mat4.scale(matrixValue, settings.scale, matrixValue);
+    matrix_value = m4::translate(&matrix_value, translation);
+    matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
+    matrix_value = m4::rotate_y(&matrix_value, rotation[1]);
+    matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
+    matrix_value = m4::scale(&matrix_value, scale);
 ```
 
 There's just one problem left.  This projection matrix assumes there's a viewer at 0,0,0
@@ -574,26 +610,54 @@ Playing around with some numbers I came up with these settings.
   };
 ```
 
+(and matching defaults on the Rust side)
+
+```rust
+    let translation = [
+-        wgpu_fun::setting_f64("translationX", frame.width as f64 / 2.0 - 200.0) as f32,
+-        wgpu_fun::setting_f64("translationY", frame.height as f64 / 2.0 - 75.0) as f32,
+-        wgpu_fun::setting_f64("translationZ", -1000.0) as f32,
++        wgpu_fun::setting_f64("translationX", -65.0) as f32,
++        wgpu_fun::setting_f64("translationY", 0.0) as f32,
++        wgpu_fun::setting_f64("translationZ", -120.0) as f32,
+    ];
+    let rotation = [
+-        wgpu_fun::setting_f64("rotationX", 40.0f64.to_radians()) as f32,
++        wgpu_fun::setting_f64("rotationX", 220.0f64.to_radians()) as f32,
+        wgpu_fun::setting_f64("rotationY", 25.0f64.to_radians()) as f32,
+        wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
+    ];
+```
+
 And, while we're at it let's adjust the UI settings to be more appropriate.
 Let's also remove the scale to unclutter to UI a little.
 
 
 ```js
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg});
--  gui.add(settings.translation, '0', 0, 1000).name('translation.x');
--  gui.add(settings.translation, '1', 0, 1000).name('translation.y');
--  gui.add(settings.translation, '2', -1400, 1000).name('translation.z');
-+  gui.add(settings.translation, '0', -1000, 1000).name('translation.x');
-+  gui.add(settings.translation, '1', -1000, 1000).name('translation.y');
-+  gui.add(settings.translation, '2', -1400, -100).name('translation.z');
-  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x');
-  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y');
-  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z');
--  gui.add(settings.scale, '0', -5, 5).name('scale.x');
--  gui.add(settings.scale, '1', -5, 5).name('scale.y');
--  gui.add(settings.scale, '2', -5, 5).name('scale.z');
+  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg})
+     .onChange(v => wasm.set_setting_num('fieldOfView', v));
+-  gui.add(settings.translation, '0', 0, 1000).name('translation.x')
++  gui.add(settings.translation, '0', -1000, 1000).name('translation.x')
+     .onChange(v => wasm.set_setting_num('translationX', v));
+-  gui.add(settings.translation, '1', 0, 1000).name('translation.y')
++  gui.add(settings.translation, '1', -1000, 1000).name('translation.y')
+     .onChange(v => wasm.set_setting_num('translationY', v));
+-  gui.add(settings.translation, '2', -1400, 1000).name('translation.z')
++  gui.add(settings.translation, '2', -1400, -100).name('translation.z')
+     .onChange(v => wasm.set_setting_num('translationZ', v));
+  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x')
+     .onChange(v => wasm.set_setting_num('rotationX', v));
+  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y')
+     .onChange(v => wasm.set_setting_num('rotationY', v));
+  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z')
+     .onChange(v => wasm.set_setting_num('rotationZ', v));
+-  gui.add(settings.scale, '0', -5, 5).name('scale.x')
+-     .onChange(v => wasm.set_setting_num('scaleX', v));
+-  gui.add(settings.scale, '1', -5, 5).name('scale.y')
+-     .onChange(v => wasm.set_setting_num('scaleY', v));
+-  gui.add(settings.scale, '2', -5, 5).name('scale.z')
+-     .onChange(v => wasm.set_setting_num('scaleZ', v));
 ```
 
 Let's also get rid of the grid since we're no longer in "pixel space".
@@ -631,7 +695,7 @@ it's been moved to (-65, 0, -120).  Why did it need to be moved so far
 away?
 </p>
 <p>
-The reason is up until this last sample our <code>mat4.projection</code> function
+The reason is up until this last sample our <code>m4::projection</code> function
 made a projection from pixels to clip space.  That means the area we
 were displaying kinda of represented pixels.  Using 'pixels' really doesn't
 make sense in 3D since it would only represent pixels at a specific distance from the camera.
@@ -661,4 +725,3 @@ Moving it -120 units in Z moves the F inside the frustum. We also rotated it to 
 
 <!-- keep this at the bottom of the article -->
 <script type="module" src="webgpu-perspective-projection.js"></script>
-

@@ -141,8 +141,8 @@ Similarly let's do rotation. Like we pointed out in the rotation post
 we just need the sine and cosine of the angle at which we want to rotate, so
 
 <div class="webgpu_center"><pre class="webgpu_math">
-s = Math.sin(angleToRotateInRadians);
-c = Math.cos(angleToRotateInRadians);
+s = sin(angleToRotateInRadians);
+c = cos(angleToRotateInRadians);
 </pre></div>
 
 And we build a matrix like this
@@ -258,80 +258,81 @@ That seems like a lot of work just to do the same thing we were already doing.
 
 This is where the magic comes in. It turns out we can multiply matrices
 together and apply all the transformations at once. Let's assume we have
-a function, `mat3.multiply`, that takes two matrices, multiplies them and
-returns the result.
+a function, `mat3::multiply`, that takes two matrices, multiplies them and
+returns the result. We'll keep each matrix in a plain 9 element array.
 
-```js
-const mat3 = {
-  multiply: function(a, b) {
-    const a00 = a[0 * 3 + 0];
-    const a01 = a[0 * 3 + 1];
-    const a02 = a[0 * 3 + 2];
-    const a10 = a[1 * 3 + 0];
-    const a11 = a[1 * 3 + 1];
-    const a12 = a[1 * 3 + 2];
-    const a20 = a[2 * 3 + 0];
-    const a21 = a[2 * 3 + 1];
-    const a22 = a[2 * 3 + 2];
-    const b00 = b[0 * 3 + 0];
-    const b01 = b[0 * 3 + 1];
-    const b02 = b[0 * 3 + 2];
-    const b10 = b[1 * 3 + 0];
-    const b11 = b[1 * 3 + 1];
-    const b12 = b[1 * 3 + 2];
-    const b20 = b[2 * 3 + 0];
-    const b21 = b[2 * 3 + 1];
-    const b22 = b[2 * 3 + 2];
+```rust
+mod mat3 {
+    pub fn multiply(a: &[f32; 9], b: &[f32; 9]) -> [f32; 9] {
+        let a00 = a[0 * 3 + 0];
+        let a01 = a[0 * 3 + 1];
+        let a02 = a[0 * 3 + 2];
+        let a10 = a[1 * 3 + 0];
+        let a11 = a[1 * 3 + 1];
+        let a12 = a[1 * 3 + 2];
+        let a20 = a[2 * 3 + 0];
+        let a21 = a[2 * 3 + 1];
+        let a22 = a[2 * 3 + 2];
+        let b00 = b[0 * 3 + 0];
+        let b01 = b[0 * 3 + 1];
+        let b02 = b[0 * 3 + 2];
+        let b10 = b[1 * 3 + 0];
+        let b11 = b[1 * 3 + 1];
+        let b12 = b[1 * 3 + 2];
+        let b20 = b[2 * 3 + 0];
+        let b21 = b[2 * 3 + 1];
+        let b22 = b[2 * 3 + 2];
 
-    return [
-      b00 * a00 + b01 * a10 + b02 * a20,
-      b00 * a01 + b01 * a11 + b02 * a21,
-      b00 * a02 + b01 * a12 + b02 * a22,
-      b10 * a00 + b11 * a10 + b12 * a20,
-      b10 * a01 + b11 * a11 + b12 * a21,
-      b10 * a02 + b11 * a12 + b12 * a22,
-      b20 * a00 + b21 * a10 + b22 * a20,
-      b20 * a01 + b21 * a11 + b22 * a21,
-      b20 * a02 + b21 * a12 + b22 * a22,
-    ];
-  }
+        [
+            b00 * a00 + b01 * a10 + b02 * a20,
+            b00 * a01 + b01 * a11 + b02 * a21,
+            b00 * a02 + b01 * a12 + b02 * a22,
+            b10 * a00 + b11 * a10 + b12 * a20,
+            b10 * a01 + b11 * a11 + b12 * a21,
+            b10 * a02 + b11 * a12 + b12 * a22,
+            b20 * a00 + b21 * a10 + b22 * a20,
+            b20 * a01 + b21 * a11 + b22 * a21,
+            b20 * a02 + b21 * a12 + b22 * a22,
+        ]
+    }
 }
 ```
 
 To make things clearer let's make functions to build matrices for
 translation, rotation and scale.
 
-```js
-const mat3 = {
-  multiply(a, b) {
-    ...
-  },
-  translation([tx, ty]) {
-    return [
-      1, 0, 0,
-      0, 1, 0,
-      tx, ty, 1,
-    ];
-  },
+```rust
+mod mat3 {
+    pub fn multiply(a: &[f32; 9], b: &[f32; 9]) -> [f32; 9] {
+        ...
+    }
 
-  rotation(angleInRadians) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    return [
-      c, s, 0,
-      -s, c, 0,
-      0, 0, 1,
-    ];
-  },
+    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 9] {
+        [
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            tx, ty, 1.0,
+        ]
+    }
 
-  scaling([sx, sy]) {
-    return [
-      sx, 0, 0,
-      0, sy, 0,
-      0, 0, 1,
-    ];
-  },
-};
+    pub fn rotation(angle_in_radians: f32) -> [f32; 9] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        [
+            c, s, 0.0,
+            -s, c, 0.0,
+            0.0, 0.0, 1.0,
+        ]
+    }
+
+    pub fn scaling([sx, sy]: [f32; 2]) -> [f32; 9] {
+        [
+            sx, 0.0, 0.0,
+            0.0, sy, 0.0,
+            0.0, 0.0, 1.0,
+        ]
+    }
+}
 ```
 
 Now let's change our shader to use a matrix
@@ -373,57 +374,66 @@ by the matrix, then just kept x and y from the result.
 
 Again we need to update our uniform buffer size and offsets
 
-```js
+```rust
 -  // color, resolution, translation, rotation, scale
--  const uniformBufferSize = (4 + 2 + 2 + 2 + 2) * 4;
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 2 + 2) * 4;
 +  // color, resolution, padding, matrix
-+  const uniformBufferSize = (4 + 2 + 2 + 12) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 12) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kResolutionOffset = 4;
-  const kMatrixOffset = 8;
-
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
--  const translationValue = uniformValues.subarray(kTranslationOffset, kTranslationOffset + 2);
--  const rotationValue = uniformValues.subarray(kRotationOffset, kRotationOffset + 2);
--  const scaleValue = uniformValues.subarray(kScaleOffset, kScaleOffset + 2);
-+  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 12);
+  const K_COLOR_OFFSET: usize = 0;
+  const K_RESOLUTION_OFFSET: usize = 4;
+-  const K_TRANSLATION_OFFSET: usize = 6;
+-  const K_ROTATION_OFFSET: usize = 8;
+-  const K_SCALE_OFFSET: usize = 10;
++  const K_MATRIX_OFFSET: usize = 8;
 ```
 
 And finally we need to do some *matrix math* at render time
 
-```js
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
-+    const translationMatrix = mat3.translation(settings.translation);
-+    const rotationMatrix = mat3.rotation(settings.rotation);
-+    const scaleMatrix = mat3.scaling(settings.scale);
-+
-+    let matrix = mat3.multiply(translationMatrix, rotationMatrix);
-+    matrix = mat3.multiply(matrix, scaleMatrix);
+    let translation = [
+        wgpu_fun::setting_f64("translationX", 150.0) as f32,
+        wgpu_fun::setting_f64("translationY", 100.0) as f32,
+    ];
+-    let angle = wgpu_fun::setting_f64("rotation", 30.0f64.to_radians()) as f32;
+-    let rotation = [angle.cos(), angle.sin()];
++    let rotation = wgpu_fun::setting_f64("rotation", 30.0f64.to_radians()) as f32;
+    let scale = [
+        wgpu_fun::setting_f64("scaleX", 1.0) as f32,
+        wgpu_fun::setting_f64("scaleY", 1.0) as f32,
+    ];
 
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
--    translationValue.set(settings.translation);
--    rotationValue.set([
--        Math.cos(settings.rotation),
--        Math.sin(settings.rotation),
--    ]);
--    scaleValue.set(settings.scale);
-+    matrixValue.set([
-+      ...matrix.slice(0, 3), 0,
-+      ...matrix.slice(3, 6), 0,
-+      ...matrix.slice(6, 9), 0,
-+    ]);
++    let translation_matrix = mat3::translation(translation);
++    let rotation_matrix = mat3::rotation(rotation);
++    let scale_matrix = mat3::scaling(scale);
++
++    let mut matrix = mat3::multiply(&translation_matrix, &rotation_matrix);
++    matrix = mat3::multiply(&matrix, &scale_matrix);
+
+    // Set the uniform values in our Rust side array
+    uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
+        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
+-    uniform_values[K_TRANSLATION_OFFSET..K_TRANSLATION_OFFSET + 2]
+-        .copy_from_slice(&translation);
+-    uniform_values[K_ROTATION_OFFSET..K_ROTATION_OFFSET + 2]
+-        .copy_from_slice(&rotation);
+-    uniform_values[K_SCALE_OFFSET..K_SCALE_OFFSET + 2]
+-        .copy_from_slice(&scale);
++    // copy each column of 3 values, followed by 1 float of padding
++    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 3].copy_from_slice(&matrix[0..3]);
++    uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7].copy_from_slice(&matrix[3..6]);
++    uniform_values[K_MATRIX_OFFSET + 8..K_MATRIX_OFFSET + 11].copy_from_slice(&matrix[6..9]);
 ```
 
 Here's it is using our new code. The sliders are the same, translation,
@@ -458,26 +468,26 @@ As one example we showed this matrix as an example of a translation matrix.
 
 But when we actually built the matrix in code we did this
 
-```js
-  translation([tx, ty]) {
-    return [
-      1, 0, 0,
-      0, 1, 0,
-      tx, ty, 1,
-    ];
-  },
+```rust
+    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 9] {
+        [
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            tx, ty, 1.0,
+        ]
+    }
 ```
 
-The `tx, ty, 1` part is in the bottom row, not the last column.
+The `tx, ty, 1.0` part is in the bottom row, not the last column.
 
-```js
-  translation([tx, ty]) {
-    return [
-      1, 0, 0,   // <-- 1st column
-      0, 1, 0,   // <-- 2nd column
-      tx, ty, 1, // <-- 3rd column
-    ];
-  },
+```rust
+    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 9] {
+        [
+            1.0, 0.0, 0.0,  // <-- 1st column
+            0.0, 1.0, 0.0,  // <-- 2nd column
+            tx, ty, 1.0,    // <-- 3rd column
+        ]
+    }
 ```
 
 
@@ -489,13 +499,13 @@ where `tx, ty, 1` are in the last column but when we put them in code, at least 
 
 Still, you might be asking, so what? That doesn't seem like much of a benefit.
 The benefit is, now, if we want to change the order of operations, we don't have to write a new shader.
-We can just change the math in JavaScript
+We can just change the math in Rust
 
-```js
--    let matrix = mat3.multiply(translationMatrix, rotationMatrix);
--    matrix = mat3.multiply(matrix, scaleMatrix);
-+    let matrix = mat3.multiply(scaleMatrix, rotationMatrix);
-+    matrix = mat3.multiply(matrix, translationMatrix);
+```rust
+-    let mut matrix = mat3::multiply(&translation_matrix, &rotation_matrix);
+-    matrix = mat3::multiply(&matrix, &scale_matrix);
++    let mut matrix = mat3::multiply(&scale_matrix, &rotation_matrix);
++    matrix = mat3::multiply(&matrix, &translation_matrix);
 ```
 
 Above we switched from applying translation→rotation→scale to scale→rotation→translation
@@ -532,46 +542,54 @@ matrix from the previous 'F'.
 
 To do this we need 5 uniform buffers, 5 uniform values, and 5 bindGroups
 
-```js
-+  const numObjects = 5;
-+  const objectInfos = [];
-+  for (let i = 0; i < numObjects; ++i) {
-    // color, resolution, padding, matrix
-    const uniformBufferSize = (4 + 2 + 2 + 12) * 4;
-    const uniformBuffer = device.createBuffer({
-      label: 'uniforms',
-      size: uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+  // color, resolution, padding, matrix
+  const UNIFORM_BUFFER_SIZE: u64 = (4 + 2 + 2 + 12) * 4;
+
+  // offsets to the various uniform values in float32 indices
+  const K_COLOR_OFFSET: usize = 0;
+  const K_RESOLUTION_OFFSET: usize = 4;
+  const K_MATRIX_OFFSET: usize = 8;
+
++  struct ObjectInfo {
++      uniform_buffer: wgpu::Buffer,
++      uniform_values: [f32; UNIFORM_BUFFER_SIZE as usize / 4],
++      bind_group: wgpu::BindGroup,
++  }
++
++  const NUM_OBJECTS: usize = 5;
++  let mut object_infos: Vec<ObjectInfo> = Vec::new();
++  for _i in 0..NUM_OBJECTS {
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("uniforms"),
+      size: UNIFORM_BUFFER_SIZE,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 
-    const uniformValues = new Float32Array(uniformBufferSize / 4);
-
-    // offsets to the various uniform values in float32 indices
-    const kColorOffset = 0;
-    const kResolutionOffset = 4;
-    const kMatrixOffset = 8;
-
-    const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-    const resolutionValue = uniformValues.subarray(kResolutionOffset, kResolutionOffset + 2);
-    const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 12);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
     // The color will not change so let's set it once at init time
-    colorValue.set([Math.random(), Math.random(), Math.random(), 1]);
+    uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&[
+      rand(0.0, 1.0),
+      rand(0.0, 1.0),
+      rand(0.0, 1.0),
+      1.0,
+    ]);
 
-    const bindGroup = device.createBindGroup({
-      label: 'bind group for object',
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: uniformBuffer },
-      ],
+    let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: Some("bind group for object"),
+      layout: &pipeline.get_bind_group_layout(0),
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: uniform_buffer.as_entire_binding(),
+      }],
     });
 
-+    objectInfos.push({
-+      uniformBuffer,
-+      uniformValues,
-+      resolutionValue,
-+      matrixValue,
-+      bindGroup,
++    object_infos.push(ObjectInfo {
++      uniform_buffer,
++      uniform_values,
++      bind_group,
 +    });
 +  }
 ```
@@ -579,50 +597,49 @@ To do this we need 5 uniform buffers, 5 uniform values, and 5 bindGroups
 At render time we loop through the them and multiply the previous matrix
 by our translation, rotation, and scale matrices.
 
-```js
-function render() {
+```rust
+app.run(RenderMode::Once, move |frame: &Frame| {
   ...
 
-  const translationMatrix = mat3.translation(settings.translation);
-  const rotationMatrix = mat3.rotation(settings.rotation);
-  const scaleMatrix = mat3.scaling(settings.scale);
+  let translation_matrix = mat3::translation(translation);
+  let rotation_matrix = mat3::rotation(rotation);
+  let scale_matrix = mat3::scaling(scale);
 
--  let matrix = mat3.multiply(translationMatrix, rotationMatrix);
--  matrix = mat3.multiply(matrix, scaleMatrix);
+-  let mut matrix = mat3::multiply(&translation_matrix, &rotation_matrix);
+-  matrix = mat3::multiply(&matrix, &scale_matrix);
 
 +  // Starting Matrix.
-+  let matrix = mat3.identity();
++  let mut matrix = mat3::identity();
 +
-+  for (const {
-+    uniformBuffer,
-+    uniformValues,
-+    resolutionValue,
-+    matrixValue,
-+    bindGroup,
-+  } of objectInfos) {
-+    matrix = mat3.multiply(matrix, translationMatrix)
-+    matrix = mat3.multiply(matrix, rotationMatrix);
-+    matrix = mat3.multiply(matrix, scaleMatrix);
++  for object_info in object_infos.iter_mut() {
++    matrix = mat3::multiply(&matrix, &translation_matrix);
++    matrix = mat3::multiply(&matrix, &rotation_matrix);
++    matrix = mat3::multiply(&matrix, &scale_matrix);
 
-    // Set the uniform values in our JavaScript side Float32Array
-    resolutionValue.set([canvas.width, canvas.height]);
-    matrixValue.set([
-      ...matrix.slice(0, 3), 0,
-      ...matrix.slice(3, 6), 0,
-      ...matrix.slice(6, 9), 0,
-    ]);
+    // Set the uniform values in our Rust side array
+    object_info.uniform_values[K_RESOLUTION_OFFSET..K_RESOLUTION_OFFSET + 2]
+        .copy_from_slice(&[frame.width as f32, frame.height as f32]);
+    // copy each column of 3 values, followed by 1 float of padding
+    object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 3]
+        .copy_from_slice(&matrix[0..3]);
+    object_info.uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7]
+        .copy_from_slice(&matrix[3..6]);
+    object_info.uniform_values[K_MATRIX_OFFSET + 8..K_MATRIX_OFFSET + 11]
+        .copy_from_slice(&matrix[6..9]);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame.queue.write_buffer(
+        &object_info.uniform_buffer,
+        0,
+        bytemuck::cast_slice(&object_info.uniform_values),
+    );
 
-    pass.setBindGroup(0, bindGroup);
-    pass.drawIndexed(numVertices);
+    pass.set_bind_group(0, &object_info.bind_group, &[]);
+    pass.draw_indexed(0..num_vertices, 0, 0..1);
 +  }
-
-  pass.end();
 ```
 
-To make this work we introduced the function, `mat3.identity`, that makes an
+To make this work we introduced the function, `mat3::identity`, that makes an
 identity matrix.  An identity matrix is a matrix that effectively
 represents 1.0 so that if you multiply by the identity nothing happens.
 Just like
@@ -635,18 +652,18 @@ so too
 
 Here's the code to make an identity matrix.
 
-```js
-const mat3 = {
-  ...
-  identity() {
-    return [
-      1, 0, 0,
-      0, 1, 0,
-      0, 0, 1,
-    ];
-  },
+```rust
+mod mat3 {
+    ...
+    pub fn identity() -> [f32; 9] {
+        [
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+        ]
+    }
 
-  ...
+    ...
 ```
 
 Here's the five Fs.
@@ -669,16 +686,16 @@ the top left corner of our 'F' is at the origin, (0, 0).
 But now, because we can do matrix math, and we can choose the order that
 transforms are applied, we can move the origin.
 
-```js
-    const translationMatrix = mat3.translation(settings.translation);
-    const rotationMatrix = mat3.rotation(settings.rotation);
-    const scaleMatrix = mat3.scaling(settings.scale);
+```rust
+    let translation_matrix = mat3::translation(translation);
+    let rotation_matrix = mat3::rotation(rotation);
+    let scale_matrix = mat3::scaling(scale);
 +    // make a matrix that will move the origin of the 'F' to its center.
-+    const moveOriginMatrix = mat3.translation([-50, -75]);
++    let move_origin_matrix = mat3::translation([-50.0, -75.0]);
 
-    let matrix = mat3.multiply(translationMatrix, rotationMatrix);
-    matrix = mat3.multiply(matrix, scaleMatrix);
-+    matrix = mat3.multiply(matrix, moveOriginMatrix);
+    let mut matrix = mat3::multiply(&translation_matrix, &rotation_matrix);
+    matrix = mat3::multiply(&matrix, &scale_matrix);
++    matrix = mat3::multiply(&matrix, &move_origin_matrix);
 ```
 
 Above we had a translation to move the F -50, -75. This moves all of it's
@@ -724,23 +741,24 @@ The 4th step, `clipSpace = flippedClipSpace * vec2f(1, -1);` is a scale.
 
 So, we could add this to our math
 
-```js
-+  const scaleBy1OverResolutionMatrix = mat3.scaling([1 / canvas.width, 1 / canvas.height]);
-+  const scaleBy2Matrix = mat3.scaling([2, 2]);
-+  const translateByMinus1 = mat3.translation([-1, -1]);
-+  const scaleBy1Minus1 = mat3.scaling([1, -1]);
+```rust
++  let scale_by_1_over_resolution_matrix =
++      mat3::scaling([1.0 / frame.width as f32, 1.0 / frame.height as f32]);
++  let scale_by_2_matrix = mat3::scaling([2.0, 2.0]);
++  let translate_by_minus_1 = mat3::translation([-1.0, -1.0]);
++  let scale_by_1_minus_1 = mat3::scaling([1.0, -1.0]);
 
-  const translationMatrix = mat3.translation(settings.translation);
-  const rotationMatrix = mat3.rotation(settings.rotation);
-  const scaleMatrix = mat3.scaling(settings.scale);
+  let translation_matrix = mat3::translation(translation);
+  let rotation_matrix = mat3::rotation(rotation);
+  let scale_matrix = mat3::scaling(scale);
 
--  let matrix = mat3.multiply(translationMatrix, rotationMatrix);
-+  let matrix = mat3.multiply(scaleBy1Minus1, translateByMinus1);
-+  matrix = mat3.multiply(matrix, scaleBy2Matrix);
-+  matrix = mat3.multiply(matrix, scaleBy1OverResolutionMatrix);
-+  matrix = mat3.multiply(matrix, translationMatrix);
-+  matrix = mat3.multiply(matrix, rotationMatrix);
-  matrix = mat3.multiply(matrix, scaleMatrix);
+-  let mut matrix = mat3::multiply(&translation_matrix, &rotation_matrix);
++  let mut matrix = mat3::multiply(&scale_by_1_minus_1, &translate_by_minus_1);
++  matrix = mat3::multiply(&matrix, &scale_by_2_matrix);
++  matrix = mat3::multiply(&matrix, &scale_by_1_over_resolution_matrix);
++  matrix = mat3::multiply(&matrix, &translation_matrix);
++  matrix = mat3::multiply(&matrix, &rotation_matrix);
+  matrix = mat3::multiply(&matrix, &scale_matrix);
 ```
 
 Then our shader would could change to this
@@ -799,40 +817,41 @@ All because we're using matrix math.
 Rather than make those 4 extra matrices though, we could just make
 a function that generates the same result
 
-```js
-const mat3 = {
-  projection(width, height) {
-    // Note: This matrix flips the Y axis so that 0 is at the top.
-    return [
-      2 / width, 0, 0,
-      0, -2 / height, 0,
-      -1, 1, 1,
-    ];
-  },
+```rust
+mod mat3 {
+    pub fn projection(width: f32, height: f32) -> [f32; 9] {
+        // Note: This matrix flips the Y axis so that 0 is at the top.
+        [
+            2.0 / width, 0.0, 0.0,
+            0.0, -2.0 / height, 0.0,
+            -1.0, 1.0, 1.0,
+        ]
+    }
 
-  ...
+    ...
 ```
 
-And our JavaScript would change to this
+And our Rust would change to this
 
-```js
--  const scaleBy1OverResolutionMatrix = mat3.scaling([1 / canvas.width, 1 / canvas.height]);
--  const scaleBy2Matrix = mat3.scaling([2, 2]);
--  const translateByMinus1 = mat3.translation([-1, -1]);
--  const scaleBy1Minus1 = mat3.scaling([1, -1]);
-  const projectionMatrix = mat3.projection(canvas.clientWidth, canvas.clientHeight);
-  const translationMatrix = mat3.translation(settings.translation);
-  const rotationMatrix = mat3.rotation(settings.rotation);
-  const scaleMatrix = mat3.scaling(settings.scale);
+```rust
+-  let scale_by_1_over_resolution_matrix =
+-      mat3::scaling([1.0 / frame.width as f32, 1.0 / frame.height as f32]);
+-  let scale_by_2_matrix = mat3::scaling([2.0, 2.0]);
+-  let translate_by_minus_1 = mat3::translation([-1.0, -1.0]);
+-  let scale_by_1_minus_1 = mat3::scaling([1.0, -1.0]);
+  let projection_matrix = mat3::projection(frame.width as f32, frame.height as f32);
+  let translation_matrix = mat3::translation(translation);
+  let rotation_matrix = mat3::rotation(rotation);
+  let scale_matrix = mat3::scaling(scale);
 
--  let matrix = mat3.multiply(scaleBy1Minus1, translateByMinus1);
--  matrix = mat3.multiply(matrix, scaleBy2Matrix);
--  matrix = mat3.multiply(matrix, scaleBy1OverResolutionMatrix);
--  matrix = mat3.multiply(matrix, translationMatrix);
-  let matrix = mat3.multiply(projectionMatrix, translationMatrix);
-  matrix = mat3.multiply(matrix, rotationMatrix);
-  matrix = mat3.multiply(matrix, scaleMatrix);
-  matrix = mat3.multiply(matrix, moveOriginMatrix);
+-  let mut matrix = mat3::multiply(&scale_by_1_minus_1, &translate_by_minus_1);
+-  matrix = mat3::multiply(&matrix, &scale_by_2_matrix);
+-  matrix = mat3::multiply(&matrix, &scale_by_1_over_resolution_matrix);
+-  matrix = mat3::multiply(&matrix, &translation_matrix);
+  let mut matrix = mat3::multiply(&projection_matrix, &translation_matrix);
+  matrix = mat3::multiply(&matrix, &rotation_matrix);
+  matrix = mat3::multiply(&matrix, &scale_matrix);
+  matrix = mat3::multiply(&matrix, &move_origin_matrix);
 ```
 
 We also removed the code that made space for the resolution in our uniform buffer
@@ -850,42 +869,42 @@ Before we move on let's simplify a little bit. While it's common to generate
 various matrices and separately multiply them together it's also common to just
 multiply them as we go. Effectively we could write functions like this
 
-```js
-const mat3 = {
+```rust
+mod mat3 {
 
-  ...
+    ...
 
-  translate: function(m, translation) {
-    return mat3.multiply(m, mat3.translation(translation));
-  },
+    pub fn translate(m: &[f32; 9], t: [f32; 2]) -> [f32; 9] {
+        multiply(m, &translation(t))
+    }
 
-  rotate: function(m, angleInRadians) {
-    return mat3.multiply(m, mat3.rotation(angleInRadians));
-  },
+    pub fn rotate(m: &[f32; 9], angle_in_radians: f32) -> [f32; 9] {
+        multiply(m, &rotation(angle_in_radians))
+    }
 
-  scale: function(m, scale) {
-    return mat3.multiply(m, mat3.scaling(scale));
-  },
+    pub fn scale(m: &[f32; 9], s: [f32; 2]) -> [f32; 9] {
+        multiply(m, &scaling(s))
+    }
 
-  ...
+    ...
 
-};
+}
 ```
 
 This would let us change 7 lines of matrix code above to just 4 lines like this
 
-```js
-const projectionMatrix = mat3.projection(canvas.clientWidth, canvas.clientHeight);
--const translationMatrix = mat3.translation(settings.translation);
--const rotationMatrix = mat3.rotation(settings.rotation);
--const scaleMatrix = mat3.scaling(settings.scale);
+```rust
+let projection_matrix = mat3::projection(frame.width as f32, frame.height as f32);
+-let translation_matrix = mat3::translation(translation);
+-let rotation_matrix = mat3::rotation(rotation);
+-let scale_matrix = mat3::scaling(scale);
 -
--let matrix = mat3.multiply(projectionMatrix, translationMatrix);
--matrix = mat3.multiply(matrix, rotationMatrix);
--matrix = mat3.multiply(matrix, scaleMatrix);
-+let matrix = mat3.translate(projectionMatrix, settings.translation);
-+matrix = mat3.rotate(matrix, settings.rotation);
-+matrix = mat3.scale(matrix, settings.scale);
+-let mut matrix = mat3::multiply(&projection_matrix, &translation_matrix);
+-matrix = mat3::multiply(&matrix, &rotation_matrix);
+-matrix = mat3::multiply(&matrix, &scale_matrix);
++let mut matrix = mat3::translate(&projection_matrix, translation);
++matrix = mat3::rotate(&matrix, rotation);
++matrix = mat3::scale(&matrix, scale);
 ```
 
 ## mat3x3 is 3 padded vec3fs
@@ -898,241 +917,245 @@ This is what a `mat3x3f` looks like in memory
 
 This is why we needed this code to copy it into the uniform values
 
-```js
-    matrixValue.set([
-      ...matrix.slice(0, 3), 0,
-      ...matrix.slice(3, 6), 0,
-      ...matrix.slice(6, 9), 0,
-    ]);
+```rust
+    // copy each column of 3 values, followed by 1 float of padding
+    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 3].copy_from_slice(&matrix[0..3]);
+    uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7].copy_from_slice(&matrix[3..6]);
+    uniform_values[K_MATRIX_OFFSET + 8..K_MATRIX_OFFSET + 11].copy_from_slice(&matrix[6..9]);
 ```
 
 We could fix that by changing the matrix functions to expect/handle the padding.
+Each matrix becomes 12 floats: 3 columns of 4, where the 4th float of each
+column is unused padding.
 
-```js
-const mat3 = {
-  projection(width, height) {
-    // Note: This matrix flips the Y axis so that 0 is at the top.
-    return [
--      2 / width, 0, 0,
--      0, -2 / height, 0,
--      -1, 1, 1,
-+      2 / width, 0, 0, 0,
-+      0, -2 / height, 0, 0,
-+      -1, 1, 1, 0,
-    ];
-  },
-  identity() {
-    return [
--      1, 0, 0,
--      0, 1, 0,
--      0, 0, 1,
-+      1, 0, 0, 0,
-+      0, 1, 0, 0,
-+      0, 0, 1, 0,
-    ];
-  },
-  multiply(a, b) {
--    const a00 = a[0 * 3 + 0];
--    const a01 = a[0 * 3 + 1];
--    const a02 = a[0 * 3 + 2];
--    const a10 = a[1 * 3 + 0];
--    const a11 = a[1 * 3 + 1];
--    const a12 = a[1 * 3 + 2];
--    const a20 = a[2 * 3 + 0];
--    const a21 = a[2 * 3 + 1];
--    const a22 = a[2 * 3 + 2];
--    const b00 = b[0 * 3 + 0];
--    const b01 = b[0 * 3 + 1];
--    const b02 = b[0 * 3 + 2];
--    const b10 = b[1 * 3 + 0];
--    const b11 = b[1 * 3 + 1];
--    const b12 = b[1 * 3 + 2];
--    const b20 = b[2 * 3 + 0];
--    const b21 = b[2 * 3 + 1];
--    const b22 = b[2 * 3 + 2];
-+    const a00 = a[0 * 4 + 0];
-+    const a01 = a[0 * 4 + 1];
-+    const a02 = a[0 * 4 + 2];
-+    const a10 = a[1 * 4 + 0];
-+    const a11 = a[1 * 4 + 1];
-+    const a12 = a[1 * 4 + 2];
-+    const a20 = a[2 * 4 + 0];
-+    const a21 = a[2 * 4 + 1];
-+    const a22 = a[2 * 4 + 2];
-+    const b00 = b[0 * 4 + 0];
-+    const b01 = b[0 * 4 + 1];
-+    const b02 = b[0 * 4 + 2];
-+    const b10 = b[1 * 4 + 0];
-+    const b11 = b[1 * 4 + 1];
-+    const b12 = b[1 * 4 + 2];
-+    const b20 = b[2 * 4 + 0];
-+    const b21 = b[2 * 4 + 1];
-+    const b22 = b[2 * 4 + 2];
+```rust
+mod mat3 {
+    pub fn projection(width: f32, height: f32) -> [f32; 12] {
+        // Note: This matrix flips the Y axis so that 0 is at the top.
+        [
+-            2.0 / width, 0.0, 0.0,
+-            0.0, -2.0 / height, 0.0,
+-            -1.0, 1.0, 1.0,
++            2.0 / width, 0.0, 0.0, 0.0,
++            0.0, -2.0 / height, 0.0, 0.0,
++            -1.0, 1.0, 1.0, 0.0,
+        ]
+    }
 
-    return [
-      b00 * a00 + b01 * a10 + b02 * a20,
-      b00 * a01 + b01 * a11 + b02 * a21,
-      b00 * a02 + b01 * a12 + b02 * a22,
-+      0,
-      b10 * a00 + b11 * a10 + b12 * a20,
-      b10 * a01 + b11 * a11 + b12 * a21,
-      b10 * a02 + b11 * a12 + b12 * a22,
-+      0,
-      b20 * a00 + b21 * a10 + b22 * a20,
-      b20 * a01 + b21 * a11 + b22 * a21,
-      b20 * a02 + b21 * a12 + b22 * a22,
-+      0,
-    ];
-  },
-  translation([tx, ty]) {
-    return [
--      1, 0, 0,
--      0, 1, 0,
--      tx, ty, 1,
-+      1, 0, 0, 0,
-+      0, 1, 0, 0, 
-+      tx, ty, 1, 0,
-    ];
-  },
+    pub fn identity() -> [f32; 12] {
+        [
+-            1.0, 0.0, 0.0,
+-            0.0, 1.0, 0.0,
+-            0.0, 0.0, 1.0,
++            1.0, 0.0, 0.0, 0.0,
++            0.0, 1.0, 0.0, 0.0,
++            0.0, 0.0, 1.0, 0.0,
+        ]
+    }
 
-  rotation(angleInRadians) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    return [
--      c, s, 0,
--      -s, c, 0,
--      0, 0, 1,
-+      c, s, 0, 0,
-+      -s, c, 0, 0,
-+      0, 0, 1, 0,
-    ];
-  },
+    pub fn multiply(a: &[f32; 12], b: &[f32; 12]) -> [f32; 12] {
+-        let a00 = a[0 * 3 + 0];
+-        let a01 = a[0 * 3 + 1];
+-        let a02 = a[0 * 3 + 2];
+-        let a10 = a[1 * 3 + 0];
+-        let a11 = a[1 * 3 + 1];
+-        let a12 = a[1 * 3 + 2];
+-        let a20 = a[2 * 3 + 0];
+-        let a21 = a[2 * 3 + 1];
+-        let a22 = a[2 * 3 + 2];
+-        let b00 = b[0 * 3 + 0];
+-        let b01 = b[0 * 3 + 1];
+-        let b02 = b[0 * 3 + 2];
+-        let b10 = b[1 * 3 + 0];
+-        let b11 = b[1 * 3 + 1];
+-        let b12 = b[1 * 3 + 2];
+-        let b20 = b[2 * 3 + 0];
+-        let b21 = b[2 * 3 + 1];
+-        let b22 = b[2 * 3 + 2];
++        let a00 = a[0 * 4 + 0];
++        let a01 = a[0 * 4 + 1];
++        let a02 = a[0 * 4 + 2];
++        let a10 = a[1 * 4 + 0];
++        let a11 = a[1 * 4 + 1];
++        let a12 = a[1 * 4 + 2];
++        let a20 = a[2 * 4 + 0];
++        let a21 = a[2 * 4 + 1];
++        let a22 = a[2 * 4 + 2];
++        let b00 = b[0 * 4 + 0];
++        let b01 = b[0 * 4 + 1];
++        let b02 = b[0 * 4 + 2];
++        let b10 = b[1 * 4 + 0];
++        let b11 = b[1 * 4 + 1];
++        let b12 = b[1 * 4 + 2];
++        let b20 = b[2 * 4 + 0];
++        let b21 = b[2 * 4 + 1];
++        let b22 = b[2 * 4 + 2];
 
-  scaling([sx, sy]) {
-    return [
--      sx, 0, 0,
--      0, sy, 0,
--      0, 0, 1,
-+      sx, 0, 0, 0, 
-+      0, sy, 0, 0,
-+      0, 0, 1, 0,
-    ];
-  },
-};
+        [
+            b00 * a00 + b01 * a10 + b02 * a20,
+            b00 * a01 + b01 * a11 + b02 * a21,
+            b00 * a02 + b01 * a12 + b02 * a22,
++            0.0,
+            b10 * a00 + b11 * a10 + b12 * a20,
+            b10 * a01 + b11 * a11 + b12 * a21,
+            b10 * a02 + b11 * a12 + b12 * a22,
++            0.0,
+            b20 * a00 + b21 * a10 + b22 * a20,
+            b20 * a01 + b21 * a11 + b22 * a21,
+            b20 * a02 + b21 * a12 + b22 * a22,
++            0.0,
+        ]
+    }
+
+    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 12] {
+        [
+-            1.0, 0.0, 0.0,
+-            0.0, 1.0, 0.0,
+-            tx, ty, 1.0,
++            1.0, 0.0, 0.0, 0.0,
++            0.0, 1.0, 0.0, 0.0,
++            tx, ty, 1.0, 0.0,
+        ]
+    }
+
+    pub fn rotation(angle_in_radians: f32) -> [f32; 12] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        [
+-            c, s, 0.0,
+-            -s, c, 0.0,
+-            0.0, 0.0, 1.0,
++            c, s, 0.0, 0.0,
++            -s, c, 0.0, 0.0,
++            0.0, 0.0, 1.0, 0.0,
+        ]
+    }
+
+    pub fn scaling([sx, sy]: [f32; 2]) -> [f32; 12] {
+        [
+-            sx, 0.0, 0.0,
+-            0.0, sy, 0.0,
+-            0.0, 0.0, 1.0,
++            sx, 0.0, 0.0, 0.0,
++            0.0, sy, 0.0, 0.0,
++            0.0, 0.0, 1.0, 0.0,
+        ]
+    }
+}
 ```
 
 Now we can change the part that sets our matrix
 
-```js
--    matrixValue.set([
--      ...matrix.slice(0, 3), 0,
--      ...matrix.slice(3, 6), 0,
--      ...matrix.slice(6, 9), 0,
--    ]);
-+    matrixValue.set(matrix);
+```rust
+-    // copy each column of 3 values, followed by 1 float of padding
+-    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 3].copy_from_slice(&matrix[0..3]);
+-    uniform_values[K_MATRIX_OFFSET + 4..K_MATRIX_OFFSET + 7].copy_from_slice(&matrix[3..6]);
+-    uniform_values[K_MATRIX_OFFSET + 8..K_MATRIX_OFFSET + 11].copy_from_slice(&matrix[6..9]);
++    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 12].copy_from_slice(&matrix);
 ```
 
 ## Updating Matrices in place
 
-Another thing we can do is allow passing in a matrix to
-our matrix functions. This would allow us to update a
-matrix in place, instead of copying it. It's useful to
-have both options so we'll make it so that if a destination matrix is
-not passed in we'll make a new matrix. Otherwise we'll use the one that was
-passed in.
+Another thing we can do is have our matrix functions write their result
+into a destination slice instead of returning a new array. This lets us
+update a matrix in place, instead of copying it. In particular, we can pass
+in the matrix's slice of the uniform values and operate directly on it.
 
 To take 3 examples
 
-```
-const mat3 = {
--  multiply(a, b) {
-+  multiply(a, b, dst) {
-+    dst = dst || new Float32Array(12);
-    const a00 = a[0 * 4 + 0];
-    const a01 = a[0 * 4 + 1];
-    const a02 = a[0 * 4 + 2];
-    const a10 = a[1 * 4 + 0];
-    const a11 = a[1 * 4 + 1];
-    const a12 = a[1 * 4 + 2];
-    const a20 = a[2 * 4 + 0];
-    const a21 = a[2 * 4 + 1];
-    const a22 = a[2 * 4 + 2];
-    const b00 = b[0 * 4 + 0];
-    const b01 = b[0 * 4 + 1];
-    const b02 = b[0 * 4 + 2];
-    const b10 = b[1 * 4 + 0];
-    const b11 = b[1 * 4 + 1];
-    const b12 = b[1 * 4 + 2];
-    const b20 = b[2 * 4 + 0];
-    const b21 = b[2 * 4 + 1];
-    const b22 = b[2 * 4 + 2];
+```rust
+mod mat3 {
+-    pub fn multiply(a: &[f32; 12], b: &[f32; 12]) -> [f32; 12] {
++    pub fn multiply(a: &[f32], b: &[f32], dst: &mut [f32]) {
+        let a00 = a[0 * 4 + 0];
+        let a01 = a[0 * 4 + 1];
+        let a02 = a[0 * 4 + 2];
+        let a10 = a[1 * 4 + 0];
+        let a11 = a[1 * 4 + 1];
+        let a12 = a[1 * 4 + 2];
+        let a20 = a[2 * 4 + 0];
+        let a21 = a[2 * 4 + 1];
+        let a22 = a[2 * 4 + 2];
+        let b00 = b[0 * 4 + 0];
+        let b01 = b[0 * 4 + 1];
+        let b02 = b[0 * 4 + 2];
+        let b10 = b[1 * 4 + 0];
+        let b11 = b[1 * 4 + 1];
+        let b12 = b[1 * 4 + 2];
+        let b20 = b[2 * 4 + 0];
+        let b21 = b[2 * 4 + 1];
+        let b22 = b[2 * 4 + 2];
 
--    return [
--      b00 * a00 + b01 * a10 + b02 * a20,
--      b00 * a01 + b01 * a11 + b02 * a21,
--      b00 * a02 + b01 * a12 + b02 * a22,
--      0,
--      b10 * a00 + b11 * a10 + b12 * a20,
--      b10 * a01 + b11 * a11 + b12 * a21,
--      b10 * a02 + b11 * a12 + b12 * a22,
--      0,
--      b20 * a00 + b21 * a10 + b22 * a20,
--      b20 * a01 + b21 * a11 + b22 * a21,
--      b20 * a02 + b21 * a12 + b22 * a22,
--      0,
--    ];
-+    dst[ 0] = b00 * a00 + b01 * a10 + b02 * a20;
-+    dst[ 1] = b00 * a01 + b01 * a11 + b02 * a21;
-+    dst[ 2] = b00 * a02 + b01 * a12 + b02 * a22;
+-        [
+-            b00 * a00 + b01 * a10 + b02 * a20,
+-            b00 * a01 + b01 * a11 + b02 * a21,
+-            b00 * a02 + b01 * a12 + b02 * a22,
+-            0.0,
+-            b10 * a00 + b11 * a10 + b12 * a20,
+-            b10 * a01 + b11 * a11 + b12 * a21,
+-            b10 * a02 + b11 * a12 + b12 * a22,
+-            0.0,
+-            b20 * a00 + b21 * a10 + b22 * a20,
+-            b20 * a01 + b21 * a11 + b22 * a21,
+-            b20 * a02 + b21 * a12 + b22 * a22,
+-            0.0,
+-        ]
++        dst[0] = b00 * a00 + b01 * a10 + b02 * a20;
++        dst[1] = b00 * a01 + b01 * a11 + b02 * a21;
++        dst[2] = b00 * a02 + b01 * a12 + b02 * a22;
 +
-+    dst[ 4] = b10 * a00 + b11 * a10 + b12 * a20;
-+    dst[ 5] = b10 * a01 + b11 * a11 + b12 * a21;
-+    dst[ 6] = b10 * a02 + b11 * a12 + b12 * a22;
++        dst[4] = b10 * a00 + b11 * a10 + b12 * a20;
++        dst[5] = b10 * a01 + b11 * a11 + b12 * a21;
++        dst[6] = b10 * a02 + b11 * a12 + b12 * a22;
 +
-+    dst[ 7] = b20 * a00 + b21 * a10 + b22 * a20;
-+    dst[ 8] = b20 * a01 + b21 * a11 + b22 * a21;
-+    dst[ 9] = b20 * a02 + b21 * a12 + b22 * a22;
-+    return dst;
-  },
--  translation([tx, ty]) {
-+  translation([tx, ty], dst) {
-+    dst = dst || new Float32Array(12);
--    return [
--      1, 0, 0, 0,
--      0, 1, 0, 0,
--      tx, ty, 1, 0,
--    ];
-+    dst[0] = 1;   dst[1] = 0;   dst[ 2] = 0;
-+    dst[4] = 0;   dst[5] = 1;   dst[ 6] = 0;
-+    dst[8] = tx;  dst[9] = ty;  dst[10] = 1;
-+    return dst;
-  },
--  translate(m, translation) {
--    return mat3.multiply(m, mat3.translation(m));
-+  translate(m, translation, dst) {
-+    return mat3.multiply(m, mat3.translation(m), dst);
-  }
++        dst[8] = b20 * a00 + b21 * a10 + b22 * a20;
++        dst[9] = b20 * a01 + b21 * a11 + b22 * a21;
++        dst[10] = b20 * a02 + b21 * a12 + b22 * a22;
+    }
+-    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 12] {
+-        [
+-            1.0, 0.0, 0.0, 0.0,
+-            0.0, 1.0, 0.0, 0.0,
+-            tx, ty, 1.0, 0.0,
+-        ]
++    pub fn translation([tx, ty]: [f32; 2], dst: &mut [f32]) {
++        dst[0] = 1.0;  dst[1] = 0.0;  dst[2] = 0.0;
++        dst[4] = 0.0;  dst[5] = 1.0;  dst[6] = 0.0;
++        dst[8] = tx;   dst[9] = ty;   dst[10] = 1.0;
+    }
+-    pub fn translate(m: &[f32; 12], t: [f32; 2]) -> [f32; 12] {
+-        multiply(m, &translation(t))
++    // `m` is both the input and the destination. We read `m` out into a
++    // local copy first, so it's safe to update a matrix with itself.
++    pub fn translate(m: &mut [f32], t: [f32; 2]) {
++        let mut tm = [0.0f32; 12];
++        translation(t, &mut tm);
++        let a: [f32; 12] = m[..12].try_into().unwrap();
++        multiply(&a, &tm, m);
+    }
 
-  ...
+    ...
 ```
 
 Doing the same for the other functions and now our code can change
 to this
 
-```js
--    const projectionMatrix = mat3.projection(canvas.clientWidth, canvas.clientHeight);
--    let matrix = mat3.translate(projectionMatrix, settings.translation);
--    matrix = mat3.rotate(matrix, settings.rotation);
--    matrix = mat3.scale(matrix, settings.scale);
--    matrixValue.set(matrix);
-+    mat3.projection(canvas.clientWidth, canvas.clientHeight, matrixValue);
-+    mat3.translate(matrixValue, settings.translation, matrixValue);
-+    mat3.rotate(matrixValue, settings.rotation, matrixValue);
-+    mat3.scale(matrixValue, settings.scale, matrixValue);
+```rust
+-    let projection_matrix = mat3::projection(frame.width as f32, frame.height as f32);
+-    let mut matrix = mat3::translate(&projection_matrix, translation);
+-    matrix = mat3::rotate(&matrix, rotation);
+-    matrix = mat3::scale(&matrix, scale);
+-    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 12].copy_from_slice(&matrix);
++    let matrix_value = &mut uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 12];
++    mat3::projection(frame.width as f32, frame.height as f32, matrix_value);
++    mat3::translate(matrix_value, translation);
++    mat3::rotate(matrix_value, rotation);
++    mat3::scale(matrix_value, scale);
 ```
 
-We no longer need to copy the matrix into `matrixValue`. Instead we
-can operate directly on it.
+We no longer need to copy the matrix into the uniform values. Instead we
+can operate directly on `matrix_value`, the matrix's slice of the uniform
+values.
 
 {{{example url="../webgpu-matrix-math-transform-trs.html"}}}
 
@@ -1187,7 +1210,7 @@ Step 1:  no matrix (or the identity matrix)
 > the F was designed in pixel space which is +Y down. Further, clip space shows
 > only 2x2 units but the F is 100x150 units big so we just see one unit's worth.
 
-Step 2:  `mat3.projection(canvas.clientWidth, canvas.clientHeight, matrixValue);`
+Step 2:  `mat3::projection(frame.width as f32, frame.height as f32, matrix_value);`
 
 > <div data-diagram="space-change-1" data-caption="from clip space to pixel space"></div>
 >
@@ -1195,19 +1218,19 @@ Step 2:  `mat3.projection(canvas.clientWidth, canvas.clientHeight, matrixValue);
 > Positions passed using this matrix in need to be in pixel space. The flash you see
 > is when the space flips from positive Y = up to positive Y = down.
 
-Step 3:  `mat3.translate(matrixValue, settings.translation, matrixValue);`
+Step 3:  `mat3::translate(matrix_value, translation);`
 
 > <div data-diagram="space-change-2" data-caption="move origin to tx, ty"></div>
 >
 > The origin of the space has now been moved to tx, ty (150, 100).
 
-Step 4:  `mat3.rotate(matrixValue, settings.rotation, matrixValue);`
+Step 4:  `mat3::rotate(matrix_value, rotation);`
 
 > <div data-diagram="space-change-3" data-caption="rotate 33 degrees"></div>
 >
 > The space has been rotated around tx, ty
 
-Step 5:  `mat3.scale(matrixValue, settings.scale, matrixValue);`
+Step 5:  `mat3::scale(matrix_value, scale);`
 
 > <div data-diagram="space-change-4" data-caption="scale the space"></div>
 >
@@ -1227,8 +1250,9 @@ in matrix math [check out this amazing video](https://www.youtube.com/watch?v=kj
 
 <div class="webgpu_bottombar">
 <h3>What are <code>clientWidth</code> and <code>clientHeight</code>?</h3>
-<p>Up until this point, whenever we referred to the canvas's dimensions we used <code>canvas.width</code> and <code>canvas.height</code>
-but above when we called <code>mat3.projection</code> we instead used <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code>. Why?</p>
+<p>Up until this point, whenever we referred to the canvas's dimensions we used the frame's
+<code>width</code> and <code>height</code>, which are the canvas's <code>canvas.width</code> and <code>canvas.height</code>
+in the browser. But there is another pair of canvas sizes, <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code>. Why do they matter?</p>
 <p>Projection matrices are concerned with how to take clip space (-1 to +1 in each dimension) and convert it back
 to pixels. But, in the browser, there are 2 types of pixels we are dealing with. One is the number of pixels in
 the canvas itself. So for example a canvas defined like this.</p>
@@ -1256,17 +1280,20 @@ For example if we made a canvas like this.</p>
 </pre>
 <p>The canvas will be displayed whatever size its container is. That's likely not 400x300.</p>
 <p>Here are two examples that set the canvas's CSS display size to 100% so the canvas is stretched
-out to fill the page. The first one uses <code>canvas.width</code> and <code>canvas.height</code> when calling <code>mat3.projection</code>. Open it in a new
+out to fill the page. Both leave <code>auto_resize</code> off so the drawing buffer stays 400x300.
+The first one uses the frame's <code>width</code> and <code>height</code> (that is, <code>canvas.width</code> and <code>canvas.height</code>) when calling <code>mat3::projection</code>. Open it in a new
 window and resize the window. Notice how the 'F' doesn't have the correct aspect. It gets
 distorted. It's also not in the correct place. The code says the top left corner should be at 150, 25 but as the canvas is stretched and shrunk the position where something we want to appear at 150, 25 moves.</p>
 {{{example url="../webgpu-canvas-width-height.html" width="500" height="150" }}}
-<p>This second example uses <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code> when calling <code>mat3.projection</code>. <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code> report
+<p>This second example queries <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code> and uses those when calling <code>mat3::projection</code>. <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code> report
 the size the canvas is actually being displayed by the browser so in this case, even though the canvas still only has 400x300 pixels
 since we're defining our aspect ratio based on the size the canvas is being displayed the <code>F</code> always looks correct and the F is in the correct place.</p>
 {{{example url="../webgpu-canvas-clientwidth-clientheight.html" width="500" height="150" }}}
 <p>Most apps that allow their canvases to be resized try to make the <code>canvas.width</code> and <code>canvas.height</code> match
 the <code>canvas.clientWidth</code> and <code>canvas.clientHeight</code> because they want there to be
-one pixel in the canvas for each pixel displayed by the browser. But, as we've seen above, that's not
+one pixel in the canvas for each pixel displayed by the browser. That's exactly what wgpu_fun's
+<code>auto_resize</code> option does, which is why the other examples on this page can pass the frame's
+<code>width</code> and <code>height</code> to <code>mat3::projection</code>. But, as we've seen above, that's not
 the only option. That means, in almost all cases, it's more technically correct to compute a
 projection matrix's aspect ratio using <code>canvas.clientHeight</code> and <code>canvas.clientWidth</code>.
 </p>
@@ -1275,4 +1302,3 @@ projection matrix's aspect ratio using <code>canvas.clientHeight</code> and <cod
 <!-- keep this at the bottom of the article -->
 <link href="webgpu-matrix-math.css" rel="stylesheet">
 <script type="module" src="webgpu-matrix-math.js"></script>
-

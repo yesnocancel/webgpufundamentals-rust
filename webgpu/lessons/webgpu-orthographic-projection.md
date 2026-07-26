@@ -69,65 +69,76 @@ to be 1 but we can take advantage of the fact that for attributes
 
 Then we need to provide 3D data.
 
-```js
-function createFVertices() {
-  const vertexData = new Float32Array([
-    // left column
-*    0, 0, 0,
-*    30, 0, 0,
-*    0, 150, 0,
-*    30, 150, 0,
+```rust
+#[rustfmt::skip]
+fn create_f_vertices() -> (Vec<f32>, Vec<u32>, u32) {
+    let vertex_data: Vec<f32> = vec![
+        // left column
+*        0.0, 0.0, 0.0,
+*        30.0, 0.0, 0.0,
+*        0.0, 150.0, 0.0,
+*        30.0, 150.0, 0.0,
 
-    // top rung
-*    30, 0, 0,
-*    100, 0, 0,
-*    30, 30, 0,
-*    100, 30, 0,
+        // top rung
+*        30.0, 0.0, 0.0,
+*        100.0, 0.0, 0.0,
+*        30.0, 30.0, 0.0,
+*        100.0, 30.0, 0.0,
 
-    // middle rung
-*    30, 60, 0,
-*    70, 60, 0,
-*    30, 90, 0,
-*    70, 90, 0,
-  ]);
+        // middle rung
+*        30.0, 60.0, 0.0,
+*        70.0, 60.0, 0.0,
+*        30.0, 90.0, 0.0,
+*        70.0, 90.0, 0.0,
+    ];
 
-  const indexData = new Uint32Array([
-    0,  1,  2,    2,  1,  3,  // left column
-    4,  5,  6,    6,  5,  7,  // top run
-    8,  9, 10,   10,  9, 11,  // middle run
-  ]);
+    let index_data: Vec<u32> = vec![
+        0,  1,  2,    2,  1,  3,  // left column
+        4,  5,  6,    6,  5,  7,  // top run
+        8,  9, 10,   10,  9, 11,  // middle run
+    ];
 
-  return {
-    vertexData,
-    indexData,
-    numVertices: indexData.length,
-  };
+    let num_vertices = index_data.len() as u32;
+    (vertex_data, index_data, num_vertices)
 }
 ```
 
-Above we just added a ` 0,` to the end of each line
+Above we just added a ` 0.0,` to the end of each line
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (2) * 4, // (2) floats, 4 bytes each
-+          arrayStride: (3) * 4, // (3) floats, 4 bytes each
-          attributes: [
--            {shaderLocation: 0, offset: 0, format: 'float32x2'},  // position
-+            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("2 attributes"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: (2) * 4, // (2) floats, 4 bytes each
++        array_stride: (3) * 4, // (3) floats, 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+-            format: wgpu::VertexFormat::Float32x2,
++            format: wgpu::VertexFormat::Float32x3,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
@@ -399,229 +410,241 @@ which gives you these rotations.
 
 <iframe class="external_diagram" src="resources/axis-diagram.html" style="width: 540px; height: 280px;"></iframe>
 
-Here's the 2D (before) versions of `mat3.translation` and `mat3.rotation` and `mat3.scaling`
+Here's the 2D (before) versions of `m3::translation` and `m3::rotation` and `m3::scaling`
 
-```js
-const mat3 = {
-  ...
-  translation([tx, ty], dst) {
-    dst = dst || new Float32Array(12);
-    dst[0] = 1;   dst[1] = 0;   dst[2] = 0;
-    dst[4] = 0;   dst[5] = 1;   dst[6] = 0;
-    dst[8] = tx;  dst[9] = ty;  dst[10] = 1;
-    return dst;
-  },
+```rust
+mod m3 {
+    ...
+    #[rustfmt::skip]
+    pub fn translation([tx, ty]: [f32; 2]) -> [f32; 12] {
+        let mut dst = [0.0; 12];
+        dst[0] = 1.0;  dst[1] = 0.0;  dst[2] = 0.0;
+        dst[4] = 0.0;  dst[5] = 1.0;  dst[6] = 0.0;
+        dst[8] = tx;   dst[9] = ty;   dst[10] = 1.0;
+        dst
+    }
 
-  rotation(angleInRadians, dst) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    dst = dst || new Float32Array(12);
-    dst[0] = c;   dst[1] = s;  dst[2] = 0;
-    dst[4] = -s;  dst[5] = c;  dst[6] = 0;
-    dst[8] = 0;   dst[9] = 0;  dst[10] = 1;
-    return dst;
+    #[rustfmt::skip]
+    pub fn rotation(angle_in_radians: f32) -> [f32; 12] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        let mut dst = [0.0; 12];
+        dst[0] = c;    dst[1] = s;   dst[2] = 0.0;
+        dst[4] = -s;   dst[5] = c;   dst[6] = 0.0;
+        dst[8] = 0.0;  dst[9] = 0.0; dst[10] = 1.0;
+        dst
+    }
 
-  },
-
-  scaling([sx, sy], dst) {
-    dst = dst || new Float32Array(12);
-    dst[0] = sx;  dst[1] = 0;   dst[2] = 0;
-    dst[4] = 0;   dst[5] = sy;  dst[6] = 0;
-    dst[8] = 0;   dst[9] = 0;   dst[10] = 1;
-    return dst;
-  },
-  ...
+    #[rustfmt::skip]
+    pub fn scaling([sx, sy]: [f32; 2]) -> [f32; 12] {
+        let mut dst = [0.0; 12];
+        dst[0] = sx;   dst[1] = 0.0;  dst[2] = 0.0;
+        dst[4] = 0.0;  dst[5] = sy;   dst[6] = 0.0;
+        dst[8] = 0.0;  dst[9] = 0.0;  dst[10] = 1.0;
+        dst
+    }
+    ...
 ```
 
 And here are the updated 3D versions
 
-```js
-const mat4 = {
-  ...
-  translation([tx, ty, tz], dst) {
-    dst = dst || new Float32Array(16);
-    dst[ 0] = 1;   dst[ 1] = 0;   dst[ 2] = 0;   dst[ 3] = 0;
-    dst[ 4] = 0;   dst[ 5] = 1;   dst[ 6] = 0;   dst[ 7] = 0;
-    dst[ 8] = 0;   dst[ 9] = 0;   dst[10] = 1;   dst[11] = 0;
-    dst[12] = tx;  dst[13] = ty;  dst[14] = tz;  dst[15] = 1;
-    return dst;
-  },
+```rust
+mod m4 {
+    ...
+    #[rustfmt::skip]
+    pub fn translation([tx, ty, tz]: [f32; 3]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+        dst[ 0] = 1.0;  dst[ 1] = 0.0;  dst[ 2] = 0.0;  dst[ 3] = 0.0;
+        dst[ 4] = 0.0;  dst[ 5] = 1.0;  dst[ 6] = 0.0;  dst[ 7] = 0.0;
+        dst[ 8] = 0.0;  dst[ 9] = 0.0;  dst[10] = 1.0;  dst[11] = 0.0;
+        dst[12] = tx;   dst[13] = ty;   dst[14] = tz;   dst[15] = 1.0;
+        dst
+    }
 
-  rotationX(angleInRadians, dst) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    dst = dst || new Float32Array(16);
-    dst[ 0] = 1;  dst[ 1] = 0;   dst[ 2] = 0;  dst[ 3] = 0;
-    dst[ 4] = 0;  dst[ 5] = c;   dst[ 6] = s;  dst[ 7] = 0;
-    dst[ 8] = 0;  dst[ 9] = -s;  dst[10] = c;  dst[11] = 0;
-    dst[12] = 0;  dst[13] = 0;   dst[14] = 0;  dst[15] = 1;
-    return dst;
-  },
+    #[rustfmt::skip]
+    pub fn rotation_x(angle_in_radians: f32) -> [f32; 16] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        let mut dst = [0.0; 16];
+        dst[ 0] = 1.0;  dst[ 1] = 0.0;  dst[ 2] = 0.0;  dst[ 3] = 0.0;
+        dst[ 4] = 0.0;  dst[ 5] = c;    dst[ 6] = s;    dst[ 7] = 0.0;
+        dst[ 8] = 0.0;  dst[ 9] = -s;   dst[10] = c;    dst[11] = 0.0;
+        dst[12] = 0.0;  dst[13] = 0.0;  dst[14] = 0.0;  dst[15] = 1.0;
+        dst
+    }
 
-  rotationY(angleInRadians, dst) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    dst = dst || new Float32Array(16);
-    dst[ 0] = c;  dst[ 1] = 0;  dst[ 2] = -s;  dst[ 3] = 0;
-    dst[ 4] = 0;  dst[ 5] = 1;  dst[ 6] = 0;   dst[ 7] = 0;
-    dst[ 8] = s;  dst[ 9] = 0;  dst[10] = c;   dst[11] = 0;
-    dst[12] = 0;  dst[13] = 0;  dst[14] = 0;   dst[15] = 1;
-    return dst;
-  },
+    #[rustfmt::skip]
+    pub fn rotation_y(angle_in_radians: f32) -> [f32; 16] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        let mut dst = [0.0; 16];
+        dst[ 0] = c;    dst[ 1] = 0.0;  dst[ 2] = -s;   dst[ 3] = 0.0;
+        dst[ 4] = 0.0;  dst[ 5] = 1.0;  dst[ 6] = 0.0;  dst[ 7] = 0.0;
+        dst[ 8] = s;    dst[ 9] = 0.0;  dst[10] = c;    dst[11] = 0.0;
+        dst[12] = 0.0;  dst[13] = 0.0;  dst[14] = 0.0;  dst[15] = 1.0;
+        dst
+    }
 
-  rotationZ(angleInRadians, dst) {
-    const c = Math.cos(angleInRadians);
-    const s = Math.sin(angleInRadians);
-    dst = dst || new Float32Array(16);
-    dst[ 0] = c;   dst[ 1] = s;  dst[ 2] = 0;  dst[ 3] = 0;
-    dst[ 4] = -s;  dst[ 5] = c;  dst[ 6] = 0;  dst[ 7] = 0;
-    dst[ 8] = 0;   dst[ 9] = 0;  dst[10] = 1;  dst[11] = 0;
-    dst[12] = 0;   dst[13] = 0;  dst[14] = 0;  dst[15] = 1;
-    return dst;
-  },
+    #[rustfmt::skip]
+    pub fn rotation_z(angle_in_radians: f32) -> [f32; 16] {
+        let c = angle_in_radians.cos();
+        let s = angle_in_radians.sin();
+        let mut dst = [0.0; 16];
+        dst[ 0] = c;    dst[ 1] = s;    dst[ 2] = 0.0;  dst[ 3] = 0.0;
+        dst[ 4] = -s;   dst[ 5] = c;    dst[ 6] = 0.0;  dst[ 7] = 0.0;
+        dst[ 8] = 0.0;  dst[ 9] = 0.0;  dst[10] = 1.0;  dst[11] = 0.0;
+        dst[12] = 0.0;  dst[13] = 0.0;  dst[14] = 0.0;  dst[15] = 1.0;
+        dst
+    }
 
-  scaling([sx, sy, sz], dst) {
-    dst = dst || new Float32Array(16);
-    dst[ 0] = sx;  dst[ 1] = 0;   dst[ 2] = 0;    dst[ 3] = 0;
-    dst[ 4] = 0;   dst[ 5] = sy;  dst[ 6] = 0;    dst[ 7] = 0;
-    dst[ 8] = 0;   dst[ 9] = 0;   dst[10] = sz;   dst[11] = 0;
-    dst[12] = 0;   dst[13] = 0;   dst[14] = 0;    dst[15] = 1;
-    return dst;
-  },
-  ...
+    #[rustfmt::skip]
+    pub fn scaling([sx, sy, sz]: [f32; 3]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+        dst[ 0] = sx;   dst[ 1] = 0.0;  dst[ 2] = 0.0;  dst[ 3] = 0.0;
+        dst[ 4] = 0.0;  dst[ 5] = sy;   dst[ 6] = 0.0;  dst[ 7] = 0.0;
+        dst[ 8] = 0.0;  dst[ 9] = 0.0;  dst[10] = sz;   dst[11] = 0.0;
+        dst[12] = 0.0;  dst[13] = 0.0;  dst[14] = 0.0;  dst[15] = 1.0;
+        dst
+    }
+    ...
 ```
+
+(In JavaScript these functions take an optional `dst` Float32Array to write
+into; in Rust we just return a `[f32; 16]` array.)
 
 Similarly we'll make our simplified functions. Here's the 2D ones.
 
-```js
-  translate(m, translation, dst) {
-    return mat3.multiply(m, mat3.translation(translation), dst);
-  },
+```rust
+    pub fn translate(m: &[f32; 12], translation: [f32; 2]) -> [f32; 12] {
+        multiply(m, &self::translation(translation))
+    }
 
-  rotate(m, angleInRadians, dst) {
-    return mat3.multiply(m, mat3.rotation(angleInRadians), dst);
-  },
+    pub fn rotate(m: &[f32; 12], angle_in_radians: f32) -> [f32; 12] {
+        multiply(m, &rotation(angle_in_radians))
+    }
 
-  scale(m, scale, dst) {
-    return mat3.multiply(m, mat3.scaling(scale), dst);
-  },
+    pub fn scale(m: &[f32; 12], scale: [f32; 2]) -> [f32; 12] {
+        multiply(m, &scaling(scale))
+    }
 ```
 
-And now the 3D ones. Not much has changed except naming them `mat4` and adding
+And now the 3D ones. Not much has changed except naming them `m4` and adding
 the 2 more rotation functions.
 
-```js
-  translate(m, translation, dst) {
-    return mat4.multiply(m, mat4.translation(translation), dst);
-  },
+```rust
+    pub fn translate(m: &[f32; 16], translation: [f32; 3]) -> [f32; 16] {
+        multiply(m, &self::translation(translation))
+    }
 
-  rotateX(m, angleInRadians, dst) {
-    return mat4.multiply(m, mat4.rotationX(angleInRadians), dst);
-  },
+    pub fn rotate_x(m: &[f32; 16], angle_in_radians: f32) -> [f32; 16] {
+        multiply(m, &rotation_x(angle_in_radians))
+    }
 
-  rotateY(m, angleInRadians, dst) {
-    return mat4.multiply(m, mat4.rotationY(angleInRadians), dst);
-  },
+    pub fn rotate_y(m: &[f32; 16], angle_in_radians: f32) -> [f32; 16] {
+        multiply(m, &rotation_y(angle_in_radians))
+    }
 
-  rotateZ(m, angleInRadians, dst) {
-    return mat4.multiply(m, mat4.rotationZ(angleInRadians), dst);
-  },
+    pub fn rotate_z(m: &[f32; 16], angle_in_radians: f32) -> [f32; 16] {
+        multiply(m, &rotation_z(angle_in_radians))
+    }
 
-  scale(m, scale, dst) {
-    return mat4.scaling(m, mat4.scaling(scale), dst);
-  },
-  ...
+    pub fn scale(m: &[f32; 16], scale: [f32; 3]) -> [f32; 16] {
+        multiply(m, &scaling(scale))
+    }
+    ...
 ```
 
 And we need a 4x4 matrix multiplication function
 
-```js
-  multiply(a, b, dst) {
-    dst = dst || new Float32Array(16);
-    const b00 = b[0 * 4 + 0];
-    const b01 = b[0 * 4 + 1];
-    const b02 = b[0 * 4 + 2];
-    const b03 = b[0 * 4 + 3];
-    const b10 = b[1 * 4 + 0];
-    const b11 = b[1 * 4 + 1];
-    const b12 = b[1 * 4 + 2];
-    const b13 = b[1 * 4 + 3];
-    const b20 = b[2 * 4 + 0];
-    const b21 = b[2 * 4 + 1];
-    const b22 = b[2 * 4 + 2];
-    const b23 = b[2 * 4 + 3];
-    const b30 = b[3 * 4 + 0];
-    const b31 = b[3 * 4 + 1];
-    const b32 = b[3 * 4 + 2];
-    const b33 = b[3 * 4 + 3];
-    const a00 = a[0 * 4 + 0];
-    const a01 = a[0 * 4 + 1];
-    const a02 = a[0 * 4 + 2];
-    const a03 = a[0 * 4 + 3];
-    const a10 = a[1 * 4 + 0];
-    const a11 = a[1 * 4 + 1];
-    const a12 = a[1 * 4 + 2];
-    const a13 = a[1 * 4 + 3];
-    const a20 = a[2 * 4 + 0];
-    const a21 = a[2 * 4 + 1];
-    const a22 = a[2 * 4 + 2];
-    const a23 = a[2 * 4 + 3];
-    const a30 = a[3 * 4 + 0];
-    const a31 = a[3 * 4 + 1];
-    const a32 = a[3 * 4 + 2];
-    const a33 = a[3 * 4 + 3];
+```rust
+    pub fn multiply(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+        let b00 = b[0 * 4 + 0];
+        let b01 = b[0 * 4 + 1];
+        let b02 = b[0 * 4 + 2];
+        let b03 = b[0 * 4 + 3];
+        let b10 = b[1 * 4 + 0];
+        let b11 = b[1 * 4 + 1];
+        let b12 = b[1 * 4 + 2];
+        let b13 = b[1 * 4 + 3];
+        let b20 = b[2 * 4 + 0];
+        let b21 = b[2 * 4 + 1];
+        let b22 = b[2 * 4 + 2];
+        let b23 = b[2 * 4 + 3];
+        let b30 = b[3 * 4 + 0];
+        let b31 = b[3 * 4 + 1];
+        let b32 = b[3 * 4 + 2];
+        let b33 = b[3 * 4 + 3];
+        let a00 = a[0 * 4 + 0];
+        let a01 = a[0 * 4 + 1];
+        let a02 = a[0 * 4 + 2];
+        let a03 = a[0 * 4 + 3];
+        let a10 = a[1 * 4 + 0];
+        let a11 = a[1 * 4 + 1];
+        let a12 = a[1 * 4 + 2];
+        let a13 = a[1 * 4 + 3];
+        let a20 = a[2 * 4 + 0];
+        let a21 = a[2 * 4 + 1];
+        let a22 = a[2 * 4 + 2];
+        let a23 = a[2 * 4 + 3];
+        let a30 = a[3 * 4 + 0];
+        let a31 = a[3 * 4 + 1];
+        let a32 = a[3 * 4 + 2];
+        let a33 = a[3 * 4 + 3];
 
-    dst[0] = b00 * a00 + b01 * a10 + b02 * a20 + b03 * a30;
-    dst[1] = b00 * a01 + b01 * a11 + b02 * a21 + b03 * a31;
-    dst[2] = b00 * a02 + b01 * a12 + b02 * a22 + b03 * a32;
-    dst[3] = b00 * a03 + b01 * a13 + b02 * a23 + b03 * a33;
+        dst[0] = b00 * a00 + b01 * a10 + b02 * a20 + b03 * a30;
+        dst[1] = b00 * a01 + b01 * a11 + b02 * a21 + b03 * a31;
+        dst[2] = b00 * a02 + b01 * a12 + b02 * a22 + b03 * a32;
+        dst[3] = b00 * a03 + b01 * a13 + b02 * a23 + b03 * a33;
 
-    dst[4] = b10 * a00 + b11 * a10 + b12 * a20 + b13 * a30;
-    dst[5] = b10 * a01 + b11 * a11 + b12 * a21 + b13 * a31;
-    dst[6] = b10 * a02 + b11 * a12 + b12 * a22 + b13 * a32;
-    dst[7] = b10 * a03 + b11 * a13 + b12 * a23 + b13 * a33;
+        dst[4] = b10 * a00 + b11 * a10 + b12 * a20 + b13 * a30;
+        dst[5] = b10 * a01 + b11 * a11 + b12 * a21 + b13 * a31;
+        dst[6] = b10 * a02 + b11 * a12 + b12 * a22 + b13 * a32;
+        dst[7] = b10 * a03 + b11 * a13 + b12 * a23 + b13 * a33;
 
-    dst[8] = b20 * a00 + b21 * a10 + b22 * a20 + b23 * a30;
-    dst[9] = b20 * a01 + b21 * a11 + b22 * a21 + b23 * a31;
-    dst[10] = b20 * a02 + b21 * a12 + b22 * a22 + b23 * a32;
-    dst[11] = b20 * a03 + b21 * a13 + b22 * a23 + b23 * a33;
+        dst[8] = b20 * a00 + b21 * a10 + b22 * a20 + b23 * a30;
+        dst[9] = b20 * a01 + b21 * a11 + b22 * a21 + b23 * a31;
+        dst[10] = b20 * a02 + b21 * a12 + b22 * a22 + b23 * a32;
+        dst[11] = b20 * a03 + b21 * a13 + b22 * a23 + b23 * a33;
 
-    dst[12] = b30 * a00 + b31 * a10 + b32 * a20 + b33 * a30;
-    dst[13] = b30 * a01 + b31 * a11 + b32 * a21 + b33 * a31;
-    dst[14] = b30 * a02 + b31 * a12 + b32 * a22 + b33 * a32;
-    dst[15] = b30 * a03 + b31 * a13 + b32 * a23 + b33 * a33;
+        dst[12] = b30 * a00 + b31 * a10 + b32 * a20 + b33 * a30;
+        dst[13] = b30 * a01 + b31 * a11 + b32 * a21 + b33 * a31;
+        dst[14] = b30 * a02 + b31 * a12 + b32 * a22 + b33 * a32;
+        dst[15] = b30 * a03 + b31 * a13 + b32 * a23 + b33 * a33;
 
-    return dst;
-  },
+        dst
+    }
 ```
 
 We also need to update the projection function. Here's the old one
 
-```js
-  projection(width, height, dst) {
-    // Note: This matrix flips the Y axis so that 0 is at the top.
-    dst = dst || new Float32Array(12);
-    dst[0] = 2 / width;  dst[1] = 0;             dst[2] = 0;
-    dst[4] = 0;          dst[5] = -2 / height;   dst[6] = 0;
-    dst[8] = -1;         dst[9] = 1;             dst[10] = 1;
-    return dst;
-  },
+```rust
+    #[rustfmt::skip]
+    pub fn projection(width: f32, height: f32) -> [f32; 12] {
+        // Note: This matrix flips the Y axis so that 0 is at the top.
+        let mut dst = [0.0; 12];
+        dst[0] = 2.0 / width;  dst[1] = 0.0;            dst[2] = 0.0;
+        dst[4] = 0.0;          dst[5] = -2.0 / height;  dst[6] = 0.0;
+        dst[8] = -1.0;         dst[9] = 1.0;            dst[10] = 1.0;
+        dst
+    }
 ```
 
 which converted from pixels to clip space. For our first attempt at
 expanding it to 3D let's try
 
 
-```js
-  projection(width, height, depth, dst) {
-    // Note: This matrix flips the Y axis so that 0 is at the top.
-    dst = dst || new Float32Array(16);
-    dst[ 0] = 2 / width;  dst[ 1] = 0;            dst[ 2] = 0;          dst[ 3] = 0;
-    dst[ 4] = 0;          dst[ 5] = -2 / height;  dst[ 6] = 0;          dst[ 7] = 0;
-    dst[ 8] = 0;          dst[ 9] = 0;            dst[10] = 0.5 / depth;  dst[11] = 0;
-    dst[12] = -1;         dst[13] = 1;            dst[14] = 0.5;          dst[15] = 1;
-    return dst;
-  },
+```rust
+    #[rustfmt::skip]
+    pub fn projection(width: f32, height: f32, depth: f32) -> [f32; 16] {
+        // Note: This matrix flips the Y axis so that 0 is at the top.
+        let mut dst = [0.0; 16];
+        dst[ 0] = 2.0 / width;  dst[ 1] = 0.0;            dst[ 2] = 0.0;           dst[ 3] = 0.0;
+        dst[ 4] = 0.0;          dst[ 5] = -2.0 / height;  dst[ 6] = 0.0;           dst[ 7] = 0.0;
+        dst[ 8] = 0.0;          dst[ 9] = 0.0;            dst[10] = 0.5 / depth;   dst[11] = 0.0;
+        dst[12] = -1.0;         dst[13] = 1.0;            dst[14] = 0.5;           dst[15] = 1.0;
+        dst
+    }
 ```
 
 Just like we needed to convert from pixels to clip space for X and Y, for
@@ -632,28 +655,29 @@ for `depth` it will be `-depth / 2` to `+depth / 2`.
 
 We need to provide a 4x4 matrix in our uniforms
 
-```js
+```rust
   // color, matrix
--  const uniformBufferSize = (4 + 12) * 4;
-+  const uniformBufferSize = (4 + 16) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 12) * 4;
++  const UNIFORM_BUFFER_SIZE: u64 = (4 + 16) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kMatrixOffset = 4;
-
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
--  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 12);
-+  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
+  const K_COLOR_OFFSET: usize = 0;
+  const K_MATRIX_OFFSET: usize = 4;
 ```
 
-And we need to to update the code that computes the matrix.
+(The matrix now takes 16 floats starting at `K_MATRIX_OFFSET` instead of 12.)
+
+And we need to to update the code that computes the matrix. The settings
+live in the example page's JavaScript, where the GUI pushes them into the
+wasm module.
 
 ```js
  const settings = {
@@ -664,22 +688,42 @@ And we need to to update the code that computes the matrix.
 +    rotation: [degToRad(40), degToRad(25), degToRad(325)],
 +    scale: [1, 1, 1],
   };
+```
 
-  ...
+and in the render code we read them and compute a 4x4 matrix
 
-  function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
--    mat3.projection(canvas.clientWidth, canvas.clientHeight, matrixValue);
--    mat3.translate(matrixValue, settings.translation, matrixValue);
--    mat3.rotate(matrixValue, settings.rotation, matrixValue);
--    mat3.scale(matrixValue, settings.scale, matrixValue);
-+    mat4.projection(canvas.clientWidth, canvas.clientHeight, 400, matrixValue);
-+    mat4.translate(matrixValue, settings.translation, matrixValue);
-+    mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
-+    mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
-+    mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
-+    mat4.scale(matrixValue, settings.scale, matrixValue);
+    let translation = [
+        wgpu_fun::setting_f64("translationX", 45.0) as f32,
+        wgpu_fun::setting_f64("translationY", 100.0) as f32,
++        wgpu_fun::setting_f64("translationZ", 0.0) as f32,
+    ];
+-    let rotation = wgpu_fun::setting_f64("rotation", 30.0f64.to_radians()) as f32;
++    let rotation = [
++        wgpu_fun::setting_f64("rotationX", 40.0f64.to_radians()) as f32,
++        wgpu_fun::setting_f64("rotationY", 25.0f64.to_radians()) as f32,
++        wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
++    ];
+    let scale = [
+        wgpu_fun::setting_f64("scaleX", 1.0) as f32,
+        wgpu_fun::setting_f64("scaleY", 1.0) as f32,
++        wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
+    ];
+
+-    let mut matrix_value = m3::projection(frame.width as f32, frame.height as f32);
+-    matrix_value = m3::translate(&matrix_value, translation);
+-    matrix_value = m3::rotate(&matrix_value, rotation);
+-    matrix_value = m3::scale(&matrix_value, scale);
++    let mut matrix_value = m4::projection(frame.width as f32, frame.height as f32, 400.0);
++    matrix_value = m4::translate(&matrix_value, translation);
++    matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
++    matrix_value = m4::rotate_y(&matrix_value, rotation[1]);
++    matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
++    matrix_value = m4::scale(&matrix_value, scale);
++    uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
 ```
 
 {{{example url="../webgpu-orthographic-projection-step-1-flat-f.html"}}}
@@ -695,74 +739,72 @@ back, 1 on the left, 4 on the right, 2 on the tops, 3 on the bottoms.
 We just need to take all of our current vertex positions and duplicate them
 but move them in Z. Then connect them all with indices
 
-```js
-function createFVertices() {
-  const vertexData = new Float32Array([
-    // left column
-    0, 0, 0,
-    30, 0, 0,
-    0, 150, 0,
-    30, 150, 0,
+```rust
+#[rustfmt::skip]
+fn create_f_vertices() -> (Vec<f32>, Vec<u32>, u32) {
+    let vertex_data: Vec<f32> = vec![
+        // left column
+        0.0, 0.0, 0.0,
+        30.0, 0.0, 0.0,
+        0.0, 150.0, 0.0,
+        30.0, 150.0, 0.0,
 
-    // top rung
-    30, 0, 0,
-    100, 0, 0,
-    30, 30, 0,
-    100, 30, 0,
+        // top rung
+        30.0, 0.0, 0.0,
+        100.0, 0.0, 0.0,
+        30.0, 30.0, 0.0,
+        100.0, 30.0, 0.0,
 
-    // middle rung
-    30, 60, 0,
-    70, 60, 0,
-    30, 90, 0,
-    70, 90, 0,
+        // middle rung
+        30.0, 60.0, 0.0,
+        70.0, 60.0, 0.0,
+        30.0, 90.0, 0.0,
+        70.0, 90.0, 0.0,
 
-+    // left column back
-+    0, 0, 30,
-+    30, 0, 30,
-+    0, 150, 30,
-+    30, 150, 30,
++        // left column back
++        0.0, 0.0, 30.0,
++        30.0, 0.0, 30.0,
++        0.0, 150.0, 30.0,
++        30.0, 150.0, 30.0,
 +
-+    // top rung back
-+    30, 0, 30,
-+    100, 0, 30,
-+    30, 30, 30,
-+    100, 30, 30,
++        // top rung back
++        30.0, 0.0, 30.0,
++        100.0, 0.0, 30.0,
++        30.0, 30.0, 30.0,
++        100.0, 30.0, 30.0,
 +
-+    // middle rung back
-+    30, 60, 30,
-+    70, 60, 30,
-+    30, 90, 30,
-+    70, 90, 30,
-  ]);
++        // middle rung back
++        30.0, 60.0, 30.0,
++        70.0, 60.0, 30.0,
++        30.0, 90.0, 30.0,
++        70.0, 90.0, 30.0,
+    ];
 
-  const indexData = new Uint32Array([
-+    // front
-    0,  1,  2,    2,  1,  3,  // left column
-    4,  5,  6,    6,  5,  7,  // top run
-    8,  9, 10,   10,  9, 11,  // middle run
+    let index_data: Vec<u32> = vec![
++        // front
+        0,  1,  2,    2,  1,  3,  // left column
+        4,  5,  6,    6,  5,  7,  // top run
+        8,  9, 10,   10,  9, 11,  // middle run
 
-+    // back
-+    12,  13,  14,   14, 13, 15,  // left column back
-+    16,  17,  18,   18, 17, 19,  // top run back
-+    20,  21,  22,   22, 21, 23,  // middle run back
++        // back
++        12,  13,  14,   14, 13, 15,  // left column back
++        16,  17,  18,   18, 17, 19,  // top run back
++        20,  21,  22,   22, 21, 23,  // middle run back
 +
-+    0, 5, 12,   12, 5, 17,   // top
-+    5, 7, 17,   17, 7, 19,   // top rung right
-+    6, 7, 18,   18, 7, 19,   // top rung bottom
-+    6, 8, 18,   18, 8, 20,   // between top and middle rung
-+    8, 9, 20,   20, 9, 21,   // middle rung top
-+    9, 11, 21,  21, 11, 23,  // middle rung right
-+    10, 11, 22, 22, 11, 23,  // middle rung bottom
-+    10, 3, 22,  22, 3, 15,   // stem right
-+    2, 3, 14,   14, 3, 15,   // bottom
-+    0, 2, 12,   12, 2, 14,   // left
-  ]);
++        0, 5, 12,   12, 5, 17,   // top
++        5, 7, 17,   17, 7, 19,   // top rung right
++        6, 7, 18,   18, 7, 19,   // top rung bottom
++        6, 8, 18,   18, 8, 20,   // between top and middle rung
++        8, 9, 20,   20, 9, 21,   // middle rung top
++        9, 11, 21,  21, 11, 23,  // middle rung right
++        10, 11, 22, 22, 11, 23,  // middle rung bottom
++        10, 3, 22,  22, 3, 15,   // stem right
++        2, 3, 14,   14, 3, 15,   // bottom
++        0, 2, 12,   12, 2, 14,   // left
+    ];
 
-  return {
-    vertexData,
-    indexData,
-    numVertices: indexData.length,
-  };
+    let num_vertices = index_data.len() as u32;
+    (vertex_data, index_data, num_vertices)
 }
 ```
 
@@ -828,221 +870,240 @@ So, let's expand our data from indexed to non-index and while we're at
 it we'll add vertex colors so that each part of the F gets a different
 color.
 
-```js
-function createFVertices() {
--  const vertexData = new Float32Array([
-+  const positions = [
-    // left column
-    0, 0, 0,
-    30, 0, 0,
-    0, 150, 0,
-    30, 150, 0,
+```rust
+#[rustfmt::skip]
+-fn create_f_vertices() -> (Vec<f32>, Vec<u32>, u32) {
++fn create_f_vertices() -> (Vec<f32>, u32) {
+-    let vertex_data: Vec<f32> = vec![
++    let positions: Vec<f32> = vec![
+        // left column
+        0.0, 0.0, 0.0,
+        30.0, 0.0, 0.0,
+        0.0, 150.0, 0.0,
+        30.0, 150.0, 0.0,
 
-    // top rung
-    30, 0, 0,
-    100, 0, 0,
-    30, 30, 0,
-    100, 30, 0,
+        // top rung
+        30.0, 0.0, 0.0,
+        100.0, 0.0, 0.0,
+        30.0, 30.0, 0.0,
+        100.0, 30.0, 0.0,
 
-    // middle rung
-    30, 60, 0,
-    70, 60, 0,
-    30, 90, 0,
-    70, 90, 0,
+        // middle rung
+        30.0, 60.0, 0.0,
+        70.0, 60.0, 0.0,
+        30.0, 90.0, 0.0,
+        70.0, 90.0, 0.0,
 
-    // left column back
-    0, 0, 30,
-    30, 0, 30,
-    0, 150, 30,
-    30, 150, 30,
+        // left column back
+        0.0, 0.0, 30.0,
+        30.0, 0.0, 30.0,
+        0.0, 150.0, 30.0,
+        30.0, 150.0, 30.0,
 
-    // top rung back
-    30, 0, 30,
-    100, 0, 30,
-    30, 30, 30,
-    100, 30, 30,
+        // top rung back
+        30.0, 0.0, 30.0,
+        100.0, 0.0, 30.0,
+        30.0, 30.0, 30.0,
+        100.0, 30.0, 30.0,
 
-    // middle rung back
-    30, 60, 30,
-    70, 60, 30,
-    30, 90, 30,
-    70, 90, 30,
--  ]);
-+  ];
+        // middle rung back
+        30.0, 60.0, 30.0,
+        70.0, 60.0, 30.0,
+        30.0, 90.0, 30.0,
+        70.0, 90.0, 30.0,
+    ];
 
--  const indexData = new Uint32Array([
-+  const indices = [
-    // front
-    0,  1,  2,    2,  1,  3,  // left column
-    4,  5,  6,    6,  5,  7,  // top run
-    8,  9, 10,   10,  9, 11,  // middle run
+-    let index_data: Vec<u32> = vec![
++    let indices: Vec<u32> = vec![
+        // front
+        0,  1,  2,    2,  1,  3,  // left column
+        4,  5,  6,    6,  5,  7,  // top rung
+        8,  9, 10,   10,  9, 11,  // middle rung
 
-    // back
-    12,  13,  14,   14, 13, 15,  // left column back
-    16,  17,  18,   18, 17, 19,  // top run back
-    20,  21,  22,   22, 21, 23,  // middle run back
+        // back
+        12,  13,  14,   14, 13, 15,  // left column back
+        16,  17,  18,   18, 17, 19,  // top rung back
+        20,  21,  22,   22, 21, 23,  // middle rung back
 
-    0, 5, 12,   12, 5, 17,   // top
-    5, 7, 17,   17, 7, 19,   // top rung right
-    6, 7, 18,   18, 7, 19,   // top rung bottom
-    6, 8, 18,   18, 8, 20,   // between top and middle rung
-    8, 9, 20,   20, 9, 21,   // middle rung top
-    9, 11, 21,  21, 11, 23,  // middle rung right
-    10, 11, 22, 22, 11, 23,  // middle rung bottom
-    10, 3, 22,  22, 3, 15,   // stem right
-    2, 3, 14,   14, 3, 15,   // bottom
-    0, 2, 12,   12, 2, 14,   // left
--  ]);
-+  ];
+        0, 5, 12,   12, 5, 17,   // top
+        5, 7, 17,   17, 7, 19,   // top rung right
+        6, 7, 18,   18, 7, 19,   // top rung bottom
+        6, 8, 18,   18, 8, 20,   // between top and middle rung
+        8, 9, 20,   20, 9, 21,   // middle rung top
+        9, 11, 21,  21, 11, 23,  // middle rung right
+        10, 11, 22, 22, 11, 23,  // middle rung bottom
+        10, 3, 22,  22, 3, 15,   // stem right
+        2, 3, 14,   14, 3, 15,   // bottom
+        0, 2, 12,   12, 2, 14,   // left
+    ];
 
-+  const quadColors = [
-+      200,  70, 120,  // left column front
-+      200,  70, 120,  // top rung front
-+      200,  70, 120,  // middle rung front
++    let quad_colors: Vec<u8> = vec![
++        200,  70, 120,  // left column front
++        200,  70, 120,  // top rung front
++        200,  70, 120,  // middle rung front
 +
-+       80,  70, 200,  // left column back
-+       80,  70, 200,  // top rung back
-+       80,  70, 200,  // middle rung back
++         80,  70, 200,  // left column back
++         80,  70, 200,  // top rung back
++         80,  70, 200,  // middle rung back
 +
-+       70, 200, 210,  // top
-+      160, 160, 220,  // top rung right
-+       90, 130, 110,  // top rung bottom
-+      200, 200,  70,  // between top and middle rung
-+      210, 100,  70,  // middle rung top
-+      210, 160,  70,  // middle rung right
-+       70, 180, 210,  // middle rung bottom
-+      100,  70, 210,  // stem right
-+       76, 210, 100,  // bottom
-+      140, 210,  80,  // left
-+  ];
++         70, 200, 210,  // top
++        160, 160, 220,  // top rung right
++         90, 130, 110,  // top rung bottom
++        200, 200,  70,  // between top and middle rung
++        210, 100,  70,  // middle rung top
++        210, 160,  70,  // middle rung right
++         70, 180, 210,  // middle rung bottom
++        100,  70, 210,  // stem right
++         76, 210, 100,  // bottom
++        140, 210,  80,  // left
++    ];
 +
-+  const numVertices = indices.length;
-+  const vertexData = new Float32Array(numVertices * 4); // xyz + color
-+  const colorData = new Uint8Array(vertexData.buffer);
++    let num_vertices = indices.len() as u32;
++    let mut vertex_data = vec![0.0f32; indices.len() * 4]; // xyz + color
++    for (i, index) in indices.iter().enumerate() {
++        let position_ndx = (index * 3) as usize;
++        let position = &positions[position_ndx..position_ndx + 3];
++        vertex_data[i * 4..i * 4 + 3].copy_from_slice(position);
 +
-+  for (let i = 0; i < indices.length; ++i) {
-+    const positionNdx = indices[i] * 3;
-+    const position = positions.slice(positionNdx, positionNdx + 3);
-+    vertexData.set(position, i * 4);
-+
-+    const quadNdx = (i / 6 | 0) * 3;
-+    const color = quadColors.slice(quadNdx, quadNdx + 3);
-+    colorData.set(color, i * 16 + 12);  // set RGB
-+    colorData[i * 16 + 15] = 255;       // set A
-+  }
++        let quad_ndx = (i / 6) * 3;
++        let color = &quad_colors[quad_ndx..quad_ndx + 3];
++        // set RGB in the first 3 bytes of the 4th float, set A to 255
++        vertex_data[i * 4 + 3] = f32::from_ne_bytes([color[0], color[1], color[2], 255]);
++    }
 
-  return {
-    vertexData,
--    indexData,
--    numVertices: indexData.length,
-+    numVertices,
-  };
+-    let num_vertices = index_data.len() as u32;
+-    (vertex_data, index_data, num_vertices)
++    (vertex_data, num_vertices)
 }
 ```
 
 We walk each index, get the position for that index and put the position values
-in `vertexData`. We have a separate view *on the same data* as `colorData`
-so we pull out the colors by quad index (one quad every 6 vertices) 
+in `vertex_data`. The colors are 4 unsigned bytes but our vertex data is `f32`s,
+so, where JavaScript would make a `Uint8Array` view *on the same data*, in Rust
+we pack the 4 color bytes into the bits of the 4th float with `f32::from_ne_bytes`.
+We pull out the colors by quad index (one quad every 6 vertices)
 and insert the same color for each vertex of that quad. The data will end up like this.
 
 <img class="webgpu_center" style="background-color: transparent; width: 1024px;" src="resources/vertex-buffer-f32x3-u8x4.svg" />
 
 The colors we added are unsigned bytes with values from 0 to 255, similar to
 [a css `rgb()` color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/rgb).
-By setting the attribute type in the pipeline to `unorm8x4` (unsigned normalized 8 bit value x 4),
+By setting the attribute type in the pipeline to `Unorm8x4` (unsigned normalized 8 bit value x 4),
 the GPU will pull the values out of the buffer and *normalize* them when supplying them to the
 shader. This which means it will make them go from 0 to 1, in this case by dividing them by 255.
 
 Now that we have the data, we need to change our pipeline to use it.
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (3) * 4, // (3) floats, 4 bytes each
-+          arrayStride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-+            {shaderLocation: 1, offset: 12, format: 'unorm8x4'},  // color
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("2 attributes"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: (3) * 4, // (3) floats, 4 bytes each
++        array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
++          // color
++          wgpu::VertexAttribute {
++            shader_location: 1,
++            offset: 12,
++            format: wgpu::VertexFormat::Unorm8x4,
++          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
 We need to remove the old color data from our uniform.
 
-```js
--  const uniformBufferSize = (4 + 16) * 4;
-+  const uniformBufferSize = (16) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: "uniforms",
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+-  // color, matrix
+-  const UNIFORM_BUFFER_SIZE: u64 = (4 + 16) * 4;
++  // matrix
++  const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
--  const kColorOffset = 0;
--  const kMatrixOffset = 4;
-+  const kMatrixOffset = 0;
-
--  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const matrixValue = uniformValues.subarray(
-      kMatrixOffset,
-      kMatrixOffset + 16,
-  );
+-  const K_COLOR_OFFSET: usize = 0;
+-  const K_MATRIX_OFFSET: usize = 4;
++  const K_MATRIX_OFFSET: usize = 0;
 
 -  // The color will not change so let's set it once at init time
--  colorValue.set([Math.random(), Math.random(), Math.random(), 1]);
+-  uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&[
+-    rand(0.0, 1.0),
+-    rand(0.0, 1.0),
+-    rand(0.0, 1.0),
+-    1.0,
+-  ]);
 ```
 
 We no longer need to make an index buffer.
 
-```js
--  const { vertexData, indexData, numVertices } = createFVertices();
-+  const { vertexData, numVertices } = createFVertices();
-  const vertexBuffer = device.createBuffer({
-    label: 'vertex buffer vertices',
-    size: vertexData.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+```rust
+-  let (vertex_data, index_data, num_vertices) = create_f_vertices();
++  let (vertex_data, num_vertices) = create_f_vertices();
+  let vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("vertex buffer vertices"),
+    size: (vertex_data.len() * 4) as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  device.queue.writeBuffer(vertexBuffer, 0, vertexData);
--  const indexBuffer = device.createBuffer({
--    label: 'index buffer',
--    size: indexData.byteLength,
--    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+  app.queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+-  let index_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+-    label: Some("index buffer"),
+-    size: (index_data.len() * 4) as u64,
+-    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+-    mapped_at_creation: false,
 -  });
--  device.queue.writeBuffer(indexBuffer, 0, indexData);
+-  app.queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&index_data));
 ```
 
 and we need to draw without indices
 
-```js
- function render() {
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
     ...
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
--    pass.setIndexBuffer(indexBuffer, 'uint32');
+    pass.set_pipeline(&pipeline);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+-    pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
     ...
 
-    pass.setBindGroup(0, bindGroup);
--    pass.drawIndexed(numVertices);
-+    pass.draw(numVertices);
+    pass.set_bind_group(0, &bind_group, &[]);
+-    pass.draw_indexed(0..num_vertices, 0, 0..1);
++    pass.draw(0..num_vertices, 0..1);
 
     ...
-  }
+  });
 ```
 
 Now we get this.
@@ -1071,35 +1132,54 @@ back facing triangle has its vertices go in a clockwise direction in clip space.
 The gpu has the ability to draw only forward facing or only back facing
 triangles.  We can turn that feature on by modifying the pipeline
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-            {shaderLocation: 1, offset: 12, format: 'unorm8x4'},  // color
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("2 attributes"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+        array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
+          // color
+          wgpu::VertexAttribute {
+            shader_location: 1,
+            offset: 12,
+            format: wgpu::VertexFormat::Unorm8x4,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-+    primitive: {
-+      cullMode: 'back',
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+-    primitive: Default::default(),
++    primitive: wgpu::PrimitiveState {
++      cull_mode: Some(wgpu::Face::Back),
++      ..Default::default()
 +    },
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
-With `cullMode` set to `back`, "back facing" triangles will be culled.
+With `cull_mode` set to `Back`, "back facing" triangles will be culled.
 "Culling" in this case is a fancy word for "not drawing".
-So, with `cullMode` set to `'back'`, this is what we get
+So, with `cull_mode` set to `Some(wgpu::Face::Back)`, this is what we get
 
 {{{example url="../webgpu-orthographic-projection-step-4-cullmode-back.html"}}}
 
@@ -1126,9 +1206,9 @@ whether a triangle is front or back AFTER you've applied math to the
 vertices in the vertex shader.  That means for example, a clockwise
 triangle that is scaled in X by -1 becomes a counter clockwise triangle or,
 a clockwise triangle rotated 180 degrees becomes a counter clockwise
-triangle.  Because we didn't set `cullMode` before, we could see both
+triangle.  Because we didn't set `cull_mode` before, we could see both
 clockwise(front) and counter clockwise(back) facing triangles.  Now that we've
-set `cullMode` to `back`,, any time a front facing triangle flips around, either because
+set `cull_mode` to `Back`,, any time a front facing triangle flips around, either because
 of scaling or rotation or for whatever reason, WebGPU won't draw it.
 That's a good thing since, as you turn something around in 3D, you
 generally want whichever triangles are facing you to be considered front
@@ -1137,52 +1217,54 @@ facing.
 BUT! Remember that in clip space +Y is at the top, but in our pixel space
 +Y is at the bottom. In other words, our matrix is flipping all the
 triangles vertically. This means that in order to draw things with +Y
-at the bottom we either need to set `cullMode` to `'front'`, OR
-flip all our triangles vertices. Let's set `cullMode` to `'front'`
+at the bottom we either need to set `cull_mode` to `Front`, OR
+flip all our triangles vertices. Let's set `cull_mode` to `Front`
 and then also fix the vertex data so all the triangles have the same
 direction.
 
-```js
-  const indices = [
-    // front
-    0,  1,  2,    2,  1,  3,  // left column
-    4,  5,  6,    6,  5,  7,  // top run
-    8,  9, 10,   10,  9, 11,  // middle run
+```rust
+    let indices: Vec<u32> = vec![
+        // front
+        0,  1,  2,    2,  1,  3,  // left column
+        4,  5,  6,    6,  5,  7,  // top run
+        8,  9, 10,   10,  9, 11,  // middle run
 
-    // back
--    12,  13,  14,   14, 13, 15,  // left column back
-+    12,  14,  13,   14, 15, 13,  // left column back
--    16,  17,  18,   18, 17, 19,  // top run back
-+    16,  18,  17,   18, 19, 17,  // top run back
--    20,  21,  22,   22, 21, 23,  // middle run back
-+    20,  22,  21,   22, 23, 21,  // middle run back
+        // back
+-        12,  13,  14,   14, 13, 15,  // left column back
++        12,  14,  13,   14, 15, 13,  // left column back
+-        16,  17,  18,   18, 17, 19,  // top run back
++        16,  18,  17,   18, 19, 17,  // top run back
+-        20,  21,  22,   22, 21, 23,  // middle run back
++        20,  22,  21,   22, 23, 21,  // middle run back
 
--    0, 5, 12,   12, 5, 17,   // top
-+    0, 12, 5,   12, 17, 5,   // top
--    5, 7, 17,   17, 7, 19,   // top rung right
-+    5, 17, 7,   17, 19, 7,   // top rung right
-    6, 7, 18,   18, 7, 19,   // top rung bottom
--    6, 8, 18,   18, 8, 20,   // between top and middle rung
-+    6, 18, 8,   18, 20, 8,   // between top and middle rung
--    8, 9, 20,   20, 9, 21,   // middle rung top
-+    8, 20, 9,   20, 21, 9,   // middle rung top
--    9, 11, 21,  21, 11, 23,  // middle rung right
-+    9, 21, 11,  21, 23, 11,  // middle rung right
-    10, 11, 22, 22, 11, 23,  // middle rung bottom
--    10, 3, 22,  22, 3, 15,   // stem right
-+    10, 22, 3,  22, 15, 3,   // stem right
-    2, 3, 14,   14, 3, 15,   // bottom
-    0, 2, 12,   12, 2, 14,   // left
-  ];
+-        0, 5, 12,   12, 5, 17,   // top
++        0, 12, 5,   12, 17, 5,   // top
+-        5, 7, 17,   17, 7, 19,   // top rung right
++        5, 17, 7,   17, 19, 7,   // top rung right
+        6, 7, 18,   18, 7, 19,   // top rung bottom
+-        6, 8, 18,   18, 8, 20,   // between top and middle rung
++        6, 18, 8,   18, 20, 8,   // between top and middle rung
+-        8, 9, 20,   20, 9, 21,   // middle rung top
++        8, 20, 9,   20, 21, 9,   // middle rung top
+-        9, 11, 21,  21, 11, 23,  // middle rung right
++        9, 21, 11,  21, 23, 11,  // middle rung right
+        10, 11, 22, 22, 11, 23,  // middle rung bottom
+-        10, 3, 22,  22, 3, 15,   // stem right
++        10, 22, 3,  22, 15, 3,   // stem right
+        2, 3, 14,   14, 3, 15,   // bottom
+        0, 2, 12,   12, 2, 14,   // left
+    ];
 ```
 
-```js
-  const pipeline = device.createRenderPipeline({
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
     ...
-    primitive: {
--      cullMode: 'back',
-+      cullMode: 'front',
+    primitive: wgpu::PrimitiveState {
+-      cull_mode: Some(wgpu::Face::Back),
++      cull_mode: Some(wgpu::Face::Front),
+      ..Default::default()
     },
+    ...
   });
 ```
 
@@ -1214,110 +1296,141 @@ drawn.
 
 To setup and use a depth texture we need to update our pipeline
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-            {shaderLocation: 1, offset: 12, format: 'unorm8x4'},  // color
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("2 attributes"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+        array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
+          // color
+          wgpu::VertexAttribute {
+            shader_location: 1,
+            offset: 12,
+            format: wgpu::VertexFormat::Unorm8x4,
+          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: wgpu::PrimitiveState {
+      cull_mode: Some(wgpu::Face::Front),
+      ..Default::default()
     },
-    primitive: {
-      cullMode: 'front',
-    },
-+    depthStencil: {
-+      depthWriteEnabled: true,
-+      depthCompare: 'less',
-+      format: 'depth24plus',
-+    },
+-    depth_stencil: None,
++    depth_stencil: Some(wgpu::DepthStencilState {
++      depth_write_enabled: Some(true),
++      depth_compare: Some(wgpu::CompareFunction::Less),
++      format: wgpu::TextureFormat::Depth24Plus,
++      stencil: Default::default(),
++      bias: Default::default(),
++    }),
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
 
-Above we're setting `depthCompare: 'less'`. This means, only draw the new pixel,
+Above we're setting `depth_compare` to `Less`. This means, only draw the new pixel,
 if the Z value for the new pixel is "less" than the corresponding pixel in the depth
-texture. Other options include `never`, `equal`, `less-equal`, `greater`, `not-equal`,
-`greater-equal`, `always`.
+texture. Other options include `Never`, `Equal`, `LessEqual`, `Greater`, `NotEqual`,
+`GreaterEqual`, `Always`.
 
-`depthWriteEnabled: true` means, if we pass the `depthCompare` test, then write
+`depth_write_enabled: Some(true)` means, if we pass the `depth_compare` test, then write
 the Z value of our new pixel to the depth texture. In our case, this means
 each time a pixel we're drawing has a Z value less than what's already in the depth
 texture, we'll draw that pixel and update the depth texture. In this way, if we later try
 to draw a pixel that's further back (has a higher Z value) it will not be drawn.
 
-`format` is similar to `fragment.targets[?].format`. It's the format of
+`format` is similar to the fragment target's `format`. It's the format of
 the depth texture we will use. The available depth texture formats were listed
 [in the article on textures](webgpu-textures.html#a-depth-stencil-formats).
-`depth24plus` is a good default format to choose.
+`Depth24Plus` is a good default format to choose.
 
 We also need to update our render pass descriptor so it has a depth stencil attachment.
 
-```js
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ],
-+    depthStencilAttachment: {
-+      // view: <- to be filled out when we render
-+      depthClearValue: 1.0,
-+      depthLoadOp: 'clear',
-+      depthStoreOp: 'store',
-+    },
-  };
+```rust
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
++        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
++          view: &depth_view,
++          depth_ops: Some(wgpu::Operations {
++            load: wgpu::LoadOp::Clear(1.0),
++            store: wgpu::StoreOp::Store,
++          }),
++          stencil_ops: None,
++        }),
+        ..Default::default()
+      });
 ```
 
-Depth values generally go from 0.0 to 1.0. We set `depthClearValue` to 1.
-This makes sense since we set `depthCompare` to `less`.
+Depth values generally go from 0.0 to 1.0. We clear the depth to 1.
+This makes sense since we set `depth_compare` to `Less`.
 
 Finally, we need to create a depth texture. The catch is, it has to match the size the color attachments,
-which in this case is the texture we get from the canvas. The canvas texture changes
-size when we change the size of the canvas in our `ResizeObserver` callback. Or, to be
-more clear. The texture we get when we call `context.getCurrentTexture` will be whatever
-size we set the canvas to. With that in mind, let's create the correct size texture
+which in this case is the texture for the canvas. The canvas texture changes
+size when the canvas is resized (wgpu_fun's `auto_resize` handles the resolution for us,
+and `frame.width` / `frame.height` are whatever size the canvas currently is).
+With that in mind, let's create the correct size texture
 at render time.
 
-```js
-+  let depthTexture;
+```rust
++  let mut depth_texture: Option<wgpu::Texture> = None;
 
-  function render() {
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
--    renderPassDescriptor.colorAttachments[0].view =
--        context.getCurrentTexture().createView();
-+    const canvasTexture = context.getCurrentTexture();
-+    renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
-
+  app.run(RenderMode::Once, move |frame: &Frame| {
 +    // If we don't have a depth texture OR if its size is different
 +    // from the canvasTexture when make a new depth texture
-+    if (!depthTexture ||
-+        depthTexture.width !== canvasTexture.width ||
-+        depthTexture.height !== canvasTexture.height) {
-+      if (depthTexture) {
-+        depthTexture.destroy();
++    if depth_texture
++        .as_ref()
++        .is_none_or(|t| t.width() != frame.width || t.height() != frame.height)
++    {
++      if let Some(texture) = depth_texture.take() {
++        texture.destroy();
 +      }
-+      depthTexture = device.createTexture({
-+        size: [canvasTexture.width, canvasTexture.height],
-+        format: 'depth24plus',
-+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-+      });
++      depth_texture = Some(frame.device.create_texture(&wgpu::TextureDescriptor {
++        label: None,
++        size: wgpu::Extent3d {
++          width: frame.width,
++          height: frame.height,
++          depth_or_array_layers: 1,
++        },
++        format: wgpu::TextureFormat::Depth24Plus,
++        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
++        mip_level_count: 1,
++        sample_count: 1,
++        dimension: wgpu::TextureDimension::D2,
++        view_formats: &[],
++      }));
 +    }
-+    renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
++    let depth_view = depth_texture
++        .as_ref()
++        .unwrap()
++        .create_view(&Default::default());
 
   ...
 ```
@@ -1334,35 +1447,35 @@ One minor thing. In most 3D math libraries there is no `projection` function to
 do our conversions from clip space to pixel space. Rather, there's usually a function
 called `ortho` or `orthographic` that looks like this
 
-```js
-const mat4 = {
-  ...
-  ortho(left, right, bottom, top, near, far, dst) {
-    dst = dst || new Float32Array(16);
+```rust
+mod m4 {
+    ...
+    pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [f32; 16] {
+        let mut dst = [0.0; 16];
 
-    dst[0] = 2 / (right - left);
-    dst[1] = 0;
-    dst[2] = 0;
-    dst[3] = 0;
+        dst[0] = 2.0 / (right - left);
+        dst[1] = 0.0;
+        dst[2] = 0.0;
+        dst[3] = 0.0;
 
-    dst[4] = 0;
-    dst[5] = 2 / (top - bottom);
-    dst[6] = 0;
-    dst[7] = 0;
+        dst[4] = 0.0;
+        dst[5] = 2.0 / (top - bottom);
+        dst[6] = 0.0;
+        dst[7] = 0.0;
 
-    dst[8] = 0;
-    dst[9] = 0;
-    dst[10] = 1 / (near - far);
-    dst[11] = 0;
+        dst[8] = 0.0;
+        dst[9] = 0.0;
+        dst[10] = 1.0 / (near - far);
+        dst[11] = 0.0;
 
-    dst[12] = (right + left) / (left - right);
-    dst[13] = (top + bottom) / (bottom - top);
-    dst[14] = near / (near - far);
-    dst[15] = 1;
+        dst[12] = (right + left) / (left - right);
+        dst[13] = (top + bottom) / (bottom - top);
+        dst[14] = near / (near - far);
+        dst[15] = 1.0;
 
-    return dst;
-  },
-  ...
+        dst
+    }
+    ...
 ```
 
 Unlike our simplified `projection` function above, which only had width, height, and depth
@@ -1370,17 +1483,16 @@ parameters, with this more common orthographic projection function we can pass i
 bottom, top, near, and far which gives as more flexibility. To use it the same as
 our original projection function we'd call it with
 
-```js
--    mat4.projection(canvas.clientWidth, canvas.clientHeight, 400, matrixValue);
-+    mat4.ortho(
-+        0,                   // left
-+        canvas.clientWidth,  // right
-+        canvas.clientHeight, // bottom
-+        0,                   // top
-+        200,                 // near
-+        -200,                // far
-+        matrixValue,         // dst
-+    );   
+```rust
+-    let mut matrix_value = m4::projection(frame.width as f32, frame.height as f32, 400.0);
++    let mut matrix_value = m4::ortho(
++        0.0,                   // left
++        frame.width as f32,    // right
++        frame.height as f32,   // bottom
++        0.0,                   // top
++        400.0,                 // near
++        -400.0,                // far
++    );
 ```
 
 {{{example url="../webgpu-orthographic-projection-step-7-ortho.html"}}}
@@ -1402,4 +1514,3 @@ Orthographic in this case comes from the word, <i>orthogonal</i>
 <!-- keep this at the bottom of the article -->
 <link href="webgpu-orthographic-projection.css" rel="stylesheet">
 <script type="module" src="webgpu-orthographic-projection.js"></script>
-
