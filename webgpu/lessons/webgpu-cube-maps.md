@@ -16,10 +16,13 @@ have 2 dimensions, a cubemap uses a normal or in other words a 3D direction.
 Depending on the direction the normal points one of the 6 faces of the cube
 is selected and then within that face the pixels are sampled to produce a color.
 
-Let's make a simple example, we'll use a 2D canvas to make the images used in
-each of the 6 faces.
+Let's make a simple example. The JS version of this site uses a 2D canvas to
+make the images used in each of the 6 faces; there's no 2D canvas outside the
+browser, so for the Rust version we made those same 6 images ahead of time
+(colored squares with a centered label) and we simply load them.
 
-Here's some code to fill a canvas with a color and a centered message
+For reference, here's the JS code that draws one face with a canvas, filling
+it with a color and a centered message
 
 ```js
 function generateFace(size, {faceColor, textColor, text}) {
@@ -43,22 +46,36 @@ function generateFace(size, {faceColor, textColor, text}) {
 }
 ```
 
-And here's some code to call it to generate 6 images
+These are the 6 face images, 128x128 each, stored under
+`resources/images/cube-faces/`
 
-```js
-const faceSize = 128;
-const faceCanvases = [
-  { faceColor: '#F00', textColor: '#0FF', text: '+X' },
-  { faceColor: '#FF0', textColor: '#00F', text: '-X' },
-  { faceColor: '#0F0', textColor: '#F0F', text: '+Y' },
-  { faceColor: '#0FF', textColor: '#F00', text: '-Y' },
-  { faceColor: '#00F', textColor: '#FF0', text: '+Z' },
-  { faceColor: '#F0F', textColor: '#0F0', text: '-Z' },
-].map(faceInfo => generateFace(faceSize, faceInfo));
+<div class="webgpu_center">
 
-// show the results
-for (const canvas of faceCanvases) {
-  document.body.appendChild(canvas);
+| file | face color | text color | text |
+| ---- | ---------- | ---------- | ---- |
+| pos-x.png | red     | cyan    | +X |
+| neg-x.png | yellow  | blue    | -X |
+| pos-y.png | green   | magenta | +Y |
+| neg-y.png | cyan    | red     | -Y |
+| pos-z.png | blue    | yellow  | +Z |
+| neg-z.png | magenta | green   | -Z |
+
+</div>
+
+In the Rust code we load them like any other images
+
+```rust
+let face_urls = [
+    "resources/images/cube-faces/pos-x.png", // +X
+    "resources/images/cube-faces/neg-x.png", // -X
+    "resources/images/cube-faces/pos-y.png", // +Y
+    "resources/images/cube-faces/neg-y.png", // -Y
+    "resources/images/cube-faces/pos-z.png", // +Z
+    "resources/images/cube-faces/neg-z.png", // -Z
+];
+let mut face_sources = Vec::new();
+for url in face_urls {
+    face_sources.push(wgpu_fun::load_image(url).await);
 }
 ```
 
@@ -112,8 +129,8 @@ the cube.
 Since we're not using texture coordinates we can remove all code related to
 setting up the texture coordinates.
 
-```js
-  const vertexData = new Float32Array([
+```rust
+  let vertex_data: Vec<f32> = vec![
 -     // front face     select the top left image
 -    -1,  1,  1,        0   , 0  ,
 -    -1, -1,  1,        0   , 0.5,
@@ -170,42 +187,42 @@ setting up the texture coordinates.
 +     1, -1, -1,
 +    -1, -1, -1,
 +    // top face
-+    -1,  1,  1,
-+     1,  1,  1,
-+    -1,  1, -1,
-+     1,  1, -1,
-  ]);
++    -1.0,  1.0,  1.0,
++     1.0,  1.0,  1.0,
++    -1.0,  1.0, -1.0,
++     1.0,  1.0, -1.0,
+  ];
 
   ...
 
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (3 + 2) * 4, // (3+2) floats 4 bytes each
-+          arrayStride: (3) * 4, // (3) floats 4 bytes each
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
--            {shaderLocation: 1, offset: 12, format: 'float32x2'},  // texcoord
-          ],
-        },
-      ],
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("1 attribute"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: (3 + 2) * 4, // (3+2) floats 4 bytes each
++        array_stride: (3) * 4, // (3) floats 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
+-          // texcoord
+-          wgpu::VertexAttribute {
+-            shader_location: 1,
+-            offset: 12,
+-            format: wgpu::VertexFormat::Float32x2,
+-          },
+        ],
+      })],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-    primitive: {
-      cullMode: 'back',
-    },
-    depthStencil: {
-      depthWriteEnabled: true,
-      depthCompare: 'less',
-      format: 'depth24plus',
-    },
+    ...
   });
 ```
 
@@ -231,26 +248,37 @@ so they handle multiple sources.
 
 ## <a id="a-texture-helpers"></a> Making our texture helpers handle multiple layers
 
-First let's take our `createTextureFromSource` and change it to `createTextureFromSources`
-where it takes an array of sources
+First let's take our `create_texture_from_source` and change it to `create_texture_from_sources`
+where it takes a slice of sources
 
-```js
--  function createTextureFromSource(device, source, options = {}) {
-+  function createTextureFromSources(device, sources, options = {}) {
-+    // Assume are sources all the same size so just use the first one for width and height
-+    const source = sources[0];
-    const texture = device.createTexture({
-      format: 'rgba8unorm',
-      mipLevelCount: options.mips ? numMipLevels(source.width, source.height) : 1,
--      size: [source.width, source.height],
-+      size: [source.width, source.height, sources.length],
-      usage: GPUTextureUsage.TEXTURE_BINDING |
-             GPUTextureUsage.COPY_DST |
-             GPUTextureUsage.RENDER_ATTACHMENT,
+```rust
+-  fn create_texture_from_source(
++  fn create_texture_from_sources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+-    source: &ImageData,
++    sources: &[ImageData],
+    mips: bool,
+  ) -> wgpu::Texture {
++    // Assume all sources are the same size so just use the first one for width and height
++    let source = &sources[0];
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+      format: wgpu::TextureFormat::Rgba8Unorm,
+      mip_level_count: if mips { num_mip_levels(&[source.width, source.height]) } else { 1 },
+      size: wgpu::Extent3d {
+        width: source.width,
+        height: source.height,
+-        depth_or_array_layers: 1,
++        depth_or_array_layers: sources.len() as u32,
+      },
+      usage: wgpu::TextureUsages::TEXTURE_BINDING
+          | wgpu::TextureUsages::COPY_DST
+          | wgpu::TextureUsages::RENDER_ATTACHMENT,
+      ...
     });
--    copySourceToTexture(device, texture, source, options);
-+    copySourcesToTexture(device, texture, sources, options);
-    return texture;
+-    copy_source_to_texture(device, queue, &texture, source);
++    copy_sources_to_texture(device, queue, &texture, sources);
+    texture
   }
 ```
 
@@ -258,22 +286,27 @@ The code above makes a texture where multiple layers, one for each source.
 It also assumes all the sources are the same size. This seems like a good bet
 because it would be very rare for them to be different sizes for layers of the same texture.
 
-Now we need to update `copySourceToTexture` to handle multiple sources.
+Now we need to update `copy_source_to_texture` to handle multiple sources.
 
-```js
--  function copySourceToTexture(device, texture, source, {flipY} = {}) {
-+  function copySourcesToTexture(device, texture, sources, {flipY} = {}) {
-+    sources.forEach((source, layer) => {
-*      device.queue.copyExternalImageToTexture(
-*        { source, flipY, },
--        { texture },
-+        { texture, origin: [0, 0, layer] },
-*        { width: source.width, height: source.height },
+```rust
+-  fn copy_source_to_texture(device, queue, texture, source: &ImageData) {
++  fn copy_sources_to_texture(device, queue, texture, sources: &[ImageData]) {
++    for (layer, source) in sources.iter().enumerate() {
+*      queue.write_texture(
+*        wgpu::TexelCopyTextureInfo {
+*          texture,
+*          mip_level: 0,
+-          origin: wgpu::Origin3d::ZERO,
++          origin: wgpu::Origin3d { x: 0, y: 0, z: layer as u32 },
+*          aspect: wgpu::TextureAspect::All,
+*        },
+*        &source.data,
+*        ...
 *      );
-+  });
++    }
 
-    if (texture.mipLevelCount > 1) {
-      generateMips(device, texture);
+    if texture.mip_level_count() > 1 {
+      generate_mips(device, queue, texture);
     }
   }
 ```
@@ -284,128 +317,70 @@ we copy each source to its respective layer.
 
 Now we need to update `generateMips` to handle multiple sources.
 
-```js
-  const generateMips = (() => {
-    let sampler;
-    let module;
-    const pipelineByFormat = {};
+```rust
+  fn generate_mips(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) {
+    // module / sampler / pipeline caching unchanged ...
 
-    return function generateMips(device, texture) {
-      if (!module) {
-        module = device.createShaderModule({
-          label: 'textured quad shaders for mip level generation',
-          code: /* wgsl */ `
-            struct VSOutput {
-              @builtin(position) position: vec4f,
-              @location(0) texcoord: vec2f,
-            };
-
-            @vertex fn vs(
-              @builtin(vertex_index) vertexIndex : u32
-            ) -> VSOutput {
-              let pos = array(
-                // 1st triangle
-                vec2f( 0.0,  0.0),  // center
-                vec2f( 1.0,  0.0),  // right, center
-                vec2f( 0.0,  1.0),  // center, top
-
-                // 2nd triangle
-                vec2f( 0.0,  1.0),  // center, top
-                vec2f( 1.0,  0.0),  // right, center
-                vec2f( 1.0,  1.0),  // right, top
-              );
-
-              var vsOutput: VSOutput;
-              let xy = pos[vertexIndex];
-              vsOutput.position = vec4f(xy * 2.0 - 1.0, 0.0, 1.0);
-              vsOutput.texcoord = vec2f(xy.x, 1.0 - xy.y);
-              return vsOutput;
-            }
-
-            @group(0) @binding(0) var ourSampler: sampler;
-            @group(0) @binding(1) var ourTexture: texture_2d<f32>;
-
-            @fragment fn fs(fsInput: VSOutput) -> @location(0) vec4f {
-              return textureSample(ourTexture, ourSampler, fsInput.texcoord);
-            }
-          `,
-        });
-
-        sampler = device.createSampler({
-          minFilter: 'linear',
-          magFilter: 'linear',
-        });
-      }
-
-      if (!pipelineByFormat[texture.format]) {
-        pipelineByFormat[texture.format] = device.createRenderPipeline({
-          label: 'mip level generator pipeline',
-          layout: 'auto',
-          vertex: {
-            module,
-          },
-          fragment: {
-            module,
-            targets: [{ format: texture.format }],
-          },
-        });
-      }
-      const pipeline = pipelineByFormat[texture.format];
-
-      const encoder = device.createCommandEncoder({
-        label: 'mip gen encoder',
-      });
-
-      for (let baseMipLevel = 1; baseMipLevel < texture.mipLevelCount; ++baseMipLevel) {
-+        for (let layer = 0; layer < texture.depthOrArrayLayers; ++layer) {
-*          const bindGroup = device.createBindGroup({
-*            layout: pipeline.getBindGroupLayout(0),
-*            entries: [
-*              { binding: 0, resource: sampler },
--              { binding: 1, resource: texture.createView({baseMipLevel, mipLevelCount: 1}) },
-+              {
-+                binding: 1,
-+                resource: texture.createView({
-+                  dimension: '2d',
-+                  baseMipLevel: baseMipLevel - 1,
-+                  mipLevelCount: 1,
-+                  baseArrayLayer: layer,
-+                  arrayLayerCount: 1,
-+                }),
-*              },
-*            ],
-*          });
+    for base_mip_level in 1..texture.mip_level_count() {
++      for layer in 0..texture.depth_or_array_layers() {
+*        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+*          layout: &pipeline.get_bind_group_layout(0),
+*          entries: &[
+*            wgpu::BindGroupEntry {
+*              binding: 0,
+*              resource: wgpu::BindingResource::Sampler(sampler),
+*            },
+-            wgpu::BindGroupEntry {
+-              binding: 1,
+-              resource: wgpu::BindingResource::TextureView(&texture.create_view(
+-                &wgpu::TextureViewDescriptor {
+-                  base_mip_level: base_mip_level - 1,
+-                  mip_level_count: Some(1),
+-                  ..Default::default()
+-                },
+-              )),
+-            },
++            wgpu::BindGroupEntry {
++              binding: 1,
++              resource: wgpu::BindingResource::TextureView(&texture.create_view(
++                &wgpu::TextureViewDescriptor {
++                  dimension: Some(wgpu::TextureViewDimension::D2),
++                  base_mip_level: base_mip_level - 1,
++                  mip_level_count: Some(1),
++                  base_array_layer: layer,
++                  array_layer_count: Some(1),
++                  ..Default::default()
++                },
++              )),
++            },
+*          ],
+*        });
 *
-*          const renderPassDescriptor = {
-*            label: 'our basic canvas renderPass',
-*            colorAttachments: [
-*              {
--                view: texture.createView({baseMipLevel, mipLevelCount: 1}),
-+                view: texture.createView({
-+                  dimension: '2d',
-+                  baseMipLevel: baseMipLevel,
-+                  mipLevelCount: 1,
-+                  baseArrayLayer: layer,
-+                  arrayLayerCount: 1,
-+                }),
-*                loadOp: 'clear',
-*                storeOp: 'store',
-*              },
-*            ],
-*          };
-*
-*          const pass = encoder.beginRenderPass(renderPassDescriptor);
-*          pass.setPipeline(pipeline);
-*          pass.setBindGroup(0, bindGroup);
-*          pass.draw(6);  // call our vertex shader 6 times
-*          pass.end();
-+        }
+-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+-          base_mip_level,
+-          mip_level_count: Some(1),
+-          ..Default::default()
+-        });
++        let view = texture.create_view(&wgpu::TextureViewDescriptor {
++          dimension: Some(wgpu::TextureViewDimension::D2),
++          base_mip_level,
++          mip_level_count: Some(1),
++          base_array_layer: layer,
++          array_layer_count: Some(1),
++          ..Default::default()
++        });
+*        {
+*          let mut pass = encoder.begin_render_pass(/* renders to view */);
+*          pass.set_pipeline(pipeline);
+*          pass.set_bind_group(0, &bind_group, &[]);
+*          pass.draw(0..6, 0..1);  // call our vertex shader 6 times
+*        }
 +      }
+    }
 
-      const commandBuffer = encoder.finish();
-      device.queue.submit([commandBuffer]);
-    };
-  })();
+    let command_buffer = encoder.finish();
+    queue.submit([command_buffer]);
+  }
 ```
 
 We added a loop to handle each layer of the texture.
@@ -417,37 +392,48 @@ mipmaps is not what we want.
 > Note: [The article on compatibility mode](webgpu-compatibility-mode.html) provides
 > a version of `generateMips` that works in compatibility mode.
 
-Although we won't use them here, our original `createTextureFromSource` and
-`copySourceToTexture` functions can easily be replaced with
+Although we won't use them here, our original `create_texture_from_source` and
+`copy_source_to_texture` functions can easily be replaced with
 
-```js
-  function copySourceToTexture(device, texture, source, options = {}) {
-    copySourcesToTexture(device, texture, [source], options);
+```rust
+  fn copy_source_to_texture(device, queue, texture, source: &ImageData) {
+    copy_sources_to_texture(device, queue, texture, std::slice::from_ref(source));
   }
 
-  function createTextureFromSource(device, source, options = {}) {
-    return createTextureFromSources(device, [source], options);
+  fn create_texture_from_source(device, queue, source: &ImageData, mips: bool) -> wgpu::Texture {
+    create_texture_from_sources(device, queue, std::slice::from_ref(source), mips)
   }
 ```
 
-Now that we have these ready we can use the faces we made at the top of the article
+Now that we have these ready we can use the face images from the top of the article
 
-```js
-  const texture = await createTextureFromSources(
-      device, faceCanvases, {mips: true, flipY: false});
+```rust
+  let texture = create_texture_from_sources(
+      &app.device, &app.queue, &face_sources, true);
 ```
 
-All that's left to do is change our texture's view in the bindGroup
+All that's left to do is change our texture's view in the bind group
 
-```js
-  const bindGroup = device.createBindGroup({
-    label: 'bind group for object',
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: uniformBuffer },
-      { binding: 1, resource: sampler },
--      { binding: 2, resource: texture },
-+      { binding: 2, resource: texture.createView({dimension: 'cube'}) },
+```rust
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("bind group for object"),
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+      wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+-      wgpu::BindGroupEntry {
+-        binding: 2,
+-        resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
+-      },
++      wgpu::BindGroupEntry {
++        binding: 2,
++        resource: wgpu::BindingResource::TextureView(&texture.create_view(
++          &wgpu::TextureViewDescriptor {
++            dimension: Some(wgpu::TextureViewDimension::Cube),
++            ..Default::default()
++          },
++        )),
++      },
     ],
   });
 ```
