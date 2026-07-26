@@ -141,25 +141,29 @@ Now we need to create texture data. We'll make a 5x7 texel `F` [^texel]
 For me texel and pixel are basically synonymous but some people prefer to use
 the word *texel* when discussing textures.
 
-```js
-  const kTextureWidth = 5;
-  const kTextureHeight = 7;
-  const _ = [255,   0,   0, 255];  // red
-  const y = [255, 255,   0, 255];  // yellow
-  const b = [  0,   0, 255, 255];  // blue
-  const textureData = new Uint8Array([
-    b, _, _, _, _,
-    _, y, y, y, _,
-    _, y, _, _, _,
-    _, y, y, _, _,
-    _, y, _, _, _,
-    _, y, _, _, _,
-    _, _, _, _, _,
-  ].flat());
+```rust
+  const K_TEXTURE_WIDTH: u32 = 5;
+  const K_TEXTURE_HEIGHT: u32 = 7;
+  let r: [u8; 4] = [255, 0, 0, 255]; // red
+  let y: [u8; 4] = [255, 255, 0, 255]; // yellow
+  let b: [u8; 4] = [0, 0, 255, 255]; // blue
+  #[rustfmt::skip]
+  let texture_data = [
+    b, r, r, r, r,
+    r, y, y, y, r,
+    r, y, r, r, r,
+    r, y, y, r, r,
+    r, y, r, r, r,
+    r, y, r, r, r,
+    r, r, r, r, r,
+  ]
+  .concat();
 ```
 
 Hopefully you can see the `F` in there as well as a blue texel in the top
-left corner (the first value).
+left corner (the first value). Each texel is a `[u8; 4]`, 4 bytes for red,
+green, blue and alpha, and `.concat()` flattens the array of texels into one
+`Vec<u8>` of bytes.
 
 We're going to create a `rgba8unorm` texture. `rgba8unorm` means the texture will
 have red, green, blue, and alpha values. Each value will be 8 bits unsigned, and
@@ -173,56 +177,92 @@ put it another way `[0.25, 0.50, 0.75, 1.00]`
 
 Now that we have the data we need to make a texture
 
-```js
-  const texture = device.createTexture({
-    size: [kTextureWidth, kTextureHeight],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+```rust
+  let texture = app.device.create_texture(&wgpu::TextureDescriptor {
+    label: Some("yellow F on red"),
+    size: wgpu::Extent3d {
+      width: K_TEXTURE_WIDTH,
+      height: K_TEXTURE_HEIGHT,
+      depth_or_array_layers: 1,
+    },
+    mip_level_count: 1,
+    sample_count: 1,
+    dimension: wgpu::TextureDimension::D2,
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    view_formats: &[],
   });
 ```
 
-For `device.createTexture`, the `size` parameter should be pretty obvious. The
-format is `rgba8unorm` as mentioned above. For the `usage`, `GPUTextureUsage.TEXTURE_BINDING`
+For `device.create_texture`, the `size` parameter should be pretty obvious. The
+format is `Rgba8Unorm` as mentioned above. For the `usage`, `TextureUsages::TEXTURE_BINDING`
 says we want to be able to bind this texture into a bind group [^texture-binding] and `COPY_DST`
-means we want to be able to copy data to it.
+means we want to be able to copy data to it. As usual with wgpu, the descriptor
+struct asks us to spell out fields the JavaScript API would default for us —
+`mip_level_count`, `sample_count`, `dimension`, and `view_formats`. We'll
+get to `mip_level_count` later in this article.
 
-[^texture-binding]: Another common use for a texture is `GPUTextureUsage.RENDER_ATTACHMENT`
-which is used for a texture we want to render into. As an example, the canvas texture we
-get from `context.getCurrentTexture()` has its usage set to `GPUTextureUsage.RENDER_ATTACHMENT`
-by default.
+[^texture-binding]: Another common use for a texture is `TextureUsages::RENDER_ATTACHMENT`
+which is used for a texture we want to render into. As an example, the texture behind
+`frame.view`, the one we render to, has its usage set to `TextureUsages::RENDER_ATTACHMENT`.
 
 Next we need to do just that and copy our data to it.
 
-```js
-  device.queue.writeTexture(
-      { texture },
-      textureData,
-      { bytesPerRow: kTextureWidth * 4 },
-      { width: kTextureWidth, height: kTextureHeight },
+```rust
+  app.queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture: &texture,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+    &texture_data,
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(K_TEXTURE_WIDTH * 4),
+      rows_per_image: None,
+    },
+    wgpu::Extent3d {
+      width: K_TEXTURE_WIDTH,
+      height: K_TEXTURE_HEIGHT,
+      depth_or_array_layers: 1,
+    },
   );
 ```
 
-For `device.queue.writeTexture` the first parameter is the texture we want to update.
+For `queue.write_texture` the first parameter is the texture we want to update.
 The second is the data we want to copy to it. The 3rd defines how to read that data
-when copying it to the texture. `bytesPerRow` specifies how many bytes to get from
+when copying it to the texture. `bytes_per_row` specifies how many bytes to get from
 one row of the source data to the next row. Finally, the last parameter specifies
 the size of the copy.
 
 We also need to make a sampler
 
-```js
-  const sampler = device.createSampler();
+```rust
+  let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor::default());
 ```
 
 We need to add both the texture and the sampler to a bind group with bindings
-that match the `@binding(?)`s we put in the shader.
+that match the `@binding(?)`s we put in the shader. One wgpu detail: we don't
+bind the texture itself, we bind a *view* of the texture. (The JavaScript API
+creates a default view for you when you pass a texture directly; in wgpu we
+call `create_view` ourselves.) We'll cover texture views
+[later in this article](#texture-types-and-texture-views).
 
-```js
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: sampler },
-      { binding: 1, resource: texture },
+```rust
+  let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: wgpu::BindingResource::Sampler(&sampler),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: wgpu::BindingResource::TextureView(&texture_view),
+      },
     ],
   });
 ```
@@ -230,13 +270,11 @@ that match the `@binding(?)`s we put in the shader.
 To update our rendering, we need to specify the bind group and render 6 vertices
 to render our quad consisting of 2 triangles.
 
-```js
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-+    pass.setBindGroup(0, bindGroup);
--    pass.draw(3);  // call our vertex shader 3 times
-+    pass.draw(6);  // call our vertex shader 6 times
-    pass.end();
+```rust
+      pass.set_pipeline(&pipeline);
++      pass.set_bind_group(0, &bind_group, &[]);
+-      pass.draw(0..3, 0..1); // call our vertex shader 3 times
++      pass.draw(0..6, 0..1); // call our vertex shader 6 times
 ```
 
 and running it we get this
@@ -277,23 +315,25 @@ To fix this there are 2 common solutions.
 
 2. Flip the texture data
 
-   ```js
-    const textureData = new Uint8Array([
-   -   b, _, _, _, _,
-   -   _, y, y, y, _,
-   -   _, y, _, _, _,
-   -   _, y, y, _, _,
-   -   _, y, _, _, _,
-   -   _, y, _, _, _,
-   -   _, _, _, _, _,
-   +   _, _, _, _, _,
-   +   _, y, _, _, _,
-   +   _, y, _, _, _,
-   +   _, y, y, _, _,
-   +   _, y, _, _, _,
-   +   _, y, y, y, _,
-   +   b, _, _, _, _,
-    ].flat());
+   ```rust
+    #[rustfmt::skip]
+    let texture_data = [
+   -   b, r, r, r, r,
+   -   r, y, y, y, r,
+   -   r, y, r, r, r,
+   -   r, y, y, r, r,
+   -   r, y, r, r, r,
+   -   r, y, r, r, r,
+   -   r, r, r, r, r,
+   +   r, r, r, r, r,
+   +   r, y, r, r, r,
+   +   r, y, r, r, r,
+   +   r, y, y, r, r,
+   +   r, y, r, r, r,
+   +   r, y, y, y, r,
+   +   b, r, r, r, r,
+    ]
+    .concat();
    ```
 
    Once we've flipped the data, what used to be at the top is now at the bottom
@@ -335,7 +375,8 @@ intermediate colors into a final color.
 
 Another thing to notice, at the bottom of the diagram are 2 more sampler
 settings, `addressModeU` and `addressModeV`. We can set these to `repeat` or
-`clamp-to-edge` [^mirror-repeat]. When set to 'repeat', when our texture
+`clamp-to-edge` [^mirror-repeat] (in wgpu, `AddressMode::Repeat` and
+`AddressMode::ClampToEdge`). When set to 'repeat', when our texture
 coordinate is within half a texel of the edge of the texture we wrap around and
 blend with pixels on the opposite side of the texture. When set to
 'clamp-to-edge', for the purposes of calculating which color to return, the
@@ -352,77 +393,106 @@ Let's update the example so we can draw the quad with all of these options.
 First let's create a sampler for each combination of settings.
 We'll also create a bind group that uses that sampler.
 
-```js
-+  const bindGroups = [];
-+  for (let i = 0; i < 8; ++i) {
--   const sampler = device.createSampler();
-+   const sampler = device.createSampler({
-+      addressModeU: (i & 1) ? 'repeat' : 'clamp-to-edge',
-+      addressModeV: (i & 2) ? 'repeat' : 'clamp-to-edge',
-+      magFilter: (i & 4) ? 'linear' : 'nearest',
+```rust
++  let mut bind_groups = Vec::new();
++  for i in 0..8 {
+-  let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor::default());
++    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
++      address_mode_u: if i & 1 != 0 {
++        wgpu::AddressMode::Repeat
++      } else {
++        wgpu::AddressMode::ClampToEdge
++      },
++      address_mode_v: if i & 2 != 0 {
++        wgpu::AddressMode::Repeat
++      } else {
++        wgpu::AddressMode::ClampToEdge
++      },
++      mag_filter: if i & 4 != 0 {
++        wgpu::FilterMode::Linear
++      } else {
++        wgpu::FilterMode::Nearest
++      },
++      ..Default::default()
 +    });
 
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: sampler },
-        { binding: 1, resource: texture },
+    let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &pipeline.get_bind_group_layout(0),
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::Sampler(&sampler),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: wgpu::BindingResource::TextureView(&texture_view),
+        },
       ],
     });
-+    bindGroups.push(bindGroup);
++    bind_groups.push(bind_group);
 +  }
 ```
 
-We'll make some settings
+We'll make some settings. Here's where our split between Rust and the webpage
+shows up: the settings UI is part of the page, so the settings themselves live
+in the page's JavaScript, and our Rust code reads the current values through
+wgpu_fun's settings store (the defaults must match the page's initial
+settings). At render time we'll look at the settings to decide which bind
+group to use.
 
-```js
-  const settings = {
-    addressModeU: 'repeat',
-    addressModeV: 'repeat',
-    magFilter: 'linear',
-  };
-```
-
-and at render time we'll look at the settings to decide which
-bind group to use.
-
-```js
-  function render() {
-+    const ndx = (settings.addressModeU === 'repeat' ? 1 : 0) +
-+                (settings.addressModeV === 'repeat' ? 2 : 0) +
-+                (settings.magFilter === 'linear' ? 4 : 0);
-+    const bindGroup = bindGroups[ndx];
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
++    // read the settings the GUI on the page sets
++    let address_mode_u = wgpu_fun::setting_str("addressModeU", "repeat");
++    let address_mode_v = wgpu_fun::setting_str("addressModeV", "repeat");
++    let mag_filter = wgpu_fun::setting_str("magFilter", "linear");
++
++    let ndx = if address_mode_u == "repeat" { 1 } else { 0 }
++        + if address_mode_v == "repeat" { 2 } else { 0 }
++        + if mag_filter == "linear" { 4 } else { 0 };
++    let bind_group = &bind_groups[ndx];
    ...
 ```
 
 Now all we need to do is provide some UI to let us change the settings
-and when the setting change we need to re-render. I'm using a library
-called "muigui" which at the moment has an API similar to [dat.GUI](https://github.com/dataarts/dat.gui)
+and when a setting changes we need to re-render. I'm using a library
+called "muigui" which at the moment has an API similar to [dat.GUI](https://github.com/dataarts/dat.gui).
+It runs in the example's webpage, and each change calls `set_setting_str`, a
+function wgpu_fun exports from our wasm module which stores the value where
+`wgpu_fun::setting_str` above reads it.
 
 ```js
 import GUI from '../3rdparty/muigui-0.x.module.js';
+import init, * as wasm from './wasm/webgpu-simple-textured-quad-linear/webgpu-simple-textured-quad-linear.js';
 
-...
+await init();
 
-  const settings = {
-    addressModeU: 'repeat',
-    addressModeV: 'repeat',
-    magFilter: 'linear',
-  };
+const settings = {
+  addressModeU: 'repeat',
+  addressModeV: 'repeat',
+  magFilter: 'linear',
+};
 
-  const addressOptions = ['repeat', 'clamp-to-edge'];
-  const filterOptions = ['nearest', 'linear'];
+const addressOptions = ['repeat', 'clamp-to-edge'];
+const filterOptions = ['nearest', 'linear'];
 
-  const gui = new GUI();
-  gui.onChange(render);
-  Object.assign(gui.domElement.style, {right: '', left: '15px'});
-  gui.add(settings, 'addressModeU', addressOptions);
-  gui.add(settings, 'addressModeV', addressOptions);
-  gui.add(settings, 'magFilter', filterOptions);
+const gui = new GUI();
+Object.assign(gui.domElement.style, {right: '', left: '15px'});
+gui.add(settings, 'addressModeU', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeU', v));
+gui.add(settings, 'addressModeV', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeV', v));
+gui.add(settings, 'magFilter', filterOptions)
+  .onChange(v => wasm.set_setting_str('magFilter', v));
 ```
 
-The code above declares `settings` and then creates a UI to set them
-and calls `render` when they change.
+The code above declares `settings` and then creates a UI to set them and
+forwards every change to the wasm module. We don't have to call render
+ourselves: for a `RenderMode::Once` example, wgpu_fun re-runs our frame
+closure whenever a setting changes, the same way it does when the canvas is
+resized. (Running natively there is no webpage; the test mode reads
+`WGPU_FUN_SETTING_<name>` environment variables instead.)
 
 {{{example url="../webgpu-simple-textured-quad-linear.html"}}}
 
@@ -457,24 +527,27 @@ canvas {
 }
 ```
 
-Next let's lower the resolution of the canvas in our `ResizeObserver` callback
+Next let's lower the resolution of the canvas. Back in
+[the fundamentals article](webgpu-fundamentals.html#a-resizing) we saw that
+`app.auto_resize = true` makes wgpu_fun's `ResizeObserver` keep the canvas
+resolution matched to its displayed size. The helper has one more knob,
+`resize_divisor`, which divides the observed size before applying it:
 
-```js
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
--      const width = entry.contentBoxSize[0].inlineSize;
--      const height = entry.contentBoxSize[0].blockSize;
-+      const width = entry.contentBoxSize[0].inlineSize / 64 | 0;
-+      const height = entry.contentBoxSize[0].blockSize / 64 | 0;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-      // re-render
-      render();
-    }
-  });
-  observer.observe(canvas);
+```rust
+-  let mut app = App::new("WebGPU Simple Textured Quad Linear Filtering").await;
++  let mut app = App::new("WebGPU Simple Textured Quad MinFilter").await;
+  app.auto_resize = true;
++  app.resize_divisor = 64;
 ```
+
+Inside the helper's resize callback that ends up as
+
+```rust
+width = (width / app.resize_divisor).clamp(1, app.max_texture_dimension);
+height = (height / app.resize_divisor).clamp(1, app.max_texture_dimension);
+```
+
+so our drawing buffer is now 1/64th the size the canvas is displayed at.
 
 We're going to move and scale the quad so we'll add in a uniform buffer just
 like we did in the first example in [the article on uniforms](webgpu-uniforms.html).
@@ -526,137 +599,165 @@ struct OurVertexShaderOutput {
 Now that we have uniforms, we need to create a uniform buffer and
 add it to the bind group.
 
-```js
+```rust
 +  // create a buffer for the uniform values
-+  const uniformBufferSize =
-+    2 * 4 + // scale is 2 32bit floats (4bytes each)
-+    2 * 4;  // offset is 2 32bit floats (4bytes each)
-+  const uniformBuffer = device.createBuffer({
-+    label: 'uniforms for quad',
-+    size: uniformBufferSize,
-+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = 2 * 4 + // scale is 2 32bit floats (4bytes each)
++      2 * 4; // offset is 2 32bit floats (4bytes each)
++  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
++    label: Some("uniforms for quad"),
++    size: UNIFORM_BUFFER_SIZE,
++    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++    mapped_at_creation: false,
 +  });
 +
-+  // create a typedarray to hold the values for the uniforms in JavaScript
-+  const uniformValues = new Float32Array(uniformBufferSize / 4);
++  // create an array of f32s to hold the values for the uniforms in Rust
++  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 +
 +  // offsets to the various uniform values in float32 indices
-+  const kScaleOffset = 0;
-+  const kOffsetOffset = 2;
++  const K_SCALE_OFFSET: usize = 0;
++  const K_OFFSET_OFFSET: usize = 2;
 
-  const bindGroups = [];
-  for (let i = 0; i < 8; ++i) {
-    const sampler = device.createSampler({
-      addressModeU: (i & 1) ? 'repeat' : 'clamp-to-edge',
-      addressModeV: (i & 2) ? 'repeat' : 'clamp-to-edge',
-      magFilter: (i & 4) ? 'linear' : 'nearest',
+  let mut bind_groups = Vec::new();
+  for i in 0..8 {
+    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+      ...
     });
 
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: sampler },
-        { binding: 1, resource: texture },
-+        { binding: 2, resource: uniformBuffer },
+    let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &pipeline.get_bind_group_layout(0),
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::Sampler(&sampler),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: wgpu::BindingResource::TextureView(&texture_view),
+        },
++        wgpu::BindGroupEntry {
++          binding: 2,
++          resource: uniform_buffer.as_entire_binding(),
++        },
       ],
     });
-    bindGroups.push(bindGroup);
+    bind_groups.push(bind_group);
   }
 ```
 
 And we need code to set the uniform's values and upload them to the GPU.
-We're going to animate this so we'll also change the code use
-`requestAnimationFrame` to continuously render.
+We're going to animate this so we'll also change from `RenderMode::Once` to
+`RenderMode::Continuous` to continuously render. (In the browser, continuous
+mode is a `requestAnimationFrame` loop — often called a "rAF loop"; natively
+it redraws every frame. `frame.time` gives us the elapsed time in seconds.)
 
-```js
-  function render(time) {
-    time *= 0.001;
-    const ndx = (settings.addressModeU === 'repeat' ? 1 : 0) +
-                (settings.addressModeV === 'repeat' ? 2 : 0) +
-                (settings.magFilter === 'linear' ? 4 : 0);
-    const bindGroup = bindGroups[ndx];
+```rust
+-  app.run(RenderMode::Once, move |frame: &Frame| {
++  app.run(RenderMode::Continuous, move |frame: &Frame| {
++    let time = frame.time as f32;
++
+    // read the settings the GUI on the page sets
+    let address_mode_u = wgpu_fun::setting_str("addressModeU", "repeat");
+    let address_mode_v = wgpu_fun::setting_str("addressModeV", "repeat");
+    let mag_filter = wgpu_fun::setting_str("magFilter", "linear");
+
+    let ndx = if address_mode_u == "repeat" { 1 } else { 0 }
+        + if address_mode_v == "repeat" { 2 } else { 0 }
+        + if mag_filter == "linear" { 4 } else { 0 };
+    let bind_group = &bind_groups[ndx];
 
 +    // compute a scale that will draw our 0 to 1 clip space quad
 +    // 2x2 pixels in the canvas.
-+    const scaleX = 4 / canvas.width;
-+    const scaleY = 4 / canvas.height;
++    let scale_x = 4.0 / frame.width as f32;
++    let scale_y = 4.0 / frame.height as f32;
 +
-+    uniformValues.set([scaleX, scaleY], kScaleOffset); // set the scale
-+    uniformValues.set([Math.sin(time * 0.25) * 0.8, -0.8], kOffsetOffset); // set the offset
++    uniform_values[K_SCALE_OFFSET..K_SCALE_OFFSET + 2].copy_from_slice(&[scale_x, scale_y]); // set the scale
++    uniform_values[K_OFFSET_OFFSET..K_OFFSET_OFFSET + 2]
++        .copy_from_slice(&[(time * 0.5).sin() * 0.8, -0.8]); // set the offset
 +
-+    // copy the values from JavaScript to the GPU
-+    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
++    // copy the values from Rust to the GPU
++    frame.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 
     ...
-
-+    requestAnimationFrame(render);
-  }
-+  requestAnimationFrame(render);
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize / 64 | 0;
-      const height = entry.contentBoxSize[0].blockSize / 64 | 0;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
--      // re-render
--      render();
-    }
-  });
-  observer.observe(canvas);
-}
 ```
 
 The code above sets the scale so that we'll draw the quad the size of 2x2 pixels in the canvas.
-It also sets the offset from -0.8 to +0.8 using `Math.sin` so that the quad will
+It also sets the offset from -0.8 to +0.8 using `sin` so that the quad will
 slowly go back and forth across the canvas.
 
 Finally let's add `minFilter` to our settings and combinations
 
-```js
-  const bindGroups = [];
--  for (let i = 0; i < 8; ++i) {
-+  for (let i = 0; i < 16; ++i) {
-    const sampler = device.createSampler({
-      addressModeU: (i & 1) ? 'repeat' : 'clamp-to-edge',
-      addressModeV: (i & 2) ? 'repeat' : 'clamp-to-edge',
-      magFilter: (i & 4) ? 'linear' : 'nearest',
-+      minFilter: (i & 8) ? 'linear' : 'nearest',
+```rust
+  let mut bind_groups = Vec::new();
+-  for i in 0..8 {
++  for i in 0..16 {
+    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+      address_mode_u: if i & 1 != 0 {
+        wgpu::AddressMode::Repeat
+      } else {
+        wgpu::AddressMode::ClampToEdge
+      },
+      address_mode_v: if i & 2 != 0 {
+        wgpu::AddressMode::Repeat
+      } else {
+        wgpu::AddressMode::ClampToEdge
+      },
+      mag_filter: if i & 4 != 0 {
+        wgpu::FilterMode::Linear
+      } else {
+        wgpu::FilterMode::Nearest
+      },
++      min_filter: if i & 8 != 0 {
++        wgpu::FilterMode::Linear
++      } else {
++        wgpu::FilterMode::Nearest
++      },
+      ..Default::default()
     });
 
 ...
 
-  const settings = {
-    addressModeU: 'repeat',
-    addressModeV: 'repeat',
-    magFilter: 'linear',
-+    minFilter: 'linear',
-  };
+    // read the settings the GUI on the page sets
+    let address_mode_u = wgpu_fun::setting_str("addressModeU", "repeat");
+    let address_mode_v = wgpu_fun::setting_str("addressModeV", "repeat");
+    let mag_filter = wgpu_fun::setting_str("magFilter", "linear");
++    let min_filter = wgpu_fun::setting_str("minFilter", "linear");
 
-  const addressOptions = ['repeat', 'clamp-to-edge'];
-  const filterOptions = ['nearest', 'linear'];
-
-  const gui = new GUI();
--  gui.onChange(render);
-  Object.assign(gui.domElement.style, {right: '', left: '15px'});
-  gui.add(settings, 'addressModeU', addressOptions);
-  gui.add(settings, 'addressModeV', addressOptions);
-  gui.add(settings, 'magFilter', filterOptions);
-+  gui.add(settings, 'minFilter', filterOptions);
-
-  function render(time) {
-    time *= 0.001;
-    const ndx = (settings.addressModeU === 'repeat' ? 1 : 0) +
-                (settings.addressModeV === 'repeat' ? 2 : 0) +
--                (settings.magFilter === 'linear' ? 4 : 0);
-+                (settings.magFilter === 'linear' ? 4 : 0) +
-+                (settings.minFilter === 'linear' ? 8 : 0);
+    let ndx = if address_mode_u == "repeat" { 1 } else { 0 }
+        + if address_mode_v == "repeat" { 2 } else { 0 }
+-        + if mag_filter == "linear" { 4 } else { 0 };
++        + if mag_filter == "linear" { 4 } else { 0 }
++        + if min_filter == "linear" { 8 } else { 0 };
 ```
 
-We no longer need to call `render` when a setting changes since we're
-rendering constantly using `requestAnimationFrame` (often called "rAF"
-and this style of rendering loop is often called a "rAF loop")
+and to the page's GUI
+
+```js
+const settings = {
+  addressModeU: 'repeat',
+  addressModeV: 'repeat',
+  magFilter: 'linear',
++  minFilter: 'linear',
+};
+
+const addressOptions = ['repeat', 'clamp-to-edge'];
+const filterOptions = ['nearest', 'linear'];
+
+const gui = new GUI();
+Object.assign(gui.domElement.style, {right: '', left: '15px'});
+gui.add(settings, 'addressModeU', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeU', v));
+gui.add(settings, 'addressModeV', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeV', v));
+gui.add(settings, 'magFilter', filterOptions)
+  .onChange(v => wasm.set_setting_str('magFilter', v));
++gui.add(settings, 'minFilter', filterOptions)
++  .onChange(v => wasm.set_setting_str('minFilter', v));
+```
+
+Note that since we're rendering constantly with `RenderMode::Continuous` we
+don't depend on a setting change triggering a re-render anymore; the next
+frame just reads the new values.
 
 {{{example url="../webgpu-simple-textured-quad-minfilter.html"}}}
 
@@ -711,139 +812,222 @@ of research as well as a matter of opinion. As a first idea, here's some code
 that generates each mip from the previous mip by bilinear filtering (as
 demonstrated above).
 
-```js
-const lerp = (a, b, t) => a + (b - a) * t;
-const mix = (a, b, t) => a.map((v, i) => lerp(v, b[i], t));
-const bilinearFilter = (tl, tr, bl, br, t1, t2) => {
-  const t = mix(tl, tr, t1);
-  const b = mix(bl, br, t1);
-  return mix(t, b, t2);
-};
+```rust
+/// One mip level: tightly packed rgba8unorm pixels.
+struct Mip {
+  data: Vec<u8>,
+  width: u32,
+  height: u32,
+}
 
-const createNextMipLevelRgba8Unorm = ({data: src, width: srcWidth, height: srcHeight}) => {
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+  a + (b - a) * t
+}
+
+fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+  std::array::from_fn(|i| lerp(a[i], b[i], t))
+}
+
+fn bilinear_filter(
+  tl: [f32; 4],
+  tr: [f32; 4],
+  bl: [f32; 4],
+  br: [f32; 4],
+  t1: f32,
+  t2: f32,
+) -> [f32; 4] {
+  let t = mix(tl, tr, t1);
+  let b = mix(bl, br, t1);
+  mix(t, b, t2)
+}
+
+fn create_next_mip_level_rgba8_unorm(
+  Mip {
+    data: src,
+    width: src_width,
+    height: src_height,
+  }: &Mip,
+) -> Mip {
   // compute the size of the next mip
-  const dstWidth = Math.max(1, srcWidth / 2 | 0);
-  const dstHeight = Math.max(1, srcHeight / 2 | 0);
-  const dst = new Uint8Array(dstWidth * dstHeight * 4);
+  let dst_width = 1.max(src_width / 2);
+  let dst_height = 1.max(src_height / 2);
+  let mut dst = vec![0u8; (dst_width * dst_height * 4) as usize];
 
-  const getSrcPixel = (x, y) => {
-    const offset = (y * srcWidth + x) * 4;
-    return src.subarray(offset, offset + 4);
+  let get_src_pixel = |x: u32, y: u32| -> [f32; 4] {
+    let offset = ((y * src_width + x) * 4) as usize;
+    std::array::from_fn(|i| src[offset + i] as f32)
   };
 
-  for (let y = 0; y < dstHeight; ++y) {
-    for (let x = 0; x < dstWidth; ++x) {
+  for y in 0..dst_height {
+    for x in 0..dst_width {
       // compute texcoord of the center of the destination texel
-      const u = (x + 0.5) / dstWidth;
-      const v = (y + 0.5) / dstHeight;
+      let u = (x as f32 + 0.5) / dst_width as f32;
+      let v = (y as f32 + 0.5) / dst_height as f32;
 
       // compute the same texcoord in the source - 0.5 a pixel
-      const au = (u * srcWidth - 0.5);
-      const av = (v * srcHeight - 0.5);
+      let au = u * *src_width as f32 - 0.5;
+      let av = v * *src_height as f32 - 0.5;
 
       // compute the src top left texel coord (not texcoord)
-      const tx = au | 0;
-      const ty = av | 0;
+      let tx = au as u32;
+      let ty = av as u32;
 
       // compute the mix amounts between pixels
-      const t1 = au % 1;
-      const t2 = av % 1;
+      let t1 = au % 1.0;
+      let t2 = av % 1.0;
 
       // get the 4 pixels
-      const tl = getSrcPixel(tx, ty);
-      const tr = getSrcPixel(tx + 1, ty);
-      const bl = getSrcPixel(tx, ty + 1);
-      const br = getSrcPixel(tx + 1, ty + 1);
+      let tl = get_src_pixel(tx, ty);
+      let tr = get_src_pixel(tx + 1, ty);
+      let bl = get_src_pixel(tx, ty + 1);
+      let br = get_src_pixel(tx + 1, ty + 1);
 
       // copy the "sampled" result into the dest.
-      const dstOffset = (y * dstWidth + x) * 4;
-      dst.set(bilinearFilter(tl, tr, bl, br, t1, t2), dstOffset);
+      let dst_offset = ((y * dst_width + x) * 4) as usize;
+      let sampled = bilinear_filter(tl, tr, bl, br, t1, t2);
+      for (d, s) in dst[dst_offset..dst_offset + 4].iter_mut().zip(sampled) {
+        *d = s as u8;
+      }
     }
   }
-  return { data: dst, width: dstWidth, height: dstHeight };
-};
+  Mip {
+    data: dst,
+    width: dst_width,
+    height: dst_height,
+  }
+}
 
-const generateMips = (src, srcWidth) => {
-  const srcHeight = src.length / 4 / srcWidth;
+fn generate_mips(src: Vec<u8>, src_width: u32) -> Vec<Mip> {
+  let src_height = src.len() as u32 / 4 / src_width;
 
   // populate with first mip level (base level)
-  let mip = { data: src, width: srcWidth, height: srcHeight, };
-  const mips = [mip];
+  let mut mips = vec![Mip {
+    data: src,
+    width: src_width,
+    height: src_height,
+  }];
 
-  while (mip.width > 1 || mip.height > 1) {
-    mip = createNextMipLevelRgba8Unorm(mip);
+  while mips.last().unwrap().width > 1 || mips.last().unwrap().height > 1 {
+    let mip = create_next_mip_level_rgba8_unorm(mips.last().unwrap());
     mips.push(mip);
   }
-  return mips;
-};
+  mips
+}
 ```
 
 We'll go over how to do this on the GPU in [another article](webgpu-importing-textures.html).
 For now, we can use the code above to generate a mipmap.
 
-We pass our texture data to the function above, and it returns an array of mip level data.
+We pass our texture data to the function above, and it returns a `Vec` of mip level data.
 We can then create a texture with all the mip levels
 
-```js
-  const mips = generateMips(textureData, kTextureWidth);
+```rust
++  let mips = generate_mips(texture_data, K_TEXTURE_WIDTH);
 
-  const texture = device.createTexture({
-    label: 'yellow F on red',
-+    size: [mips[0].width, mips[0].height],
-+    mipLevelCount: mips.length,
-    format: 'rgba8unorm',
-    usage:
-      GPUTextureUsage.TEXTURE_BINDING |
-      GPUTextureUsage.COPY_DST,
+  let texture = app.device.create_texture(&wgpu::TextureDescriptor {
+    label: Some("yellow F on red"),
+    size: wgpu::Extent3d {
+-      width: K_TEXTURE_WIDTH,
+-      height: K_TEXTURE_HEIGHT,
++      width: mips[0].width,
++      height: mips[0].height,
+      depth_or_array_layers: 1,
+    },
+-    mip_level_count: 1,
++    mip_level_count: mips.len() as u32,
+    sample_count: 1,
+    dimension: wgpu::TextureDimension::D2,
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    view_formats: &[],
   });
-  mips.forEach(({data, width, height}, mipLevel) => {
-    device.queue.writeTexture(
--      { texture },
--      textureData,
--      { bytesPerRow: kTextureWidth * 4 },
--      { width: kTextureWidth, height: kTextureHeight },
-+      { texture, mipLevel },
+-  app.queue.write_texture(
+-    wgpu::TexelCopyTextureInfo {
+-      texture: &texture,
+-      mip_level: 0,
+-      origin: wgpu::Origin3d::ZERO,
+-      aspect: wgpu::TextureAspect::All,
+-    },
+-    &texture_data,
+-    wgpu::TexelCopyBufferLayout {
+-      offset: 0,
+-      bytes_per_row: Some(K_TEXTURE_WIDTH * 4),
+-      rows_per_image: None,
+-    },
+-    wgpu::Extent3d {
+-      width: K_TEXTURE_WIDTH,
+-      height: K_TEXTURE_HEIGHT,
+-      depth_or_array_layers: 1,
+-    },
+-  );
++  for (mip_level, Mip { data, width, height }) in mips.iter().enumerate() {
++    app.queue.write_texture(
++      wgpu::TexelCopyTextureInfo {
++        texture: &texture,
++        mip_level: mip_level as u32,
++        origin: wgpu::Origin3d::ZERO,
++        aspect: wgpu::TextureAspect::All,
++      },
 +      data,
-+      { bytesPerRow: width * 4 },
-+      { width, height },
-    );
-  });
++      wgpu::TexelCopyBufferLayout {
++        offset: 0,
++        bytes_per_row: Some(width * 4),
++        rows_per_image: None,
++      },
++      wgpu::Extent3d {
++        width: *width,
++        height: *height,
++        depth_or_array_layers: 1,
++      },
++    );
++  }
 ```
 
-Notice we pass in `mipLevelCount` to the number of mip levels. WebGPU will then
+Notice we set `mip_level_count` to the number of mip levels. WebGPU will then
 create the correct sized mip level at each level. We then copy the data to each
-level by specifying the `mipLevel`
+level by specifying the `mip_level`
 
 Let's also add a scale setting so we can see the quad drawn at different sizes.
+On the page
 
 ```js
-  const settings = {
-    addressModeU: 'repeat',
-    addressModeV: 'repeat',
-    magFilter: 'linear',
-    minFilter: 'linear',
-+    scale: 1,
-  };
+const settings = {
+  addressModeU: 'repeat',
+  addressModeV: 'repeat',
+  magFilter: 'linear',
+  minFilter: 'linear',
++  scale: 1,
+};
 
-  ...
+...
 
-  const gui = new GUI();
-  Object.assign(gui.domElement.style, {right: '', left: '15px'});
-  gui.add(settings, 'addressModeU', addressOptions);
-  gui.add(settings, 'addressModeV', addressOptions);
-  gui.add(settings, 'magFilter', filterOptions);
-  gui.add(settings, 'minFilter', filterOptions);
-+  gui.add(settings, 'scale', 0.5, 6);
+const gui = new GUI();
+Object.assign(gui.domElement.style, {right: '', left: '15px'});
+gui.add(settings, 'addressModeU', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeU', v));
+gui.add(settings, 'addressModeV', addressOptions)
+  .onChange(v => wasm.set_setting_str('addressModeV', v));
+gui.add(settings, 'magFilter', filterOptions)
+  .onChange(v => wasm.set_setting_str('magFilter', v));
+gui.add(settings, 'minFilter', filterOptions)
+  .onChange(v => wasm.set_setting_str('minFilter', v));
++gui.add(settings, 'scale', 0.5, 6)
++  .onChange(v => wasm.set_setting_num('scale', v));
+```
 
-  function render(time) {
+and in the Rust render code
+
+```rust
+    let mag_filter = wgpu_fun::setting_str("magFilter", "linear");
+    let min_filter = wgpu_fun::setting_str("minFilter", "linear");
++    let scale = wgpu_fun::setting_f64("scale", 1.0) as f32;
 
     ...
 
--    const scaleX = 4 / canvas.width;
--    const scaleY = 4 / canvas.height;
-+    const scaleX = 4 / canvas.width * settings.scale;
-+    const scaleY = 4 / canvas.height * settings.scale;
-
+-    let scale_x = 4.0 / frame.width as f32;
+-    let scale_y = 4.0 / frame.height as f32;
++    let scale_x = 4.0 / frame.width as f32 * scale;
++    let scale_y = 4.0 / frame.height as f32 * scale;
 ```
 
 And with that the GPU is choosing the smallest mip to draw and the flickering is
@@ -874,66 +1058,89 @@ how `mipmapFilter` works.
 First let's make some textures. We'll make one 16x16 texture which I think will
 better show `mipmapFilter`'s effect.
 
-```js
-  const createBlendedMipmap = () => {
-    const w = [255, 255, 255, 255];
-    const r = [255,   0,   0, 255];
-    const b = [  0,  28, 116, 255];
-    const y = [255, 231,   0, 255];
-    const g = [ 58, 181,  75, 255];
-    const a = [ 38, 123, 167, 255];
-    const data = new Uint8Array([
-      w, r, r, r, r, r, r, a, a, r, r, r, r, r, r, w,
-      w, w, r, r, r, r, r, a, a, r, r, r, r, r, w, w,
-      w, w, w, r, r, r, r, a, a, r, r, r, r, w, w, w,
-      w, w, w, w, r, r, r, a, a, r, r, r, w, w, w, w,
-      w, w, w, w, w, r, r, a, a, r, r, w, w, w, w, w,
-      w, w, w, w, w, w, r, a, a, r, w, w, w, w, w, w,
-      w, w, w, w, w, w, w, a, a, w, w, w, w, w, w, w,
-      b, b, b, b, b, b, b, b, a, y, y, y, y, y, y, y,
-      b, b, b, b, b, b, b, g, y, y, y, y, y, y, y, y,
-      w, w, w, w, w, w, w, g, g, w, w, w, w, w, w, w,
-      w, w, w, w, w, w, r, g, g, r, w, w, w, w, w, w,
-      w, w, w, w, w, r, r, g, g, r, r, w, w, w, w, w,
-      w, w, w, w, r, r, r, g, g, r, r, r, w, w, w, w,
-      w, w, w, r, r, r, r, g, g, r, r, r, r, w, w, w,
-      w, w, r, r, r, r, r, g, g, r, r, r, r, r, w, w,
-      w, r, r, r, r, r, r, g, g, r, r, r, r, r, r, w,
-    ].flat());
-    return generateMips(data, 16);
-  };
+```rust
+fn create_blended_mipmap() -> Vec<Mip> {
+  let w: [u8; 4] = [255, 255, 255, 255];
+  let r: [u8; 4] = [255, 0, 0, 255];
+  let b: [u8; 4] = [0, 28, 116, 255];
+  let y: [u8; 4] = [255, 231, 0, 255];
+  let g: [u8; 4] = [58, 181, 75, 255];
+  let a: [u8; 4] = [38, 123, 167, 255];
+  #[rustfmt::skip]
+  let data = [
+    w, r, r, r, r, r, r, a, a, r, r, r, r, r, r, w,
+    w, w, r, r, r, r, r, a, a, r, r, r, r, r, w, w,
+    w, w, w, r, r, r, r, a, a, r, r, r, r, w, w, w,
+    w, w, w, w, r, r, r, a, a, r, r, r, w, w, w, w,
+    w, w, w, w, w, r, r, a, a, r, r, w, w, w, w, w,
+    w, w, w, w, w, w, r, a, a, r, w, w, w, w, w, w,
+    w, w, w, w, w, w, w, a, a, w, w, w, w, w, w, w,
+    b, b, b, b, b, b, b, b, a, y, y, y, y, y, y, y,
+    b, b, b, b, b, b, b, g, y, y, y, y, y, y, y, y,
+    w, w, w, w, w, w, w, g, g, w, w, w, w, w, w, w,
+    w, w, w, w, w, w, r, g, g, r, w, w, w, w, w, w,
+    w, w, w, w, w, r, r, g, g, r, r, w, w, w, w, w,
+    w, w, w, w, r, r, r, g, g, r, r, r, w, w, w, w,
+    w, w, w, r, r, r, r, g, g, r, r, r, r, w, w, w,
+    w, w, r, r, r, r, r, g, g, r, r, r, r, r, w, w,
+    w, r, r, r, r, r, r, g, g, r, r, r, r, r, r, w,
+  ]
+  .concat();
+  generate_mips(data, 16)
+}
 ```
 
 This will generate these mip levels
 
 <div class="webgpu_center center diagram"><div data-diagram="blended-mips" style="display: inline-block;"></div></div>
 
-We're free to put any data in each mip level so another good way to see what's happening
-is to make each mip level different colors. Let's use the canvas 2d api to make mip levels.
+We're free to put any data in each mip level so another good way to see what's
+happening is to make each mip level different colors. The JavaScript version
+uses the canvas 2d api to draw the mip levels; we don't have a 2d canvas in
+Rust so we fill the same rectangles ourselves.
 
-```js
-  const createCheckedMipmap = () => {
-    const ctx = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
-    const levels = [
-      { size: 64, color: 'rgb(128,0,255)', },
-      { size: 32, color: 'rgb(0,255,0)', },
-      { size: 16, color: 'rgb(255,0,0)', },
-      { size:  8, color: 'rgb(255,255,0)', },
-      { size:  4, color: 'rgb(0,0,255)', },
-      { size:  2, color: 'rgb(0,255,255)', },
-      { size:  1, color: 'rgb(255,0,255)', },
-    ];
-    return levels.map(({size, color}, i) => {
-      ctx.canvas.width = size;
-      ctx.canvas.height = size;
-      ctx.fillStyle = i & 1 ? '#000' : '#fff';
-      ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = color;
-      ctx.fillRect(0, 0, size / 2, size / 2);
-      ctx.fillRect(size / 2, size / 2, size / 2, size / 2);
-      return ctx.getImageData(0, 0, size, size);
-    });
+```rust
+// The JS version draws these mip levels with the canvas 2d api. We fill
+// the same rectangles ourselves.
+fn create_checked_mipmap() -> Vec<Mip> {
+  let fill_rect = |data: &mut [u8], size: u32, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]| {
+    for py in y..y + h {
+      for px in x..x + w {
+        let offset = ((py * size + px) * 4) as usize;
+        data[offset..offset + 4].copy_from_slice(&color);
+      }
+    }
   };
+  let levels: [(u32, [u8; 4]); 7] = [
+    (64, [128, 0, 255, 255]),
+    (32, [0, 255, 0, 255]),
+    (16, [255, 0, 0, 255]),
+    (8, [255, 255, 0, 255]),
+    (4, [0, 0, 255, 255]),
+    (2, [0, 255, 255, 255]),
+    (1, [255, 0, 255, 255]),
+  ];
+  levels
+    .iter()
+    .enumerate()
+    .map(|(i, &(size, color))| {
+      let mut data = vec![0u8; (size * size * 4) as usize];
+      let background: [u8; 4] = if i & 1 != 0 {
+        [0, 0, 0, 255] // '#000'
+      } else {
+        [255, 255, 255, 255] // '#fff'
+      };
+      fill_rect(&mut data, size, 0, 0, size, size, background);
+      fill_rect(&mut data, size, 0, 0, size / 2, size / 2, color);
+      fill_rect(&mut data, size, size / 2, size / 2, size / 2, size / 2, color);
+      Mip {
+        data,
+        width: size,
+        height: size,
+      }
+    })
+    .collect()
+}
 ```
 
 This code will generate these mip levels.
@@ -942,37 +1149,65 @@ This code will generate these mip levels.
 
 Now that we've created the data lets create the textures
 
-```js
-+  const createTextureWithMips = (mips, label) => {
-    const texture = device.createTexture({
--      label: 'yellow F on red',
-+      label,
-      size: [mips[0].width, mips[0].height],
-      mipLevelCount: mips.length,
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST,
+```rust
++  fn create_texture_with_mips(
++    device: &wgpu::Device,
++    queue: &wgpu::Queue,
++    mips: Vec<Mip>,
++    label: &str,
++  ) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+-      label: Some("yellow F on red"),
++      label: Some(label),
+      size: wgpu::Extent3d {
+        width: mips[0].width,
+        height: mips[0].height,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: mips.len() as u32,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba8Unorm,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+      view_formats: &[],
     });
-    mips.forEach(({data, width, height}, mipLevel) => {
-      device.queue.writeTexture(
-          { texture, mipLevel },
-          data,
-          { bytesPerRow: width * 4 },
-          { width, height },
+    for (mip_level, Mip { data, width, height }) in mips.iter().enumerate() {
+      queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+          texture: &texture,
+          mip_level: mip_level as u32,
+          origin: wgpu::Origin3d::ZERO,
+          aspect: wgpu::TextureAspect::All,
+        },
+        data,
+        wgpu::TexelCopyBufferLayout {
+          offset: 0,
+          bytes_per_row: Some(width * 4),
+          rows_per_image: None,
+        },
+        wgpu::Extent3d {
+          width: *width,
+          height: *height,
+          depth_or_array_layers: 1,
+        },
       );
-    });
-    return texture;
-+  };
+    }
++    texture
++  }
 
-+  const textures = [
-+    createTextureWithMips(createBlendedMipmap(), 'blended'),
-+    createTextureWithMips(createCheckedMipmap(), 'checker'),
++  let textures = [
++    create_texture_with_mips(&app.device, &app.queue, create_blended_mipmap(), "blended"),
++    create_texture_with_mips(&app.device, &app.queue, create_checked_mipmap(), "checker"),
 +  ];
++  let texture_views: Vec<wgpu::TextureView> = textures
++    .iter()
++    .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
++    .collect();
 ```
 
 We're going to draw a quad extending into the distance in 8 location. 
-We'll use matrix math as covered in [the series of articles on 3D](webgpu-cameras.html).
+We'll use matrix math as covered in [the series of articles on 3D](webgpu-cameras.html),
+via the [glam](https://crates.io/crates/glam) crate.
 
 ```wsgl
 struct OurVertexShaderOutput {
@@ -1027,137 +1262,154 @@ groups per object, one for each texture. We can then select which one to use
 when we render. To draw the plane in 8 locations we'll also need one uniform
 buffer per location like we covered in [the article on uniforms](webgpu-uniforms.html). 
 
-```js
-  // offsets to the various uniform values in float32 indices
-  const kMatrixOffset = 0;
+```rust
+  struct ObjectInfo {
+    bind_groups: Vec<wgpu::BindGroup>,
+    uniform_buffer: wgpu::Buffer,
+  }
 
-  const objectInfos = [];
-  for (let i = 0; i < 8; ++i) {
-    const sampler = device.createSampler({
-      addressModeU: 'repeat',
-      addressModeV: 'repeat',
-      magFilter: (i & 1) ? 'linear' : 'nearest',
-      minFilter: (i & 2) ? 'linear' : 'nearest',
-      mipmapFilter: (i & 4) ? 'linear' : 'nearest',
+  let mut object_infos: Vec<ObjectInfo> = Vec::new();
+  for i in 0..8 {
+    let sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+      address_mode_u: wgpu::AddressMode::Repeat,
+      address_mode_v: wgpu::AddressMode::Repeat,
+      mag_filter: if i & 1 != 0 {
+        wgpu::FilterMode::Linear
+      } else {
+        wgpu::FilterMode::Nearest
+      },
+      min_filter: if i & 2 != 0 {
+        wgpu::FilterMode::Linear
+      } else {
+        wgpu::FilterMode::Nearest
+      },
+      mipmap_filter: if i & 4 != 0 {
+        wgpu::MipmapFilterMode::Linear
+      } else {
+        wgpu::MipmapFilterMode::Nearest
+      },
+      ..Default::default()
     });
 
     // create a buffer for the uniform values
-    const uniformBufferSize =
-      16 * 4; // matrix is 16 32bit floats (4bytes each)
-    const uniformBuffer = device.createBuffer({
-      label: 'uniforms for quad',
-      size: uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    const UNIFORM_BUFFER_SIZE: u64 = 16 * 4; // matrix is 16 32bit floats (4bytes each)
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("uniforms for quad"),
+      size: UNIFORM_BUFFER_SIZE,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 
-    // create a typedarray to hold the values for the uniforms in JavaScript
-    const uniformValues = new Float32Array(uniformBufferSize / 4);
-    const matrix = uniformValues.subarray(kMatrixOffset, 16);
-
-    const bindGroups = textures.map(texture =>
-      device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: sampler },
-          { binding: 1, resource: texture },
-          { binding: 2, resource: uniformBuffer },
-        ],
-      }));
+    let bind_groups = texture_views
+      .iter()
+      .map(|texture_view| {
+        app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+          label: None,
+          layout: &pipeline.get_bind_group_layout(0),
+          entries: &[
+            wgpu::BindGroupEntry {
+              binding: 0,
+              resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+              binding: 1,
+              resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+              binding: 2,
+              resource: uniform_buffer.as_entire_binding(),
+            },
+          ],
+        })
+      })
+      .collect();
 
     // Save the data we need to render this object.
-    objectInfos.push({
-      bindGroups,
-      matrix,
-      uniformValues,
-      uniformBuffer,
+    object_infos.push(ObjectInfo {
+      bind_groups,
+      uniform_buffer,
     });
   }
 ```
 
 At render time we [compute a viewProjection matrix](webgpu-cameras.html).
 
-```js
-  function render() {
-    const fov = 60 * Math.PI / 180;  // 60 degrees in radians
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const zNear  = 1;
-    const zFar   = 2000;
-    const projectionMatrix = mat4.perspective(fov, aspect, zNear, zFar);
+```rust
+use glam::{vec3, Mat4};
 
-    const cameraPosition = [0, 0, 2];
-    const up = [0, 1, 0];
-    const target = [0, 0, 0];
-    const cameraMatrix = mat4.lookAt(cameraPosition, target, up);
-    const viewMatrix = mat4.inverse(cameraMatrix);
-    const viewProjectionMatrix = mat4.multiply(projectionMatrix, viewMatrix);
+...
+
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    let fov = 60.0f32.to_radians(); // 60 degrees in radians
+    let aspect = frame.width as f32 / frame.height as f32;
+    let z_near = 1.0;
+    let z_far = 2000.0;
+    let projection_matrix = Mat4::perspective_rh(fov, aspect, z_near, z_far);
+
+    let camera_position = vec3(0.0, 0.0, 2.0);
+    let up = vec3(0.0, 1.0, 0.0);
+    let target = vec3(0.0, 0.0, 0.0);
+    let view_matrix = Mat4::look_at_rh(camera_position, target, up);
+    let view_projection_matrix = projection_matrix * view_matrix;
 
     ...
 ```
+
+(One glam note: where the JavaScript version computes a camera matrix with
+`lookAt` and then inverts it to get a view matrix, glam's `Mat4::look_at_rh`
+returns the view matrix directly.)
 
 Then for each plane, we select a bind group based on which texture we want to show
 and compute a unique matrix to position that plane.
 
-```js
-  let texNdx = 0;
+```rust
+    // clicking the canvas cycles this through the textures (see the
+    // page's click handler)
+    let tex_ndx = wgpu_fun::setting_f64("texNdx", 0.0) as usize % textures.len();
 
-  function render() {
     ...
 
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
+      pass.set_pipeline(&pipeline);
 
-    objectInfos.forEach(({bindGroups, matrix, uniformBuffer, uniformValues}, i) => {
-      const bindGroup = bindGroups[texNdx];
+      for (i, ObjectInfo { bind_groups, uniform_buffer }) in object_infos.iter().enumerate() {
+        let bind_group = &bind_groups[tex_ndx];
 
-      const xSpacing = 1.2;
-      const ySpacing = 0.7;
-      const zDepth = 50;
+        let x_spacing = 1.2;
+        let y_spacing = 0.7;
+        let z_depth = 50.0;
 
-      const x = i % 4 - 1.5;
-      const y = i < 4 ? 1 : -1;
+        let x = (i % 4) as f32 - 1.5;
+        let y = if i < 4 { 1.0 } else { -1.0 };
 
-      mat4.translate(viewProjectionMatrix, [x * xSpacing, y * ySpacing, -zDepth * 0.5], matrix);
-      mat4.rotateX(matrix, 0.5 * Math.PI, matrix);
-      mat4.scale(matrix, [1, zDepth * 2, 1], matrix);
-      mat4.translate(matrix, [-0.5, -0.5, 0], matrix);
+        let matrix = view_projection_matrix
+          * Mat4::from_translation(vec3(x * x_spacing, y * y_spacing, -z_depth * 0.5))
+          * Mat4::from_rotation_x(0.5 * std::f32::consts::PI)
+          * Mat4::from_scale(vec3(1.0, z_depth * 2.0, 1.0))
+          * Mat4::from_translation(vec3(-0.5, -0.5, 0.0));
 
-      // copy the values from JavaScript to the GPU
-      device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+        // copy the values from Rust to the GPU
+        frame.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&matrix.to_cols_array()));
 
-      pass.setBindGroup(0, bindGroup);
-      pass.draw(6);  // call our vertex shader 6 times
-    });
-
-    pass.end();
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..6, 0..1); // call our vertex shader 6 times
+      }
 ```
 
-I removed the existing UI code, switched back from a rAF loop to rendering
-in the `ResizeObserver` callback, and stopped making the resolution low.
+I removed the existing UI code, switched back from continuous rendering to
+`RenderMode::Once` (render when needed — at the start and on resize), and
+stopped making the resolution low.
 
-```js
--  function render(time) {
--    time *= 0.001;
-+  function render() {
+```rust
+-  app.run(RenderMode::Continuous, move |frame: &Frame| {
+-    let time = frame.time as f32;
++  app.run(RenderMode::Once, move |frame: &Frame| {
+```
 
-    ...
-
--    requestAnimationFrame(render);
-  }
--  requestAnimationFrame(render);
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
--      const width = entry.contentBoxSize[0].inlineSize / 64 | 0;
--      const height = entry.contentBoxSize[0].blockSize / 64 | 0;
-+      const width = entry.contentBoxSize[0].inlineSize;
-+      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-+      render();
-    }
-  });
-  observer.observe(canvas);
+```rust
+-  let mut app = App::new("WebGPU Simple Textured Quad Mipmap").await;
++  let mut app = App::new("WebGPU Simple Textured Quad MipFilter").await;
+  app.auto_resize = true;
+-  app.resize_divisor = 64;
 ```
 
 Since we're no longer low-res we can get rid of the CSS that was preventing the browser
@@ -1174,13 +1426,16 @@ canvas {
 ```
 
 And we can make it so if you click the canvas it switches which texture to
-draw with and re-renders
+draw with. On the page, the click handler updates the `texNdx` setting, and
+because this is a `RenderMode::Once` example, changing a setting re-renders.
 
 ```js
-  canvas.addEventListener('click', () => {
-    texNdx = (texNdx + 1) % textures.length;
-    render();
-  });
+const canvas = document.querySelector('canvas');
+let texNdx = 0;
+canvas.addEventListener('click', () => {
+  texNdx = (texNdx + 1) % 2;
+  wasm.set_setting_num('texNdx', texNdx);
+});
 ```
 
 {{{example url="../webgpu-simple-textured-quad-mipmapfilter.html"}}}
@@ -1216,11 +1471,12 @@ In some way you can *kind of* consider a "2d" texture just a "3d" texture with a
 depth of 1. And a "1d" texture is just a "2d" texture with a height of 1. Two
 actual differences, textures are limited in their maximum allowed dimensions. The
 limit is different for each type of texture "1d", "2d", and "3d". We've used the
-"2d" limit when setting the size of the canvas.
+"2d" limit when setting the size of the canvas — that's the
+`app.max_texture_dimension` in the wgpu_fun resize code we saw earlier.
 
-```js
-canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+```rust
+width = (width / app.resize_divisor).clamp(1, app.max_texture_dimension);
+height = (height / app.resize_divisor).clamp(1, app.max_texture_dimension);
 ```
 
 Another is speed, at least for a 3d texture vs a 2d texture, with all the
@@ -1243,9 +1499,9 @@ There are 6 types of texture views
 "1d" textures can only have a "1d" view. "3d" textures can only have a "3d" view.
 "2d" texture can have a "2d-array" view. If a "2d" texture has 6 layers it can
 have a "cube" view. If it has a multiple of 6 layers it can have a "cube-array"
-view. You can choose how to view a texture when you call `someTexture.createView`.
+view. You can choose how to view a texture when you call `some_texture.create_view`.
 Texture views default to the same as their dimension but you can pass a different
-dimension to `someTexture.createView`.
+dimension to `some_texture.create_view`.
 
 We'll cover "3d" textures [in the article on tone mapping / 3dLUTs](webgpu-3dluts.html)
 
@@ -1291,9 +1547,10 @@ Each type of texture has its own corresponding type in WGSL.
 </div>
 
 We'll cover some of this in actual use but, it can be a little confusing that
-when creating a texture (calling `device.createTexture`), there is only "1d",
-"2d", or "3d" as options and the default is "2d" so we have not had to specify
-the dimensions yet.
+when creating a texture (calling `device.create_texture`), there is only "1d",
+"2d", or "3d" as options (`wgpu::TextureDimension::{D1, D2, D3}`) — there is no
+"cube" dimension when creating a texture; a cube texture is a "2d" texture with
+6 layers viewed as a cube.
 
 ## Texture Formats
 
@@ -1330,7 +1587,7 @@ For example "rg11b10ufloat" is "rg11" so 11bits each of red and green. "b10" so
 
 * **renderable**
 
-  True means you can render to it (set its usage to `GPUTextureUsage.RENDER_ATTACHMENT`)
+  True means you can render to it (set its usage to `TextureUsages::RENDER_ATTACHMENT`)
 
 * **multisample**
 
@@ -1350,7 +1607,7 @@ For example "rg11b10ufloat" is "rg11" so 11bits each of red and green. "b10" so
   In the sampler type column, `unfilterable-float` means your sampler can only
   use `nearest` for that format and it means you may have to manually
   create a bind group layout, something we haven't done before as we've been
-  using `'auto'` layout. This mostly exists because desktop GPU can generally
+  using `layout: None`. This mostly exists because desktop GPU can generally
   filter 32bit floating point textures but, at least as of 2023, most mobile
   devices can not. If your adapter supports the `float32-filterable`
   [feature](webgpu-limits-and-features.html) and you enable it when requesting a
@@ -1368,11 +1625,11 @@ For example "rg11b10ufloat" is "rg11" so 11bits each of red and green. "b10" so
 
 * **copy src**
 
-  Whether you're allowed to specify `GPUTextureUsage.COPY_SRC`
+  Whether you're allowed to specify `TextureUsages::COPY_SRC`
 
 * **copy dst**
 
-  Whether you're allowed to specify `GPUTextureUsage.COPY_DST`
+  Whether you're allowed to specify `TextureUsages::COPY_DST`
 
 We'll use a depth texture in [an article in the series on 3d](webgpu-orthographic-projection.html) as well
 as [the article about shadow maps](webgpu-shadow-maps.html).

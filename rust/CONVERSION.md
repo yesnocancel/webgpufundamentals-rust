@@ -137,6 +137,14 @@ frame code reads current values from wgpu_fun's settings store:
   (not a HashMap); `@id(123)` constants are keyed by the decimal string
   `"123"`.
 - Per-object labels: `label: Some(&format!("thing {i}"))` works fine.
+- `PipelineLayoutDescriptor { label, bind_group_layouts: &[Option<&BindGroupLayout>],
+  immediate_size: 0 }` — layouts are Option-wrapped; no `push_constant_ranges`
+  field in wgpu 30.
+- Error scopes: `device.push_error_scope(wgpu::ErrorFilter::Validation)`
+  returns a guard; `guard.pop().await` yields `Option<wgpu::Error>` (JS
+  `pushErrorScope`/`popErrorScope`). Native wgpu PANICS on uncaptured
+  validation errors — examples that intentionally error must capture the
+  scope and print via wgpu_fun::print, then skip the failing work.
 
 ## wgpu_fun App knobs (mirror of JS page behaviors)
 
