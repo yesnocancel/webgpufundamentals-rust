@@ -8,3 +8,4 @@ rust/target/
 rust/test_frames/
 out/
 webgpu/wasm/
+browser-shots/
