@@ -140,6 +140,21 @@ pub fn print(msg: &str) {
     web_sys::console::log_1(&msg.into());
 }
 
+/// Log a line of output where the user can see it: appends a `<pre>` element
+/// to the page in the browser (like several JS examples' `log()` helper),
+/// prints to stdout natively.
+pub fn log(msg: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{msg}");
+    #[cfg(target_arch = "wasm32")]
+    {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let elem = document.create_element("pre").unwrap();
+        elem.set_text_content(Some(msg));
+        document.body().unwrap().append_child(&elem).unwrap();
+    }
+}
+
 mod settings;
 pub use settings::{
     request_redraw, set_setting, setting_bool, setting_f64, setting_str, SettingValue,

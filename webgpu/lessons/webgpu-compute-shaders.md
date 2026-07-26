@@ -24,9 +24,9 @@ Here's the shader
 
 We then effectively ran the compute shader like this
 
-```js
+```rust
   ...
-  pass.dispatchWorkgroups(count);
+  pass.dispatch_workgroups(count, 1, 1);
 ```
 
 We need to go over the definition of workgroup.
@@ -72,7 +72,7 @@ are available.
   global_invocation_id = workgroup_id * workgroup_size + local_invocation_id
   ```
 
-* `num_workgroups`: What you passed to `pass.dispatchWorkgroups`
+* `num_workgroups`: What you passed to `pass.dispatch_workgroups`
 
 * `local_invocation_index`: The id of this thread linearized
 
@@ -92,90 +92,103 @@ from each invocation to buffers and then print out the values
 
 Here's the shader
 
-```js
-const dispatchCount = [4, 3, 2];
-const workgroupSize = [2, 3, 4];
+```rust
+let dispatch_count: [u32; 3] = [4, 3, 2];
+let workgroup_size: [u32; 3] = [2, 3, 4];
 
 // multiply all elements of an array
-const arrayProd = arr => arr.reduce((a, b) => a * b);
+let array_prod = |arr: [u32; 3]| arr.iter().product::<u32>();
 
-const numThreadsPerWorkgroup = arrayProd(workgroupSize);
+let num_threads_per_workgroup = array_prod(workgroup_size);
 
-const code = `
-// NOTE!: vec3u is padded to by 4 bytes
-@group(0) @binding(0) var<storage, read_write> workgroupResult: array<vec3u>;
-@group(0) @binding(1) var<storage, read_write> localResult: array<vec3u>;
-@group(0) @binding(2) var<storage, read_write> globalResult: array<vec3u>;
+let [wx, wy, wz] = workgroup_size;
+let code = format!("
+  // NOTE!: vec3u is padded to by 4 bytes
+  @group(0) @binding(0) var<storage, read_write> workgroupResult: array<vec3u>;
+  @group(0) @binding(1) var<storage, read_write> localResult: array<vec3u>;
+  @group(0) @binding(2) var<storage, read_write> globalResult: array<vec3u>;
 
-@compute @workgroup_size(${workgroupSize}) fn computeSomething(
-    @builtin(workgroup_id) workgroup_id : vec3<u32>,
-    @builtin(local_invocation_id) local_invocation_id : vec3<u32>,
-    @builtin(global_invocation_id) global_invocation_id : vec3<u32>,
-    @builtin(local_invocation_index) local_invocation_index: u32,
-    @builtin(num_workgroups) num_workgroups: vec3<u32>
-) {
-  // workgroup_index is similar to local_invocation_index except for
-  // workgroups, not threads inside a workgroup.
-  // It is not a builtin so we compute it ourselves.
+  @compute @workgroup_size({wx}, {wy}, {wz}) fn computeSomething(") + &r#"
+      @builtin(workgroup_id) workgroup_id : vec3<u32>,
+      @builtin(local_invocation_id) local_invocation_id : vec3<u32>,
+      @builtin(global_invocation_id) global_invocation_id : vec3<u32>,
+      @builtin(local_invocation_index) local_invocation_index: u32,
+      @builtin(num_workgroups) num_workgroups: vec3<u32>
+  ) {
+    // workgroup_index is similar to local_invocation_index except for
+    // workgroups, not threads inside a workgroup.
+    // It is not a builtin so we compute it ourselves.
 
-  let workgroup_index =  
-     workgroup_id.x +
-     workgroup_id.y * num_workgroups.x +
-     workgroup_id.z * num_workgroups.x * num_workgroups.y;
+    let workgroup_index =
+       workgroup_id.x +
+       workgroup_id.y * num_workgroups.x +
+       workgroup_id.z * num_workgroups.x * num_workgroups.y;
 
-  // global_invocation_index is like local_invocation_index
-  // except linear across all invocations across all dispatched
-  // workgroups. It is not a builtin so we compute it ourselves.
+    // global_invocation_index is like local_invocation_index
+    // except linear across all invocations across all dispatched
+    // workgroups. It is not a builtin so we compute it ourselves.
 
-  let global_invocation_index =
-     workgroup_index * ${numThreadsPerWorkgroup} +
-     local_invocation_index;
+    let global_invocation_index =
+       workgroup_index * NUM_THREADS_PER_WORKGROUP +
+       local_invocation_index;
 
-  // now we can write each of these builtins to our buffers.
-  workgroupResult[global_invocation_index] = workgroup_id;
-  localResult[global_invocation_index] = local_invocation_id;
-  globalResult[global_invocation_index] = global_invocation_id;
-`;
+    // now we can write each of these builtins to our buffers.
+    workgroupResult[global_invocation_index] = workgroup_id;
+    localResult[global_invocation_index] = local_invocation_id;
+    globalResult[global_invocation_index] = global_invocation_id;
+  }
+  "#.replace("NUM_THREADS_PER_WORKGROUP", &num_threads_per_workgroup.to_string());
 ```
 
-We used a JavaScript template literal so we can set the workgroup size
-from the JavaScript variable `workgroupSize`. This ends up being
-hard coded into the shader.
+We used Rust's `format!` for the first part of the WGSL so we can set the
+workgroup size from the Rust variable `workgroup_size`, and a plain
+`replace` to substitute the thread count into the rest (a `format!` across
+the whole shader would make us escape every `{` in the WGSL). Either way,
+the values end up hard coded into the shader.
 
 Now that we have the shader we can make 3 buffers to store these results.
 
-```js
-  const numWorkgroups = arrayProd(dispatchCount);
-  const numResults = numWorkgroups * numThreadsPerWorkgroup;
-  const size = numResults * 4 * 4;  // vec3f * u32
+```rust
+  let num_workgroups = array_prod(dispatch_count);
+  let num_results = num_workgroups * num_threads_per_workgroup;
+  let size = (num_results * 4 * 4) as u64; // vec3u * u32
 
-  let usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
-  const workgroupBuffer = device.createBuffer({size, usage});
-  const localBuffer = device.createBuffer({size, usage});
-  const globalBuffer = device.createBuffer({size, usage});
+  let mut usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+  let make_buffer = |usage| {
+    device.create_buffer(&wgpu::BufferDescriptor {
+      label: None,
+      size,
+      usage,
+      mapped_at_creation: false,
+    })
+  };
+  let workgroup_buffer = make_buffer(usage);
+  let local_buffer = make_buffer(usage);
+  let global_buffer = make_buffer(usage);
 ```
 
-As we pointed out before, we can not map storage buffers into
-JavaScript so we need some buffers to we can map. We'll copy
+As we pointed out before, we can not map storage buffers to read them
+directly so we need some buffers we can map. We'll copy
 the results from the storage buffers to these mappable result
 buffers and then read the results.
 
-```js
-  usage = GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST;
-  const workgroupReadBuffer = device.createBuffer({size, usage});
-  const localReadBuffer = device.createBuffer({size, usage});
-  const globalReadBuffer = device.createBuffer({size, usage});
+```rust
+  usage = wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST;
+  let workgroup_read_buffer = make_buffer(usage);
+  let local_read_buffer = make_buffer(usage);
+  let global_read_buffer = make_buffer(usage);
 ```
 
 We make a bindgroup to bind all our storage buffers
 
-```js
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: workgroupBuffer },
-      { binding: 1, resource: localBuffer },
-      { binding: 2, resource: globalBuffer },
+```rust
+  let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry { binding: 0, resource: workgroup_buffer.as_entire_binding() },
+      wgpu::BindGroupEntry { binding: 1, resource: local_buffer.as_entire_binding() },
+      wgpu::BindGroupEntry { binding: 2, resource: global_buffer.as_entire_binding() },
     ],
   });
 ```
@@ -183,81 +196,85 @@ We make a bindgroup to bind all our storage buffers
 We start an encoder and a compute pass encoder, the same as our previous
 example, then add the commands to run the compute shader.
 
-```js
+```rust
   // Encode commands to do the computation
-  const encoder = device.createCommandEncoder({ label: 'compute builtin encoder' });
-  const pass = encoder.beginComputePass({ label: 'compute builtin pass' });
+  let mut encoder = device.create_command_encoder(
+    &wgpu::CommandEncoderDescriptor { label: Some("compute builtin encoder") });
+  {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+      label: Some("compute builtin pass"),
+      timestamp_writes: None,
+    });
 
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(...dispatchCount);
-  pass.end();
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    let [dx, dy, dz] = dispatch_count;
+    pass.dispatch_workgroups(dx, dy, dz);
+  }
 ```
 
 We need to copy the results from the storage buffers to the mappable 
 result buffers.
 
-```js
-  encoder.copyBufferToBuffer(workgroupBuffer, 0, workgroupReadBuffer, 0, size);
-  encoder.copyBufferToBuffer(localBuffer, 0, localReadBuffer, 0, size);
-  encoder.copyBufferToBuffer(globalBuffer, 0, globalReadBuffer, 0, size);
+```rust
+  encoder.copy_buffer_to_buffer(&workgroup_buffer, 0, &workgroup_read_buffer, 0, size);
+  encoder.copy_buffer_to_buffer(&local_buffer, 0, &local_read_buffer, 0, size);
+  encoder.copy_buffer_to_buffer(&global_buffer, 0, &global_read_buffer, 0, size);
 ```
 
 And then end the encoder and submit the command buffer.
 
-```js
+```rust
   // Finish encoding and submit the commands
-  const commandBuffer = encoder.finish();
-  device.queue.submit([commandBuffer]);
+  let command_buffer = encoder.finish();
+  queue.submit([command_buffer]);
 ```
 
 Like before, to read the results we map the buffers and once they are
 ready we get typed array views of their contents.
 
-```js
+```rust
   // Read the results
-   await Promise.all([
-    workgroupReadBuffer.mapAsync(GPUMapMode.READ),
-    localReadBuffer.mapAsync(GPUMapMode.READ),
-    globalReadBuffer.mapAsync(GPUMapMode.READ),
-  ]);
+  wgpu_fun::map_async(&device, &workgroup_read_buffer, wgpu::MapMode::Read).await;
+  wgpu_fun::map_async(&device, &local_read_buffer, wgpu::MapMode::Read).await;
+  wgpu_fun::map_async(&device, &global_read_buffer, wgpu::MapMode::Read).await;
 
-  const workgroup = new Uint32Array(workgroupReadBuffer.getMappedRange());
-  const local = new Uint32Array(localReadBuffer.getMappedRange());
-  const global = new Uint32Array(globalReadBuffer.getMappedRange());
+  let workgroup_range = workgroup_read_buffer.slice(..).get_mapped_range().unwrap();
+  let local_range = local_read_buffer.slice(..).get_mapped_range().unwrap();
+  let global_range = global_read_buffer.slice(..).get_mapped_range().unwrap();
+  let workgroup: &[u32] = bytemuck::cast_slice(&workgroup_range);
+  let local: &[u32] = bytemuck::cast_slice(&local_range);
+  let global: &[u32] = bytemuck::cast_slice(&global_range);
 ```
 
-> Important: We mapped 3 buffers here and used `await Promise.all` to wait
-> for them all to be ready to use. You can **NOT* just wait on the last
-> buffer. You must wait on all 3 buffers.
+> Important: We mapped 3 buffers here and awaited each of them. You can
+> **NOT** just wait on the last buffer. You must wait on all 3 buffers.
 
 Finally we can print them out
 
-```js
-  const get3 = (arr, i) => {
-    const off = i * 4;
-    return `${arr[off]}, ${arr[off + 1]}, ${arr[off + 2]}`;
+```rust
+  let get3 = |arr: &[u32], i: u32| {
+    let off = (i * 4) as usize;
+    format!("{}, {}, {}", arr[off], arr[off + 1], arr[off + 2])
   };
 
-  for (let i = 0; i < numResults; ++i) {
-    if (i % numThreadsPerWorkgroup === 0) {
-      log(`\
+  for i in 0..num_results {
+    if i % num_threads_per_workgroup == 0 {
+      log(&format!("\
  ---------------------------------------
- global                 local     global   dispatch: ${i / numThreadsPerWorkgroup}
+ global                 local     global   dispatch: {}
  invoc.    workgroup    invoc.    invoc.
  index     id           id        id
- ---------------------------------------`);
+ ---------------------------------------", i / num_threads_per_workgroup));
     }
-    log(` ${i.toString().padStart(3)}:      ${get3(workgroup, i)}      ${get3(local, i)}   ${get3(global, i)}`)
+    log(&format!(" {:3}:      {}      {}   {}",
+        i, get3(workgroup, i), get3(local, i), get3(global, i)));
   }
-}
-
-function log(...args) {
-  const elem = document.createElement('pre');
-  elem.textContent = args.join(' ');
-  document.body.appendChild(elem);
-}
 ```
+
+`log` here is `wgpu_fun::log`, which appends a `<pre>` element to the page
+in the browser — the same as the JS version's `log` helper — and prints to
+the terminal natively.
 
 Here's the result
 
@@ -274,7 +291,7 @@ builtins as input.
 What size should you make a workgroup? The question often comes up,
 why not just always use `@workgroup_size(1, 1, 1)` and then it would
 be more trivial to decide how many iterations to run by only the
-parameters to `pass.dispatchWorkgroups`.
+parameters to `pass.dispatch_workgroups`.
 
 The reason is multiple threads within a workgroup are faster than
 individual dispatches.
@@ -324,16 +341,16 @@ Let's say you had this compute shader
 `;
 ```
 
-If that's hard to read, here's kind of the same JavaScript
+If that's hard to read, here's kind of the same Rust
 
-```js
-const result = [];
-for (let i = 0; i < 32; ++i) {
+```rust
+let mut result = vec![0];
+for i in 0..32 {
   result[0] = i;
 }
 ```
 
-In the JavaScript case, after the code runs, `result[0]` is clearly 31. In the compute shader case though,
+In the Rust case, after the code runs, `result[0]` is clearly 31. In the compute shader case though,
 all 32 iterations of the shader are running in parallel. Which ever one finishes
 last is the one who's value will be in `result[0]`. Which one runs last is undefined.
 
