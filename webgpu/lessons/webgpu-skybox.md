@@ -94,82 +94,99 @@ Note: We multiply the z direction by -1 for
 
 The pipeline has no buffers in the vertex stage
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'no attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-    },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-    depthStencil: {
-      depthWriteEnabled: true,
-      depthCompare: 'less-equal',
-      format: 'depth24plus',
-    },
-  });
+```rust
+  let pipeline = app
+      .device
+      .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+          label: Some("no attributes"),
+          layout: None,
+          vertex: wgpu::VertexState {
+              module: &module,
+              entry_point: None,
+              compilation_options: Default::default(),
+              buffers: &[],
+          },
+          fragment: Some(wgpu::FragmentState {
+              module: &module,
+              entry_point: None,
+              compilation_options: Default::default(),
+              targets: &[Some(app.format.into())],
+          }),
+          primitive: Default::default(),
+          depth_stencil: Some(wgpu::DepthStencilState {
+              depth_write_enabled: Some(true),
+              depth_compare: Some(wgpu::CompareFunction::LessEqual),
+              format: wgpu::TextureFormat::Depth24Plus,
+              stencil: Default::default(),
+              bias: Default::default(),
+          }),
+          multisample: Default::default(),
+          multiview_mask: None,
+          cache: None,
+      });
 ```
 
-Notice we set the `depthCompare` to `less-equal` instead of `less` because
+Notice we set the `depth_compare` to `LessEqual` instead of `Less` because
 we clear the depth texture to 1.0 and we're rendering at 1.0. 1.0 is not less
-than 1.0 so we'd render nothing if we didn't change this to `less-equal`.
+than 1.0 so we'd render nothing if we didn't change this to `LessEqual`.
 
 Again we need to setup a uniform buffer
 
-```js
+```rust
   // viewDirectionProjectionInverse
-  const uniformBufferSize = (16) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("uniforms"),
+      size: UNIFORM_BUFFER_SIZE,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
   // offsets to the various uniform values in float32 indices
-  const kViewDirectionProjectionInverseOffset = 0;
-
-  const viewDirectionProjectionInverseValue = uniformValues.subarray(
-      kViewDirectionProjectionInverseOffset,
-      kViewDirectionProjectionInverseOffset + 16);
+  const K_VIEW_DIRECTION_PROJECTION_INVERSE_OFFSET: usize = 0;
 ```
 
 and set it at render time
 
-```js
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(
-        60 * Math.PI / 180,
+```rust
+    let aspect = frame.width as f32 / frame.height as f32;
+    let projection = Mat4::perspective_rh(
+        60.0f32.to_radians(),
         aspect,
-        0.1,      // zNear
-        10,      // zFar
+        0.1,  // zNear
+        10.0, // zFar
     );
     // Camera going in circle from origin looking at origin
-    const cameraPosition = [Math.cos(time * .1), 0, Math.sin(time * .1)];
-    const view = mat4.lookAt(
-      cameraPosition,
-      [0, 0, 0],  // target
-      [0, 1, 0],  // up
+    let camera_position = Vec3::new((time * 0.1).cos(), 0.0, (time * 0.1).sin());
+    let mut view = Mat4::look_at_rh(
+        camera_position,
+        Vec3::new(0.0, 0.0, 0.0), // target
+        Vec3::new(0.0, 1.0, 0.0), // up
     );
     // We only care about direction so remove the translation
-    view[12] = 0;
-    view[13] = 0;
-    view[14] = 0;
+    view.w_axis.x = 0.0;
+    view.w_axis.y = 0.0;
+    view.w_axis.z = 0.0;
 
-    const viewProjection = mat4.multiply(projection, view);
-    mat4.inverse(viewProjection, viewDirectionProjectionInverseValue);
+    let view_projection = projection * view;
+    let view_direction_projection_inverse = view_projection.inverse();
+
+    uniform_values[K_VIEW_DIRECTION_PROJECTION_INVERSE_OFFSET
+        ..K_VIEW_DIRECTION_PROJECTION_INVERSE_OFFSET + 16]
+        .copy_from_slice(&view_direction_projection_inverse.to_cols_array());
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame
+        .queue
+        .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 Notice above we're spinning the camera around the origin where we compute
-`cameraPosition`. Then, after make a `view` matrix we
-zero out the translation since we only care which way the camera is facing, not
+`camera_position`. Then, after make a `view` matrix we
+zero out the translation (the first 3 elements of the matrix's `w_axis`
+column) since we only care which way the camera is facing, not
 where it is.
 
 From that we multiply with the projection matrix, take the inverse, and then set
@@ -183,78 +200,94 @@ First off lets's rename a bunch of variables
 From the skybox example
 
 ```
-module -> skyBoxModule
-pipeline -> skyBoxPipeline
-uniformBuffer -> skyBoxUniformBuffer
-uniformValues -> skyBoxUniformValues
-bindGroup -> skyBoxBindGroup
+module -> sky_box_module
+pipeline -> sky_box_pipeline
+uniform_buffer -> sky_box_uniform_buffer
+uniform_values -> sky_box_uniform_values
+bind_group -> sky_box_bind_group
 ```
 
 Similarly from the environment map example
 
 ```
-module -> envMapModule
-pipeline -> envMapPipeline
-uniformBuffer -> envMapUniformBuffer
-uniformValues -> envMapUniformValues
-bindGroup -> envMapBindGroup
+module -> env_map_module
+pipeline -> env_map_pipeline
+uniform_buffer -> env_map_uniform_buffer
+uniform_values -> env_map_uniform_values
+bind_group -> env_map_bind_group
 ```
 
 With those renamed we just have to update our rendering code. First we
 update the uniform values for both
 
-```js
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    mat4.perspective(
-        60 * Math.PI / 180,
+```rust
+    let aspect = frame.width as f32 / frame.height as f32;
+    let projection = Mat4::perspective_rh(
+        60.0f32.to_radians(),
         aspect,
-        0.1,      // zNear
-        10,      // zFar
-        projectionValue,
+        0.1,  // zNear
+        10.0, // zFar
     );
     // Camera going in circle from origin looking at origin
-    cameraPositionValue.set([Math.cos(time * .1) * 5, 0, Math.sin(time * .1) * 5]);
-    const view = mat4.lookAt(
-      cameraPositionValue,
-      [0, 0, 0],  // target
-      [0, 1, 0],  // up
+    let camera_position = Vec3::new((time * 0.1).cos() * 5.0, 0.0, (time * 0.1).sin() * 5.0);
+    let mut view = Mat4::look_at_rh(
+        camera_position,
+        Vec3::new(0.0, 0.0, 0.0), // target
+        Vec3::new(0.0, 1.0, 0.0), // up
     );
-    // Copy the view into the viewValue since we're going
+    // Copy the view into the uniform values since we're going
     // to zero out the view's translation
-    viewValue.set(view);
+    env_map_uniform_values[K_VIEW_OFFSET..K_VIEW_OFFSET + 16]
+        .copy_from_slice(&view.to_cols_array());
 
     // We only care about direction so remove the translation
-    view[12] = 0;
-    view[13] = 0;
-    view[14] = 0;
-    const viewProjection = mat4.multiply(projectionValue, view);
-    mat4.inverse(viewProjection, viewDirectionProjectionInverseValue);
+    view.w_axis.x = 0.0;
+    view.w_axis.y = 0.0;
+    view.w_axis.z = 0.0;
+    let view_projection = projection * view;
+    let view_direction_projection_inverse = view_projection.inverse();
 
     // Rotate the cube
-    mat4.identity(worldValue);
-    mat4.rotateX(worldValue, time * -0.1, worldValue);
-    mat4.rotateY(worldValue, time * -0.2, worldValue);
+    let world = Mat4::from_rotation_x(time * -0.1) * Mat4::from_rotation_y(time * -0.2);
+
+    env_map_uniform_values[K_PROJECTION_OFFSET..K_PROJECTION_OFFSET + 16]
+        .copy_from_slice(&projection.to_cols_array());
+    env_map_uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16]
+        .copy_from_slice(&world.to_cols_array());
+    env_map_uniform_values[K_CAMERA_POSITION_OFFSET..K_CAMERA_POSITION_OFFSET + 3]
+        .copy_from_slice(&camera_position.to_array());
+    sky_box_uniform_values[K_VIEW_DIRECTION_PROJECTION_INVERSE_OFFSET
+        ..K_VIEW_DIRECTION_PROJECTION_INVERSE_OFFSET + 16]
+        .copy_from_slice(&view_direction_projection_inverse.to_cols_array());
 
     // upload the uniform values to the uniform buffers
-    device.queue.writeBuffer(envMapUniformBuffer, 0, envMapUniformValues);
-    device.queue.writeBuffer(skyBoxUniformBuffer, 0, skyBoxUniformValues);
+    frame.queue.write_buffer(
+        &env_map_uniform_buffer,
+        0,
+        bytemuck::cast_slice(&env_map_uniform_values),
+    );
+    frame.queue.write_buffer(
+        &sky_box_uniform_buffer,
+        0,
+        bytemuck::cast_slice(&sky_box_uniform_values),
+    );
 ```
 
 Then we render both. The environment mapped cube first and the skybox second
 to show that drawing it second works.
 
-```js
+```rust
     // Draw the cube
-    pass.setPipeline(envMapPipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-    pass.setIndexBuffer(indexBuffer, 'uint16');
-    pass.setBindGroup(0, envMapBindGroup);
-    pass.drawIndexed(numVertices);
+    pass.set_pipeline(&env_map_pipeline);
+    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+    pass.set_bind_group(0, &env_map_bind_group, &[]);
+    pass.draw_indexed(0..num_vertices, 0, 0..1);
 
     // Draw the skyBox
-    pass.setPipeline(skyBoxPipeline);
-    pass.setBindGroup(0, skyBoxBindGroup);
-    pass.draw(3);
+    pass.set_pipeline(&sky_box_pipeline);
+    pass.set_bind_group(0, &sky_box_bind_group, &[]);
+    pass.draw(0..3, 0..1);
 ```
 
 {{{example url="../webgpu-skybox-plus-environment-map.html" }}}

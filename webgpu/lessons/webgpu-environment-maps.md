@@ -29,56 +29,70 @@ Here's an environment map from the lobby of the Leadenhall Market in London.
   <a href="https://polyhaven.com/a/leadenhall_market">Leadenhall Market</a>, CC0 by: <a href="https://www.artstation.com/andreasmischok">Andreas Mischok</a>
 </div>
 
-Based on [the code in the previous article](webgpu-cube-maps.html) let's load those 6 images instead of the canvases we generated.
-From [the article on importing textures](webgpu-importing-textures.html) we had these two function. One to load an image and another to create a texture from
-an image.
+Based on [the code in the previous article](webgpu-cube-maps.html) let's load those 6 images instead of the pre-made face images we used there.
+From [the article on importing textures](webgpu-importing-textures.html) we had these two pieces. `wgpu_fun::load_image` to load
+an image and a function to create a texture from an image.
 
-```js
-  async function loadImageBitmap(url) {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    return await createImageBitmap(blob, { colorSpaceConversion: 'none' });
-  }
-
-  async function createTextureFromImage(device, url, options) {
-    const imgBitmap = await loadImageBitmap(url);
-    return createTextureFromSource(device, imgBitmap, options);
+```rust
+  async fn create_texture_from_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    url: &str,
+    mips: bool,
+  ) -> wgpu::Texture {
+    let source = wgpu_fun::load_image(url).await;
+    create_texture_from_source(device, queue, &source, mips)
   }
 ```
 
 Let's add and one to load multiple images
 
-```js
-+  async function createTextureFromImages(device, urls, options) {
-+    const imgBitmaps = await Promise.all(url.map(loadImageBitmap));
-+    return createTextureFromSource(device, imgBitmaps, options);
+```rust
++  async fn create_texture_from_images(
++    device: &wgpu::Device,
++    queue: &wgpu::Queue,
++    urls: &[&str],
++    mips: bool,
++  ) -> wgpu::Texture {
++    let mut images = Vec::new();
++    for url in urls {
++      images.push(wgpu_fun::load_image(url).await);
++    }
++    create_texture_from_sources(device, queue, &images, mips)
 +  }
 
-  async function createTextureFromImage(device, url, options) {
--    const imgBitmap = await loadImageBitmap(url);
--    return createTextureFromSource(device, imgBitmap, options);
-+    return createTextureFromImages(device, [url], options);
+  async fn create_texture_from_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    url: &str,
+    mips: bool,
+  ) -> wgpu::Texture {
+-    let source = wgpu_fun::load_image(url).await;
+-    create_texture_from_source(device, queue, &source, mips)
++    create_texture_from_images(device, queue, &[url], mips).await
   }
 ```
 
 While we were at it we also changed the existing function to use
 the new one. Now we can use the new one to load the six images.
 
-```js
--  const texture = await createTextureFromSources(
--      device, faceCanvases, {mips: true, flipY: false});
-+  const texture = await createTextureFromImages(
-+      device,
-+      [
-+        'resources/images/leadenhall_market/pos-x.jpg',
-+        'resources/images/leadenhall_market/neg-x.jpg',
-+        'resources/images/leadenhall_market/pos-y.jpg',
-+        'resources/images/leadenhall_market/neg-y.jpg',
-+        'resources/images/leadenhall_market/pos-z.jpg',
-+        'resources/images/leadenhall_market/neg-z.jpg',
+```rust
+-  let texture = create_texture_from_sources(
+-      &app.device, &app.queue, &face_sources, true);
++  let texture = create_texture_from_images(
++      &app.device,
++      &app.queue,
++      &[
++        "resources/images/leadenhall_market/pos-x.jpg",
++        "resources/images/leadenhall_market/neg-x.jpg",
++        "resources/images/leadenhall_market/pos-y.jpg",
++        "resources/images/leadenhall_market/neg-y.jpg",
++        "resources/images/leadenhall_market/pos-z.jpg",
++        "resources/images/leadenhall_market/neg-z.jpg",
 +      ],
-+      {mips: true, flipY: false},
-+  );
++      true, // mips
++  )
++  .await;
 ```
 
 In fragment shader we want to know, for each fragment to be drawn, given a vector from
@@ -223,196 +237,192 @@ the cube appear flat. In the previous example, just to see the cubemap work, we
 repurposed the cube's positions but in this case we need actual normals for a
 cube like we covered in [the article on lighting](webgpu-lighting-directional.html)
 
-```js
-  const vertexData = new Float32Array([
+```rust
+  let vertex_data: Vec<f32> = vec![
 -     // front face
--    -1,  1,  1,
--    -1, -1,  1,
--     1,  1,  1,
--     1, -1,  1,
+-    -1.0,  1.0,  1.0,
+-    -1.0, -1.0,  1.0,
+-     1.0,  1.0,  1.0,
+-     1.0, -1.0,  1.0,
 -     // right face
--     1,  1, -1,
--     1,  1,  1,
--     1, -1, -1,
--     1, -1,  1,
+-     1.0,  1.0, -1.0,
+-     1.0,  1.0,  1.0,
+-     1.0, -1.0, -1.0,
+-     1.0, -1.0,  1.0,
 -     // back face
--     1,  1, -1,
--     1, -1, -1,
--    -1,  1, -1,
--    -1, -1, -1,
+-     1.0,  1.0, -1.0,
+-     1.0, -1.0, -1.0,
+-    -1.0,  1.0, -1.0,
+-    -1.0, -1.0, -1.0,
 -    // left face
--    -1,  1,  1,
--    -1,  1, -1,
--    -1, -1,  1,
--    -1, -1, -1,
+-    -1.0,  1.0,  1.0,
+-    -1.0,  1.0, -1.0,
+-    -1.0, -1.0,  1.0,
+-    -1.0, -1.0, -1.0,
 -    // bottom face
--     1, -1,  1,
--    -1, -1,  1,
--     1, -1, -1,
--    -1, -1, -1,
+-     1.0, -1.0,  1.0,
+-    -1.0, -1.0,  1.0,
+-     1.0, -1.0, -1.0,
+-    -1.0, -1.0, -1.0,
 -    // top face
--    -1,  1,  1,
--     1,  1,  1,
--    -1,  1, -1,
--     1,  1, -1,
+-    -1.0,  1.0,  1.0,
+-     1.0,  1.0,  1.0,
+-    -1.0,  1.0, -1.0,
+-     1.0,  1.0, -1.0,
 +     //  position   |  normals
 +     //-------------+----------------------
 +     // front face      positive z
-+    -1,  1,  1,         0,  0,  1,
-+    -1, -1,  1,         0,  0,  1,
-+     1,  1,  1,         0,  0,  1,
-+     1, -1,  1,         0,  0,  1,
++    -1.0,  1.0,  1.0,    0.0,  0.0,  1.0,
++    -1.0, -1.0,  1.0,    0.0,  0.0,  1.0,
++     1.0,  1.0,  1.0,    0.0,  0.0,  1.0,
++     1.0, -1.0,  1.0,    0.0,  0.0,  1.0,
 +     // right face      positive x
-+     1,  1, -1,         1,  0,  0,
-+     1,  1,  1,         1,  0,  0,
-+     1, -1, -1,         1,  0,  0,
-+     1, -1,  1,         1,  0,  0,
++     1.0,  1.0, -1.0,    1.0,  0.0,  0.0,
++     1.0,  1.0,  1.0,    1.0,  0.0,  0.0,
++     1.0, -1.0, -1.0,    1.0,  0.0,  0.0,
++     1.0, -1.0,  1.0,    1.0,  0.0,  0.0,
 +     // back face       negative z
-+     1,  1, -1,         0,  0, -1,
-+     1, -1, -1,         0,  0, -1,
-+    -1,  1, -1,         0,  0, -1,
-+    -1, -1, -1,         0,  0, -1,
++     1.0,  1.0, -1.0,    0.0,  0.0, -1.0,
++     1.0, -1.0, -1.0,    0.0,  0.0, -1.0,
++    -1.0,  1.0, -1.0,    0.0,  0.0, -1.0,
++    -1.0, -1.0, -1.0,    0.0,  0.0, -1.0,
 +    // left face        negative x
-+    -1,  1,  1,        -1,  0,  0,
-+    -1,  1, -1,        -1,  0,  0,
-+    -1, -1,  1,        -1,  0,  0,
-+    -1, -1, -1,        -1,  0,  0,
++    -1.0,  1.0,  1.0,   -1.0,  0.0,  0.0,
++    -1.0,  1.0, -1.0,   -1.0,  0.0,  0.0,
++    -1.0, -1.0,  1.0,   -1.0,  0.0,  0.0,
++    -1.0, -1.0, -1.0,   -1.0,  0.0,  0.0,
 +    // bottom face      negative y
-+     1, -1,  1,         0, -1,  0,
-+    -1, -1,  1,         0, -1,  0,
-+     1, -1, -1,         0, -1,  0,
-+    -1, -1, -1,         0, -1,  0,
++     1.0, -1.0,  1.0,    0.0, -1.0,  0.0,
++    -1.0, -1.0,  1.0,    0.0, -1.0,  0.0,
++     1.0, -1.0, -1.0,    0.0, -1.0,  0.0,
++    -1.0, -1.0, -1.0,    0.0, -1.0,  0.0,
 +    // top face         positive y
-+    -1,  1,  1,         0,  1,  0,
-+     1,  1,  1,         0,  1,  0,
-+    -1,  1, -1,         0,  1,  0,
-+     1,  1, -1,         0,  1,  0,
-  ]);
++    -1.0,  1.0,  1.0,    0.0,  1.0,  0.0,
++     1.0,  1.0,  1.0,    0.0,  1.0,  0.0,
++    -1.0,  1.0, -1.0,    0.0,  1.0,  0.0,
++     1.0,  1.0, -1.0,    0.0,  1.0,  0.0,
+  ];
 ```
 
 And of course we need to change our pipeline to provide the normals
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (3) * 4, // (3) floats 4 bytes each
-+          arrayStride: (3 + 3) * 4, // (6) floats 4 bytes each
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-+            {shaderLocation: 1, offset: 12, format: 'float32x3'},  // normal
-          ],
-        },
-      ],
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("2 attributes"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[Some(wgpu::VertexBufferLayout {
+-        array_stride: (3) * 4, // (3) floats 4 bytes each
++        array_stride: (3 + 3) * 4, // (6) floats 4 bytes each
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+          // position
+          wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+          },
++          // normal
++          wgpu::VertexAttribute {
++            shader_location: 1,
++            offset: 12,
++            format: wgpu::VertexFormat::Float32x3,
++          },
+        ],
+      })],
     },
 
 ```
 
-As usual we need to setup our uniform buffer and views
+As usual we need to setup our uniform buffer. Where the JavaScript version
+makes `Float32Array` views into one larger `Float32Array`, in Rust we'll keep
+one `[f32; N]` array and some offsets into it, and copy each value into its
+slice of the array.
 
-```js
+```rust
 -  // matrix
--  const uniformBufferSize = (16) * 4;
+-  let uniform_buffer_size = 16 * 4;
 +  // projection, view, world, cameraPosition, pad
-+  const uniformBufferSize = (16 + 16 + 16 + 3 + 1) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
++  const UNIFORM_BUFFER_SIZE: u64 = (16 + 16 + 16 + 3 + 1) * 4;
+  let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("uniforms"),
+-    size: uniform_buffer_size,
++    size: UNIFORM_BUFFER_SIZE,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
-
-  // offsets to the various uniform values in float32 indices
--  const kMatrixOffset = 0;
--  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-  const kProjectionOffset = 0;
-  const kViewOffset = 16;
-  const kWorldOffset = 32;
-+  const projectionValue = uniformValues.subarray(kProjectionOffset, kProjectionOffset + 16);
-+  const viewValue = uniformValues.subarray(kViewOffset, kViewOffset + 16);
-+  const worldValue = uniformValues.subarray(kWorldOffset, kWorldOffset + 16);
-+  const cameraPositionValue = uniformValues.subarray(
-+      kCameraPositionOffset, kCameraPositionOffset + 3);
++  let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
++
++  // offsets to the various uniform values in float32 indices
++  const K_PROJECTION_OFFSET: usize = 0;
++  const K_VIEW_OFFSET: usize = 16;
++  const K_WORLD_OFFSET: usize = 32;
++  const K_CAMERA_POSITION_OFFSET: usize = 48;
 ```
 
 And we need to set them at render time
 
-```js
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    mat4.perspective(
-        60 * Math.PI / 180,
+```rust
+    let aspect = frame.width as f32 / frame.height as f32;
+-    let matrix = Mat4::perspective_rh(
++    let projection = Mat4::perspective_rh(
+        60.0f32.to_radians(),
         aspect,
-        0.1,      // zNear
-        10,      // zFar
--        matrixValue,
-+        projectionValue,
-    );
-+    cameraPositionValue.set([0, 0, 4]);  // camera position;
-    const view = mat4.lookAt(
--      [0, 1, 5],  // camera position
-+      cameraPositionValue,
-      [0, 0, 0],  // target
-      [0, 1, 0],  // up
-+      viewValue,
-    );
--    mat4.multiply(matrixValue, view, matrixValue);
--    mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
--    mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
--    mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
-+    mat4.identity(worldValue);
-+    mat4.rotateX(worldValue, time * -0.1, worldValue);
-+    mat4.rotateY(worldValue, time * -0.2, worldValue);
+        0.1,  // zNear
+        10.0, // zFar
+-    ) * Mat4::look_at_rh(
+-        Vec3::new(0.0, 1.0, 5.0), // camera position
+-        Vec3::new(0.0, 0.0, 0.0), // target
+-        Vec3::new(0.0, 1.0, 0.0), // up
+-    ) * Mat4::from_rotation_x(rotation[0])
+-        * Mat4::from_rotation_y(rotation[1])
+-        * Mat4::from_rotation_z(rotation[2]);
++    );
++    let camera_position = Vec3::new(0.0, 0.0, 4.0); // camera position
++    let view = Mat4::look_at_rh(
++        camera_position,
++        Vec3::new(0.0, 0.0, 0.0), // target
++        Vec3::new(0.0, 1.0, 0.0), // up
++    );
++    let world = Mat4::from_rotation_x(time * -0.1) * Mat4::from_rotation_y(time * -0.2);
++
++    uniform_values[K_PROJECTION_OFFSET..K_PROJECTION_OFFSET + 16]
++        .copy_from_slice(&projection.to_cols_array());
++    uniform_values[K_VIEW_OFFSET..K_VIEW_OFFSET + 16].copy_from_slice(&view.to_cols_array());
++    uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world.to_cols_array());
++    uniform_values[K_CAMERA_POSITION_OFFSET..K_CAMERA_POSITION_OFFSET + 3]
++        .copy_from_slice(&camera_position.to_array());
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    frame
+        .queue
+-        .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&matrix.to_cols_array()));
++        .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
-Let's also change the rendering to a rAF loop
+Let's also change the rendering to a continuous animation. The previous
+example rendered once and had a settings panel to rotate the cube; this one
+rotates by time instead so we drop the settings and switch the render mode to
+`Continuous`, which renders every frame like a JavaScript
+`requestAnimationFrame` loop. `frame.time` is the seconds since the example
+started.
 
-```js
--  const degToRad = d => d * Math.PI / 180;
--
--  const settings = {
--    rotation: [degToRad(20), degToRad(25), degToRad(0)],
--  };
--
--  const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
--
--  const gui = new GUI();
--  gui.onChange(render);
--  gui.add(settings.rotation, '0', radToDegOptions).name('rotation.x');
--  gui.add(settings.rotation, '1', radToDegOptions).name('rotation.y');
--  gui.add(settings.rotation, '2', radToDegOptions).name('rotation.z');
-
-  let depthTexture;
-
--  function render() {
-+  function render(time) {
-+    time *= 0.001;
+```rust
+-  app.run(RenderMode::Once, move |frame: &Frame| {
++  app.run(RenderMode::Continuous, move |frame: &Frame| {
++    let time = frame.time as f32;
 
      ...
 
-+    requestAnimationFrame(render);
-+  }
-+  requestAnimationFrame(render);
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
--      // re-render
--      render();
-    }
-  });
-  observer.observe(canvas);
+-    let rotation = [
+-        wgpu_fun::setting_f64("rotationX", 20.0f64.to_radians()) as f32,
+-        wgpu_fun::setting_f64("rotationY", 25.0f64.to_radians()) as f32,
+-        wgpu_fun::setting_f64("rotationZ", 0.0) as f32,
+-    ];
 ```
 
 And with that we get.

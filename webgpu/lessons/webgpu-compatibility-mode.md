@@ -19,7 +19,7 @@ To give some idea what what you can do in compatibility mode,
 effectively *nearly* all WebGL2 programs could be converted to
 run on compatibility mode.
 
-Here's how you do it.
+In the browser, a JavaScript WebGPU app opts in like this.
 
 ```js
 const adapter = await navigator.gpu.requestAdapter({
@@ -28,10 +28,32 @@ const adapter = await navigator.gpu.requestAdapter({
 const device = await adapter.requestDevice();
 ```
 
-Simple! Note that every app that follows all the
+Simple! With Rust and wgpu though, there is no way to opt in:
+`wgpu::RequestAdapterOptions` has no equivalent of `featureLevel` and the
+wgpu documentation states plainly that "wgpu does not support
+compatibility-level adapters per se". Requesting an adapter with wgpu
+always gets you core WebGPU behavior.
+
+So why should a wgpu user care? Two reasons:
+
+* If you ship your app as wasm, the adapter your app gets comes from the
+  browser. Something outside your code — a future browser default on old
+  hardware, or a tool like the
+  [webgpu-dev-extension](https://github.com/greggman/webgpu-dev-extension)
+  covered at the bottom of this article — can put the page's adapters in
+  compatibility mode, and then the restrictions below are enforced on
+  your code.
+
+* If you want your app to run on the lowest common denominator of devices,
+  these restrictions describe what older GPUs actually can not do. Staying
+  within them keeps your code portable, whether or not anything enforces
+  them.
+
+The good news: every app that follows all the
 limits of compatibility mode is a valid "core"
 webgpu app and will run anywhere WebGPU is already
-running.
+running. Everything below, including the compatibility-friendly
+`generate_mips` we'll write, is directly usable from Rust.
 
 # Major limits and restrictions
 
@@ -58,30 +80,33 @@ always other solutions.
 
 In normal WebGPU you can make a 2d texture like this
 
-```js
-const myTexture = device.createTexture({
-  size: [width, height, 6],
+```rust
+let my_texture = device.create_texture(&wgpu::TextureDescriptor {
+  size: wgpu::Extent3d { width, height, depth_or_array_layers: 6 },
   usage: ...
   format: ...
+  ...
 });
 ```
 
 You can then view it 3 different view dimensions
 
-```js
-// a view of myTexture as a 2d array with 6 layers
-const as2DArray = myTexture.createView();
+```rust
+// a view of my_texture as a 2d array with 6 layers
+let as_2d_array = my_texture.create_view(&Default::default());
 
-// view layer 3 of myTexture as a 2d texture
-const as2D = myTexture.createView({
-  dimension: '2d',
-  baseArrayLayer: 3,
-  arrayLayerCount: 1,
+// view layer 3 of my_texture as a 2d texture
+let as_2d = my_texture.create_view(&wgpu::TextureViewDescriptor {
+  dimension: Some(wgpu::TextureViewDimension::D2),
+  base_array_layer: 3,
+  array_layer_count: Some(1),
+  ..Default::default()
 });
 
-// view of myTexture as a cubemap
-const asCube = myTexture.createView({
-  dimension: 'cube',
+// view of my_texture as a cubemap
+let as_cube = my_texture.create_view(&wgpu::TextureViewDescriptor {
+  dimension: Some(wgpu::TextureViewDimension::Cube),
+  ..Default::default()
 });
 ```
 
@@ -91,6 +116,7 @@ choose which view dimension when you create the texture. A 2D texture with
 more than 1 layer defaults to only being usable as a `'2d-array`' view.
 If you want something other than the default you must tell WebGPU. For example,
 If you want a cube map then you must tell WebGPU when you create the texture.
+In JavaScript that looks like this
 
 ```js
 const cubeTexture = device.createTexture({
@@ -105,6 +131,13 @@ Note, this extra parameter is called `textureBindingViewDimension` because
 it relates to using the texture with usage `TEXTURE_BINDING`. You can still
 use a single layer of a cubemap or 2d-array as a 2d texture as a `RENDER_ATTACHMENT`.
 
+`wgpu::TextureDescriptor` has no `textureBindingViewDimension` field — it's
+a compatibility-mode-only parameter, and, as covered at the top of this
+article, wgpu doesn't do compatibility-level adapters. So this declaration
+is one more thing you can't express from Rust. What we *can* do from Rust
+is follow the rule the parameter implies: pick one view dimension per
+texture and stick to it, which is what the code below will do.
+
 To put it another way, you must use this same view dimension when using the
 texture in a bind group. You can still use the `2d` dimension, even if the
 `textureBindingViewDimension` is `2d-array` or `cube` when using the texture
@@ -113,50 +146,58 @@ in as a render target.
 In compatibility mode, using the texture in a bind group with another type of view will
 generate a validation error.
 
-```js
-// a view of cubeTexture as a 2d array with 6 layers
-const bindGroup = device.createBindGroup({
+```rust
+// a view of cube_texture as a 2d array with 6 layers
+let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
   ...
-  entries: [
-    {
+  entries: &[
+    wgpu::BindGroupEntry {
       binding,
       // ERROR in compatibility mode: texture is a cubemap not a 2d-array
       // (the default for a texture with more than 1 layer)
-      resource: cubeTexture,
+      resource: wgpu::BindingResource::TextureView(
+        &cube_texture.create_view(&Default::default()),
+      ),
     },
   ],
-})
-```
-
-```js
-// view layer 3 of cubeTexture as a 2d texture
-const bindGroup = device.createBindGroup({
-  ...
-  entries: [
-    {
-      binding,
-      // ERROR in compatibility mode: texture is a cubemap not 2d
-      resource: cubeTexture.createView({
-        viewDimension: '2d',
-        baseArrayLayer: 3,
-        arrayLayerCount: 1,
-      }),
-    },
-  ]
 });
 ```
 
-```js
-// view of cubeTexture as a cubemap
-const bindGroup = device.createBindGroup({
+```rust
+// view layer 3 of cube_texture as a 2d texture
+let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
   ...
-  entries: [
-    {
+  entries: &[
+    wgpu::BindGroupEntry {
+      binding,
+      // ERROR in compatibility mode: texture is a cubemap not 2d
+      resource: wgpu::BindingResource::TextureView(
+        &cube_texture.create_view(&wgpu::TextureViewDescriptor {
+          dimension: Some(wgpu::TextureViewDimension::D2),
+          base_array_layer: 3,
+          array_layer_count: Some(1),
+          ..Default::default()
+        }),
+      ),
+    },
+  ],
+});
+```
+
+```rust
+// view of cube_texture as a cubemap
+let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+  ...
+  entries: &[
+    wgpu::BindGroupEntry {
       binding,
       // GOOD!
-      resource: cubeTexture.createView({
-        viewDimension: 'cube',
-      }),
+      resource: wgpu::BindingResource::TextureView(
+        &cube_texture.create_view(&wgpu::TextureViewDescriptor {
+          dimension: Some(wgpu::TextureViewDimension::Cube),
+          ..Default::default()
+        }),
+      ),
     },
   ],
 });
@@ -169,26 +210,29 @@ Few programs want to use a texture with different kinds of views.
 
 In core WebGPU we can create a texture with some layers
 
-```js
-const texture = device.createTexture({
-  size: [64, 128, 8],   // 8 layers,
+```rust
+let texture = device.create_texture(&wgpu::TextureDescriptor {
+  size: wgpu::Extent3d { width: 64, height: 128, depth_or_array_layers: 8 },  // 8 layers,
   ...
 });
 ```
 
 We can then select a subset of layers
 
-```js
-const bindGroup = device.createBindGroup({
+```rust
+let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
   ...
-  entries: [
-    {
+  entries: &[
+    wgpu::BindGroupEntry {
       binding,
       // ERROR  in compatibility mode - select layers 3 and 4
-      resource: cubeTexture.createView({
-        baseArrayLayer: 3,
-        arrayLayerCount: 2,
-      }),
+      resource: wgpu::BindingResource::TextureView(
+        &cube_texture.create_view(&wgpu::TextureViewDescriptor {
+          base_array_layer: 3,
+          array_layer_count: Some(2),
+          ..Default::default()
+        }),
+      ),
     },
   ],
 });
@@ -215,21 +259,27 @@ in a bind group to select which layer to read from.
 To make the code work in compatibility mode we have to work with textures
 with the same view dimension they were created with and we need to pass in the texture
 with access to all layers and select the layer we want in the shader itself, rather
-than selecting the layer via `createView` as we were doing.
+than selecting the layer via `create_view` as we were doing.
 
-So let's do that! We'll start with the code for `generateMips` from [the article on cubemaps](webgpu-cube-maps.html#a-texture-helpers).
+So let's do that! We'll start with the code for `generate_mips` from [the article on cubemaps](webgpu-cube-maps.html#a-texture-helpers).
 
-```js
-  const generateMips = (() => {
-    let sampler;
-    let module;
-    const pipelineByFormat = {};
+```rust
+fn generate_mips(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    thread_local! {
+        static CACHE: RefCell<Option<(wgpu::ShaderModule, wgpu::Sampler)>> = const { RefCell::new(None) };
+        static PIPELINE_BY_FORMAT: RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>> =
+            RefCell::new(HashMap::new());
+    }
 
-    return function generateMips(device, texture) {
-      if (!module) {
-        module = device.createShaderModule({
-          label: 'textured quad shaders for mip level generation',
-          code: /* wgsl */ `
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let (module, sampler) = cache.get_or_insert_with(|| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("textured quad shaders for mip level generation"),
+                source: wgpu::ShaderSource::Wgsl(
+                    r#"
             struct VSOutput {
               @builtin(position) position: vec4f,
               @location(0) texcoord: vec2f,
@@ -263,82 +313,109 @@ So let's do that! We'll start with the code for `generateMips` from [the article
             @fragment fn fs(fsInput: VSOutput) -> @location(0) vec4f {
               return textureSample(ourTexture, ourSampler, fsInput.texcoord);
             }
-          `,
+          "#
+                    .into(),
+                ),
+            });
+
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                min_filter: wgpu::FilterMode::Linear,
+                mag_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            (module, sampler)
         });
 
-        sampler = device.createSampler({
-          minFilter: 'linear',
-          magFilter: 'linear',
+        PIPELINE_BY_FORMAT.with(|pipelines| {
+            let mut pipelines = pipelines.borrow_mut();
+            let pipeline = pipelines.entry(texture.format()).or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("mip level generator pipeline"),
+                    layout: None,
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: None,
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module,
+                        entry_point: None,
+                        compilation_options: Default::default(),
+                        targets: &[Some(texture.format().into())],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("mip gen encoder"),
+            });
+
+            for base_mip_level in 1..texture.mip_level_count() {
+                for layer in 0..texture.depth_or_array_layers() {
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &pipeline.get_bind_group_layout(0),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &texture.create_view(&wgpu::TextureViewDescriptor {
+                                        dimension: Some(wgpu::TextureViewDimension::D2),
+                                        base_mip_level: base_mip_level - 1,
+                                        mip_level_count: Some(1),
+                                        base_array_layer: layer,
+                                        array_layer_count: Some(1),
+                                        ..Default::default()
+                                    }),
+                                ),
+                            },
+                        ],
+                    });
+
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        base_mip_level,
+                        mip_level_count: Some(1),
+                        base_array_layer: layer,
+                        array_layer_count: Some(1),
+                        ..Default::default()
+                    });
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("our basic canvas renderPass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            ..Default::default()
+                        });
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, &bind_group, &[]);
+                        pass.draw(0..6, 0..1); // call our vertex shader 6 times
+                    }
+                }
+            }
+
+            let command_buffer = encoder.finish();
+            queue.submit([command_buffer]);
         });
-      }
-
-      if (!pipelineByFormat[texture.format]) {
-        pipelineByFormat[texture.format] = device.createRenderPipeline({
-          label: 'mip level generator pipeline',
-          layout: 'auto',
-          vertex: {
-            module,
-          },
-          fragment: {
-            module,
-            targets: [{ format: texture.format }],
-          },
-        });
-      }
-      const pipeline = pipelineByFormat[texture.format];
-
-      const encoder = device.createCommandEncoder({
-        label: 'mip gen encoder',
-      });
-
-      for (let baseMipLevel = 1; baseMipLevel < texture.mipLevelCount; ++baseMipLevel) {
-        for (let layer = 0; layer < texture.depthOrArrayLayers; ++layer) {
-          const bindGroup = device.createBindGroup({
-            layout: pipeline.getBindGroupLayout(0),
-            entries: [
-              { binding: 0, resource: sampler },
-              {
-                binding: 1,
-                resource: texture.createView({
-                  dimension: '2d',
-                  baseMipLevel: baseMipLevel - 1,
-                  mipLevelCount: 1,
-                  baseArrayLayer: layer,
-                  arrayLayerCount: 1,
-                }),
-              },
-            ],
-          });
-
-          const renderPassDescriptor = {
-            label: 'our basic canvas renderPass',
-            colorAttachments: [
-              {
-                view: texture.createView({
-                  dimension: '2d',
-                  baseMipLevel: baseMipLevel,
-                  mipLevelCount: 1,
-                  baseArrayLayer: layer,
-                  arrayLayerCount: 1,
-                }),
-                loadOp: 'clear',
-                storeOp: 'store',
-              },
-            ],
-          };
-
-          const pass = encoder.beginRenderPass(renderPassDescriptor);
-          pass.setPipeline(pipeline);
-          pass.setBindGroup(0, bindGroup);
-          pass.draw(6);  // call our vertex shader 6 times
-          pass.end();
-        }
-      }
-
-      const commandBuffer = encoder.finish();
-      device.queue.submit([commandBuffer]);
-    };
-  })();
+    });
+}
 ```
 
 We need to change the WGSL so for each type of texture (2d, 2d-array, cube, etc...) we
@@ -409,7 +486,7 @@ It uses the [large triangle to cover clip space](webgpu-large-triangle-to-cover-
 [covered elsewhere](webgpu-large-triangle-to-cover-clip-space.html) to draw.
 It also uses `@builtin(instance_index)` to select the layer. This is an interesting and quick way
 to pass in a single integer value to a shader without having to use a uniform buffer.
-When we call `draw`, the 4th parameter is the first instance which will be passed
+When we call `draw`, the start of the instance range is the first instance which will be passed
 to the shader as `@builtin(instance_index)`. We pass that from the vertex shader to fragment
 shader via `VSOutput.baseArrayLayer` which we can reference has `fsInput.baseArrayLayer`
 in the fragment shader.
@@ -418,41 +495,50 @@ The cubemap code converts a 2d-array layer and normalized UV coordinate into a
 cubemap 3d coordinate. We need this because again, in compatibility mode, a cubemap
 can only be viewed as a cubemap.
 
-Back to our JavaScript, we need to read the `textureBindingViewDimension` property
-from the texture. Note that this value is undefined if we are **not** in compatibility
-mode. But, we can just assumed `'2d-array'` in that case since in norm "core" webgpu,
-`'2d-array'` should always work
+Back to our Rust. The JavaScript version reads a `textureBindingViewDimension`
+property from the texture, which is defined when in compatibility mode and
+otherwise assumed to be `'2d-array'` since in "core" webgpu `'2d-array'`
+should always work. wgpu textures have no such property (just like
+`wgpu::TextureDescriptor` has no such field), so we state the view dimension
+ourselves. This example only makes cube maps so we use `Cube`; if you were
+generating mips for plain 2d or 2d-array textures you'd pass the dimension
+in, or derive it from `texture.depth_or_array_layers()`.
 
-```js
-  const generateMips = (() => {
-    let sampler;
-    let module;
-    const pipelineByFormat = {};
+```rust
+fn generate_mips(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) {
++    // A generateMips that works in WebGPU compatibility mode: it never makes
++    // a '2d' view of a 2d-array/cube texture. It binds the texture with its
++    // own view dimension (here 'cube') and selects a fragment shader entry
++    // point to match, rendering each layer with the layer index passed as
++    // the first instance (instance_index).
++    let texture_binding_view_dimension = wgpu::TextureViewDimension::Cube;
 
-    return function generateMips(device, texture) {
-+      // If the texture doesn't have a textureBindingViewDimension then use '2d-array'
-+      const textureBindingViewDimension = texture.textureBindingViewDimension ?? '2d-array';
-      if (!module) {
-        module = device.createShaderModule({
-          label: 'textured quad shaders for mip level generation',
-          code: /* wgsl */ `
-            const faceMat = array(
-              mat3x3f( 0,  0,  -2,  0, -2,   0,  1,  1,   1),   // pos-x
-              mat3x3f( 0,  0,   2,  0, -2,   0, -1,  1,  -1),   // neg-x
-              mat3x3f( 2,  0,   0,  0,  0,   2, -1,  1,  -1),   // pos-y
-              mat3x3f( 2,  0,   0,  0,  0,  -2, -1, -1,   1),   // neg-y
-              mat3x3f( 2,  0,   0,  0, -2,   0, -1,  1,   1),   // pos-z
-              mat3x3f(-2,  0,   0,  0, -2,   0,  1,  1,  -1));  // neg-z
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    ...
+
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("textured quad shaders for mip level generation"),
+                source: wgpu::ShaderSource::Wgsl(
+                    r#"
++            const faceMat = array(
++              mat3x3f( 0,  0,  -2,  0, -2,   0,  1,  1,   1),   // pos-x
++              mat3x3f( 0,  0,   2,  0, -2,   0, -1,  1,  -1),   // neg-x
++              mat3x3f( 2,  0,   0,  0,  0,   2, -1,  1,  -1),   // pos-y
++              mat3x3f( 2,  0,   0,  0,  0,  -2, -1, -1,   1),   // neg-y
++              mat3x3f( 2,  0,   0,  0, -2,   0, -1,  1,   1),   // pos-z
++              mat3x3f(-2,  0,   0,  0, -2,   0,  1,  1,  -1));  // neg-z
 
             struct VSOutput {
               @builtin(position) position: vec4f,
               @location(0) texcoord: vec2f,
-              @location(1) @interpolate(flat, either) baseArrayLayer: u32,
++              @location(1) @interpolate(flat, either) baseArrayLayer: u32,
             };
 
             @vertex fn vs(
               @builtin(vertex_index) vertexIndex : u32,
-              @builtin(instance_index) baseArrayLayer: u32,
++              @builtin(instance_index) baseArrayLayer: u32,
             ) -> VSOutput {
               var pos = array<vec2f, 3>(
                 vec2f(-1.0, -1.0),
@@ -464,7 +550,7 @@ mode. But, we can just assumed `'2d-array'` in that case since in norm "core" we
               let xy = pos[vertexIndex];
               vsOutput.position = vec4f(xy, 0.0, 1.0);
               vsOutput.texcoord = xy * vec2f(0.5, -0.5) + vec2f(0.5);
-              vsOutput.baseArrayLayer = baseArrayLayer;
++              vsOutput.baseArrayLayer = baseArrayLayer;
               return vsOutput;
             }
 
@@ -475,171 +561,151 @@ mode. But, we can just assumed `'2d-array'` in that case since in norm "core" we
               return textureSample(ourTexture2d, ourSampler, fsInput.texcoord);
             }
 
-            @group(0) @binding(1) var ourTexture2dArray: texture_2d_array<f32>;
-            @fragment fn fs2darray(fsInput: VSOutput) -> @location(0) vec4f {
-              return textureSample(
-                ourTexture2dArray,
-                ourSampler,
-                fsInput.texcoord,
-                fsInput.baseArrayLayer);
-            }
-
-            @group(0) @binding(1) var ourTextureCube: texture_cube<f32>;
-            @fragment fn fscube(fsInput: VSOutput) -> @location(0) vec4f {
-              return textureSample(
-                ourTextureCube,
-                ourSampler,
-                faceMat[fsInput.baseArrayLayer] * vec3f(fract(fsInput.texcoord), 1));
-            }
-          `,
-        });
-
-        sampler = device.createSampler({
-          minFilter: 'linear',
-          magFilter: 'linear',
-        });
-      }
++            @group(0) @binding(1) var ourTexture2dArray: texture_2d_array<f32>;
++            @fragment fn fs2darray(fsInput: VSOutput) -> @location(0) vec4f {
++              return textureSample(
++                ourTexture2dArray,
++                ourSampler,
++                fsInput.texcoord,
++                fsInput.baseArrayLayer);
++            }
++
++            @group(0) @binding(1) var ourTextureCube: texture_cube<f32>;
++            @fragment fn fscube(fsInput: VSOutput) -> @location(0) vec4f {
++              return textureSample(
++                ourTextureCube,
++                ourSampler,
++                faceMat[fsInput.baseArrayLayer] * vec3f(fract(fsInput.texcoord), 1));
++            }
+          "#
+                    .into(),
+                ),
+            });
 
     ...
 ```
 
 Before we tracked a pipeline per format so we could reuse the pipeline for
 textures of the same format. We need to update that to be a pipeline per format
-per viewDimension.
+per viewDimension. Where the JavaScript version builds the entry point name
+with string manipulation we use a `match`.
 
-```js
-  const generateMips = (() => {
-    let sampler;
-    let module;
--    const pipelineByFormat = {};
-+    const pipelineByFormatAndView = {};
+```rust
+    thread_local! {
+        static CACHE: RefCell<Option<(wgpu::ShaderModule, wgpu::Sampler)>> = const { RefCell::new(None) };
+-        static PIPELINE_BY_FORMAT: RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>> =
+-            RefCell::new(HashMap::new());
++        static PIPELINE_BY_FORMAT_AND_VIEW: RefCell<HashMap<String, wgpu::RenderPipeline>> =
++            RefCell::new(HashMap::new());
+    }
 
-    return function generateMips(device, texture, textureBindingViewDimension) {
-      // If the texture doesn't have a textureBindingViewDimension then use '2d-array'.
-      // This will be true in core webgpu mode.
-      const textureBindingViewDimension = texture.textureBindingViewDimension ?? '2d-array';
-      let module = moduleByViewDimension[textureBindingViewDimension];
-      if (!module) {
-        ...
-      }
+    ...
 
-+      const id = `${texture.format}.${textureBindingViewDimension}`;
+-        PIPELINE_BY_FORMAT.with(|pipelines| {
++        PIPELINE_BY_FORMAT_AND_VIEW.with(|pipelines| {
+            let mut pipelines = pipelines.borrow_mut();
+-            let pipeline = pipelines.entry(texture.format()).or_insert_with(|| {
++            let id = format!("{:?}.{:?}", texture.format(), texture_binding_view_dimension);
++            let pipeline = pipelines.entry(id).or_insert_with(|| {
++                // choose a fragment shader based on the view dimension
++                let entry_point = match texture_binding_view_dimension {
++                    wgpu::TextureViewDimension::D2 => "fs2d",
++                    wgpu::TextureViewDimension::D2Array => "fs2darray",
++                    wgpu::TextureViewDimension::Cube => "fscube",
++                    _ => unreachable!(),
++                };
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("mip level generator pipeline"),
+                    layout: None,
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: None,
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module,
+-                        entry_point: None,
++                        entry_point: Some(entry_point),
+                        compilation_options: Default::default(),
+                        targets: &[Some(texture.format().into())],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            });
 
--      if (!pipelineByFormat[texture.format]) {
--        pipelineByFormat[texture.format] = device.createRenderPipeline({
--          label: 'mip level generator pipeline',
-+      if (!pipelineByFormatAndView[id]) {
-+        // chose an fragment shader based on the viewDimension (removes the '-' from 2d-array and cube-array)
-+        const entryPoint = `fs${textureBindingViewDimension.replace(/[\W]/, '')}`;
-+        pipelineByFormatAndView[id] = device.createRenderPipeline({
-+          label: `mip level generator pipeline for ${textureBindingViewDimension}, format: ${texture.format}`,
-          layout: 'auto',
-          vertex: {
-            module,
-          },
-          fragment: {
-            module,
-            entryPoint,
-            targets: [{ format: texture.format }],
-          },
-        });
-      }
--      const pipeline = pipelineByFormat[texture.format];
-+      const pipeline = pipelineByFormatAndView[id];
-
-      ...
-}
+    ...
 ```
 
 Then our loop to generate the mipmap needs to change to use the full layers, since
 compatibility mode does not allow a sub-range of layers. We also need to use
 our ability to pass in the instance index via draw to select the layer we want to read from.
 
-```js
-  const generateMips = (() => {
+```rust
+            for base_mip_level in 1..texture.mip_level_count() {
+                for layer in 0..texture.depth_or_array_layers() {
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &pipeline.get_bind_group_layout(0),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &texture.create_view(&wgpu::TextureViewDescriptor {
+-                                        dimension: Some(wgpu::TextureViewDimension::D2),
++                                        dimension: Some(texture_binding_view_dimension),
+                                        base_mip_level: base_mip_level - 1,
+                                        mip_level_count: Some(1),
+-                                        base_array_layer: layer,
+-                                        array_layer_count: Some(1),
+                                        ..Default::default()
+                                    }),
+                                ),
+                            },
+                        ],
+                    });
 
-      ...
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        base_mip_level,
+                        mip_level_count: Some(1),
+                        base_array_layer: layer,
+                        array_layer_count: Some(1),
+                        ..Default::default()
+                    });
+                    {
+                        let mut pass = encoder.begin_render_pass(/* renders to view */);
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, &bind_group, &[]);
+-                        pass.draw(0..6, 0..1); // call our vertex shader 6 times
++                        // draw 3 vertices, 1 instance, first instance (instance_index) = layer
++                        pass.draw(0..3, layer..layer + 1);
+                    }
+                }
+            }
 
-      const pipeline = pipelineByFormatAndView[id];
-
-      for (let baseMipLevel = 1; baseMipLevel < texture.mipLevelCount; ++baseMipLevel) {
-        for (let layer = 0; layer < texture.depthOrArrayLayers; ++layer) {
-          const bindGroup = device.createBindGroup({
-            layout: pipeline.getBindGroupLayout(0),
-            entries: [
-              { binding: 0, resource: sampler },
-              {
-                binding: 1,
-                resource: texture.createView({
--                  dimension: '2d',
-+                  dimension: textureBindingViewDimension,
-                  baseMipLevel: baseMipLevel - 1,
-                  mipLevelCount: 1,
--                  baseArrayLayer: layer,
--                  arrayLayerCount: 1,
-                }),
-              },
-            ],
-          });
-
-          const renderPassDescriptor = {
-            label: 'our basic canvas renderPass',
-            colorAttachments: [
-              {
-                view: texture.createView({
-                  dimension: '2d',
-                  baseMipLevel,
-                  mipLevelCount: 1,
-                  baseArrayLayer: layer,
-                  arrayLayerCount: 1,
-                }),
-                loadOp: 'clear',
-                storeOp: 'store',
-              },
-            ],
-          };
-
-          const pass = encoder.beginRenderPass(renderPassDescriptor);
-          pass.setPipeline(pipeline);
-          pass.setBindGroup(0, bindGroup);
--          pass.draw(6);
-+          // draw 3 vertices, 1 instance, first instance (instance_index) = layer
-+          pass.draw(3, 1, 0, layer);
-          pass.end();
-        }
-      }
-
-      const commandBuffer = encoder.finish();
-      device.queue.submit([commandBuffer]);
-    };
-  })();
+            let command_buffer = encoder.finish();
+            queue.submit([command_buffer]);
 ```
 
 With that our mipmap generation code works in compatibility mode, and it still
 works in core WebGPU.
 
-We have a few other things we need to update to make the example work though.
-
-We have a function `createTextureFromSources` that we pass sources
-to and it creates a texture. It was always creating a `'2d'` texture
-since in core we can view a `'2d'` texture with 6 layers as a cubemap.
-Instead, we need to make it so we can pass in a `textureBindingViewDimension` and/or
-a dimension so that when we create the texture we can tell compatibility
-mode how we will view it.
+The JavaScript version has one more thing to update: its
+`createTextureFromSources` takes a `textureBindingViewDimension` option and
+passes it on to `createTexture`, so compatibility mode knows in advance how
+the texture will be viewed.
 
 ```js
-+  function textureViewDimensionToDimension(viewDimension) {
-+   switch (viewDimension) {
-+      case '1d': return '1d';
-+      case '3d': return '3d';
-+      default: return '2d';
-+    }
-+  }
-
   function createTextureFromSources(device, sources, options = {}) {
-+    const viewDimension = options.dimension ??
-+      getDefaultViewDimensionForTexture(options.textureBindingViewDimension);
-+    const dimension = options.dimension ?? textureViewDimensionToDimension(viewDimension);
     // Assume are sources all the same size so just use the first one for width and height
     const source = sources[0];
     const texture = device.createTexture({
@@ -649,7 +715,6 @@ mode how we will view it.
       usage: GPUTextureUsage.TEXTURE_BINDING |
              GPUTextureUsage.COPY_DST |
              GPUTextureUsage.RENDER_ATTACHMENT,
-+      dimension,
 +      textureBindingViewDimension: options.textureBindingViewDimension,
     });
     copySourcesToTexture(device, texture, sources, options);
@@ -657,37 +722,24 @@ mode how we will view it.
   }
 ```
 
-And, we need to update our call to `createTextureFromSources` to tell it in advance
-that we want a cubemap.
+As covered above, `wgpu::TextureDescriptor` has no such field, so our Rust
+`create_texture_from_sources` stays exactly as it was in
+[the article on cube maps](webgpu-cube-maps.html#a-texture-helpers).
 
-```js
-  const texture = await createTextureFromSources(
--      device, faceCanvases, {mips: true, flipY: false});
-+      device, faceCanvases, {mips: true, flipY: false, textureBindingViewDimension: 'cube'});
-```
-
-To make the example run in compatibility mode we need to request it like we covered
-at the top of this article.
-
-```js
-async function main() {
--  const adapter = await navigator.gpu?.requestAdapter()
-+  const adapter = await navigator.gpu?.requestAdapter({
-+    featureLevel: 'compatibility',
-+  });
-  const device = await adapter?.requestDevice();
-
-  ...
-```
+Similarly, the JavaScript version requests a compatibility adapter like we
+covered at the top of this article. From Rust we can't, so our example makes
+no such change: it just uses the new `generate_mips`, which, being valid core
+WebGPU, runs unmodified.
 
 And with that, our cube map sample works in compatibility mode.
 
 {{{example url="../webgpu-compatibility-mode-generatemips.html"}}}
 
-You now have a compatibility mode friendly `generateMips` which you could
+You now have a compatibility mode friendly `generate_mips` which you could
 use in any of the examples on this site. It works on both core and compatibility mode.
-In compatibility mode you must pass in a `textureBindingViewDimension` if you want a cube map or if
-you want a 1 layer 2d-array. In core WebGPU you can pass one in or not. It doesn't matter.
+Set (or pass in) the texture binding view dimension if you want a cube map or if
+you want a 1 layer 2d-array; otherwise 2d-array is a fine choice, since in
+core WebGPU it doesn't matter.
 
 # Minor limits and restrictions
 
@@ -702,9 +754,9 @@ run into
   In compatibility mode, all the settings across all color targets
   in a single pipeline must be the same.
 
-* ## `copyTextureToBuffer` and `copyTextureToTexture` do not work with compressed textures
+* ## `copy_texture_to_buffer` and `copy_texture_to_texture` do not work with compressed textures
 
-* ## `copyTextureToTexture` does not work with multisampled textures
+* ## `copy_texture_to_texture` does not work with multisampled textures
 
 * ## `cube-array` is not supported
 
@@ -722,7 +774,8 @@ run into
 
 * ## `depthClampBias` must be 0
 
-  This is a setting when creating a render pipeline.
+  This is a setting when creating a render pipeline
+  (the `clamp` field of `wgpu::DepthBiasState`).
 
 * ## `@interpolation(linear)` and `@interpolation(..., sample)` are not supported
 
@@ -799,7 +852,7 @@ run into
 
   ```
   maxCombinationsPerStage =
-     min(device.limits.maxSampledTexturesPerShaderStage, device.limits.maxSamplersPerShaderStage)
+     min(device.limits.max_sampled_textures_per_shader_stage, device.limits.max_samplers_per_shader_stage)
   for each stage of the pipeline:
     sum = 0
     for each texture binding in the pipeline layout which is visible to that stage:
@@ -813,17 +866,17 @@ run into
 
 * ## Some of the default limits are lower in compatibility mode
 
-  | limit                               | compat  | core      |
-  | :---------------------------------- | ------: | --------: |
-  | `maxColorAttachments`               |       4 |         8 |
-  | `maxComputeInvocationsPerWorkgroup` |     128 |       256 |
-  | `maxComputeWorkgroupSizeX`          |     128 |       256 |
-  | `maxComputeWorkgroupSizeY`          |     128 |       256 |
-  | `maxInterStageShaderVariables`      |      15 |        16 |
-  | `maxTextureDimension1D`             |    4096 |      8192 |
-  | `maxTextureDimension2D`             |    4096 |      8192 |
-  | `maxUniformBufferBindingSize`       |   16384 |     65536 |
-  | `maxVertexAttributes`        | 16<sup>a</sup> |        16 |
+  | limit                                    | compat  | core      |
+  | :--------------------------------------- | ------: | --------: |
+  | `max_color_attachments`                  |       4 |         8 |
+  | `max_compute_invocations_per_workgroup`  |     128 |       256 |
+  | `max_compute_workgroup_size_x`           |     128 |       256 |
+  | `max_compute_workgroup_size_y`           |     128 |       256 |
+  | `max_inter_stage_shader_variables`       |      15 |        16 |
+  | `max_texture_dimension_1d`               |    4096 |      8192 |
+  | `max_texture_dimension_2d`               |    4096 |      8192 |
+  | `max_uniform_buffer_binding_size`        |   16384 |     65536 |
+  | `max_vertex_attributes`           | 16<sup>a</sup> |        16 |
 
   (a) In compatibility mode, using `@builtin(vertex_index)`
 and/or `@builtin(instance_index)` each count as an
@@ -840,7 +893,9 @@ attribute.
 
   Like other limits, you can check when you request an adapter
   what the adapter supports and require higher than the defaults
-  if you need more.
+  if you need more. Note these are given with their WebGPU names:
+  they are compatibility-mode-only limits and have no field on
+  `wgpu::Limits`.
 
   As mentioned above, about 45% of devices support `0`
   storage buffers and storage textures in vertex shaders.
@@ -853,7 +908,12 @@ then you ask for compatibility mode. If not, ask for core, the
 default, if the device can't handle core it will not return
 an adapter.
 
-On the the other hand, you can also to design your app to function
+This opt-in dance is, as covered at the top of this article, JavaScript-only —
+a wgpu app always behaves as core — but it's worth knowing if you write the
+page JavaScript around your wasm app or need to reason about what a browser
+will do.
+
+A JavaScript app can also be designed to function
 in compatibility mode but take advantage of all the core features
 if the user has a device that supports core WebGPU.
 
@@ -890,8 +950,9 @@ This will always be true on a core device.
 
 # Testing compatibility mode
 
-On a browser that supports compatibility mode you can test your
-application follows the restrictions by NOT requesting `'core-features-and-limits'` (as we did at the top). 
+On a browser that supports compatibility mode you can test that an
+application follows the restrictions by requesting a compatibility
+adapter and NOT requesting `'core-features-and-limits'`.
 You may want to check that you actually have a compatibility
 device so you can know that the restrictions and limits are
 being enforced.
@@ -911,6 +972,9 @@ This is a good way to test if your app will run on these older devices.
 
 Using [webgpu-dev-extension](https://github.com/greggman/webgpu-dev-extension) you can
 force your app to use compatibility mode as a quick test with no changes to your app.
+Because the extension changes what `navigator.gpu.requestAdapter` returns, this
+works for wasm builds of wgpu apps too — it's the one way to see a wgpu app run
+against compatibility mode restrictions.
 You can also test an app that auto-upgrades to core webgpu, works when it gets compatibility mode.
 
 Steps:

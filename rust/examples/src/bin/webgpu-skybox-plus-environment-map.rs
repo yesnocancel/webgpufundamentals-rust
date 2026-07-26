@@ -631,7 +631,7 @@ async fn run() {
             Vec3::new(0.0, 0.0, 0.0), // target
             Vec3::new(0.0, 1.0, 0.0), // up
         );
-        // Copy the view into the viewValue since we're going
+        // Copy the view into the uniform values since we're going
         // to zero out the view's translation
         env_map_uniform_values[K_VIEW_OFFSET..K_VIEW_OFFSET + 16]
             .copy_from_slice(&view.to_cols_array());

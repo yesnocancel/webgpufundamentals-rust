@@ -118,83 +118,74 @@ struct Uniforms {
 
 Of course we need to add space for the new values in our uniform buffer.
 
-```js
--  const uniformBufferSize = (12 + 16 + 16 + 4 + 4 + 4) * 4;
-+  const uniformBufferSize = (12 + 16 + 16 + 4 + 4 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // normalMatrix + worldViewProjection + world + color + light position +
+-    // view position + shininess
+-    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4) * 4;
++    // normalMatrix + worldViewProjection + world + color + light position +
++    // view position + shininess + light direction + limit
++    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
-  const kNormalMatrixOffset = 0;
-  const kWorldViewProjectionOffset = 12;
-  const kWorldOffset = 28;
-  const kColorOffset = 44;
-  const kLightWorldPositionOffset = 48;
-  const kViewWorldPositionOffset = 52;
-  const kShininessOffset = 55;
-+  const kLightDirectionOffset = 56;
-+  const kLimitOffset = 59;
-
-  const normalMatrixValue = uniformValues.subarray(
-      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const worldValue = uniformValues.subarray(
-      kWorldOffset, kWorldOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightWorldPositionValue = uniformValues.subarray(
-      kLightWorldPositionOffset, kLightWorldPositionOffset + 3);
-  const viewWorldPositionValue = uniformValues.subarray(
-      kViewWorldPositionOffset, kViewWorldPositionOffset + 3);
-  const shininessValue = uniformValues.subarray(
-      kShininessOffset, kShininessOffset + 1);
-+  const lightDirectionValue = uniformValues.subarray(
-+      kLightDirectionOffset, kLightDirectionOffset + 3);
-+  const limitValue = uniformValues.subarray(
-+      kLimitOffset, kLimitOffset + 1);
+    // offsets to the various uniform values in float32 indices
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+    const K_WORLD_OFFSET: usize = 28;
+    const K_COLOR_OFFSET: usize = 44;
+    const K_LIGHT_WORLD_POSITION_OFFSET: usize = 48;
+    const K_VIEW_WORLD_POSITION_OFFSET: usize = 52;
+    const K_SHININESS_OFFSET: usize = 55;
++    const K_LIGHT_DIRECTION_OFFSET: usize = 56;
++    const K_LIMIT_OFFSET: usize = 59;
 ```
 
 and we need to set them
 
-```js
-    colorValue.set([0.2, 1, 0.2, 1]);  // green
-    lightWorldPositionValue.set([-10, 30, 100]);
-    viewWorldPositionValue.set(eye);
-    shininessValue[0] = settings.shininess;
-+    limitValue[0] = Math.cos(settings.limit);
+```rust
+        uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
+            .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
++        let light_world_position = [-10.0, 30.0, 100.0];
+        uniform_values[K_LIGHT_WORLD_POSITION_OFFSET..K_LIGHT_WORLD_POSITION_OFFSET + 3]
+-            .copy_from_slice(&[-10.0, 30.0, 100.0]);
++            .copy_from_slice(&light_world_position);
+        uniform_values[K_VIEW_WORLD_POSITION_OFFSET..K_VIEW_WORLD_POSITION_OFFSET + 3]
+            .copy_from_slice(&eye);
+        uniform_values[K_SHININESS_OFFSET] = shininess;
++        uniform_values[K_LIMIT_OFFSET] = limit.cos();
 
-    // Since we don't have a plane like most spotlight examples
-    // let's point the spot light at the F
-    {
-        const mat = mat4.aim(
-            lightWorldPositionValue,
-            [
-              target[0] + settings.aimOffsetX,
-              target[1] + settings.aimOffsetY,
-              0,
-            ],
-            up);
-        // get the zAxis from the matrix
-        // negate it because lookAt looks down the -Z axis
-        lightDirectionValue.set(mat.slice(8, 11));
-    }
++        // Since we don't have a plane like most spotlight examples
++        // let's point the spot light at the F
++        {
++            let mat = m4::aim(
++                light_world_position,
++                [target[0] + aim_offset_x, target[1] + aim_offset_y, 0.0],
++                up,
++            );
++            // get the zAxis from the matrix
++            // negate it because lookAt looks down the -Z axis
++            uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
++                .copy_from_slice(&mat[8..11]);
++        }
 ```
 
-Above we're using `mat4.aim` which we covered in
+Above we're using `m4::aim` which we covered in
 [the article on cameras](webgpu-cameras.html). Specifically
 our F is `target`. The spot light is at `-10, 30, 100`. We add some
 offsets to the target so we can easily aim the spotlight. We then
 just pull out the *z axis* since that's the direction aim points
 something.
 
-We just need to add some UI code
+We just need to add some UI code. On the example page's JavaScript
+side
 
-```
+```js
   const settings = {
     rotation: degToRad(0),
     shininess: 30,
@@ -204,15 +195,29 @@ We just need to add some UI code
   };
 
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
-+  const limitOptions = { min: 0, max: 90, minRange: 1, step: 1, converters: GUI.converters.radToDeg };
++  const limitOptions = { min: 0, max: 90, step: 1, minRange: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'rotation', radToDegOptions);
-  gui.add(settings, 'shininess', { min: 1, max: 250 });
-+  gui.add(settings, 'limit', limitOptions);
-+  gui.add(settings, 'aimOffsetX', -50, 50);
-+  gui.add(settings, 'aimOffsetY', -50, 50);
+  gui.add(settings, 'rotation', radToDegOptions)
+     .onChange(v => wasm.set_setting_num('rotation', v));
+  gui.add(settings, 'shininess', { min: 1, max: 250 })
+     .onChange(v => wasm.set_setting_num('shininess', v));
++  gui.add(settings, 'limit', limitOptions)
++     .onChange(v => wasm.set_setting_num('limit', v));
++  gui.add(settings, 'aimOffsetX', -50, 50)
++     .onChange(v => wasm.set_setting_num('aimOffsetX', v));
++  gui.add(settings, 'aimOffsetY', -50, 50)
++     .onChange(v => wasm.set_setting_num('aimOffsetY', v));
+```
+
+and in the Rust render code we read the new settings
+
+```rust
+        let rotation = wgpu_fun::setting_f64("rotation", 0.0) as f32;
+        let shininess = wgpu_fun::setting_f64("shininess", 30.0) as f32;
++        let limit = wgpu_fun::setting_f64("limit", 15.0f64.to_radians()) as f32;
++        let aim_offset_x = wgpu_fun::setting_f64("aimOffsetX", -10.0) as f32;
++        let aim_offset_y = wgpu_fun::setting_f64("aimOffsetY", 10.0) as f32;
 ```
 
 And here it is
@@ -292,81 +297,76 @@ calculations by `inLight`.
 
 And again we need to update our uniform buffer setup
 
-```js
--  const uniformBufferSize = (12 + 16 + 16 + 4 + 4 + 4 + 4) * 4;
-+  const uniformBufferSize = (12 + 16 + 16 + 4 + 4 + 4 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // normalMatrix + worldViewProjection + world + color + light position +
+-    // view position + shininess + light direction + limit
+-    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4 + 4) * 4;
++    // normalMatrix + worldViewProjection + world + color + light position +
++    // view position + shininess + light direction + inner/outer limit
++    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
-  const kNormalMatrixOffset = 0;
-  const kWorldViewProjectionOffset = 12;
-  const kWorldOffset = 28;
-  const kColorOffset = 44;
-  const kLightWorldPositionOffset = 48;
-  const kViewWorldPositionOffset = 52;
-  const kShininessOffset = 55;
-  const kLightDirectionOffset = 56;
--  const kLimitOffset = 59;
-+  const kInnerLimitOffset = 59;
-+  const kOuterLimitOffset = 60;
-
-  const normalMatrixValue = uniformValues.subarray(
-      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const worldValue = uniformValues.subarray(
-      kWorldOffset, kWorldOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightWorldPositionValue = uniformValues.subarray(
-      kLightWorldPositionOffset, kLightWorldPositionOffset + 3);
-  const viewWorldPositionValue = uniformValues.subarray(
-      kViewWorldPositionOffset, kViewWorldPositionOffset + 3);
-  const shininessValue = uniformValues.subarray(
-      kShininessOffset, kShininessOffset + 1);
-  const lightDirectionValue = uniformValues.subarray(
-      kLightDirectionOffset, kLightDirectionOffset + 3);
--  const limitValue = uniformValues.subarray(
--      kLimitOffset, kLimitOffset + 1);
-+  const innerLimitValue = uniformValues.subarray(
-+      kInnerLimitOffset, kInnerLimitOffset + 1);
-+  const outerLimitValue = uniformValues.subarray(
-+      kOuterLimitOffset, kOuterLimitOffset + 1);
+    // offsets to the various uniform values in float32 indices
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+    const K_WORLD_OFFSET: usize = 28;
+    const K_COLOR_OFFSET: usize = 44;
+    const K_LIGHT_WORLD_POSITION_OFFSET: usize = 48;
+    const K_VIEW_WORLD_POSITION_OFFSET: usize = 52;
+    const K_SHININESS_OFFSET: usize = 55;
+    const K_LIGHT_DIRECTION_OFFSET: usize = 56;
+-    const K_LIMIT_OFFSET: usize = 59;
++    const K_INNER_LIMIT_OFFSET: usize = 59;
++    const K_OUTER_LIMIT_OFFSET: usize = 60;
 ```
 
-and where we set them
+and where we set them. On the example page's JavaScript side the two
+limits become a min/max pair of sliders
 
 ```js
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 +  const limitOptions = { min: 0, max: 90, minRange: 1, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'rotation', radToDegOptions);
-  gui.add(settings, 'shininess', { min: 1, max: 250 });
--  gui.add(settings, 'limit', limitOptions);
+  gui.add(settings, 'rotation', radToDegOptions)
+     .onChange(v => wasm.set_setting_num('rotation', v));
+  gui.add(settings, 'shininess', { min: 1, max: 250 })
+     .onChange(v => wasm.set_setting_num('shininess', v));
+-  gui.add(settings, 'limit', limitOptions)
+-     .onChange(v => wasm.set_setting_num('limit', v));
 +  GUI.makeMinMaxPair(gui, settings, 'innerLimit', 'outerLimit', limitOptions);
-  gui.add(settings, 'aimOffsetX', -50, 50);
-  gui.add(settings, 'aimOffsetY', -50, 50);
++  gui.onChange(() => {
++    wasm.set_setting_num('innerLimit', settings.innerLimit);
++    wasm.set_setting_num('outerLimit', settings.outerLimit);
++  });
+  gui.add(settings, 'aimOffsetX', -50, 50)
+     .onChange(v => wasm.set_setting_num('aimOffsetX', v));
+  gui.add(settings, 'aimOffsetY', -50, 50)
+     .onChange(v => wasm.set_setting_num('aimOffsetY', v));
+```
 
-  ...
+and in the Rust render code
 
-  function render() {
+```rust
+        let rotation = wgpu_fun::setting_f64("rotation", 0.0) as f32;
+        let shininess = wgpu_fun::setting_f64("shininess", 30.0) as f32;
+-        let limit = wgpu_fun::setting_f64("limit", 15.0f64.to_radians()) as f32;
++        let inner_limit = wgpu_fun::setting_f64("innerLimit", 15.0f64.to_radians()) as f32;
++        let outer_limit = wgpu_fun::setting_f64("outerLimit", 25.0f64.to_radians()) as f32;
 
     ...
 
-    colorValue.set([0.2, 1, 0.2, 1]);  // green
-    lightWorldPositionValue.set([-10, 30, 100]);
-    viewWorldPositionValue.set(eye);
-    shininessValue[0] = settings.shininess;
--    limitValue[0] = Math.cos(settings.limit);
-+    innerLimitValue[0] = Math.cos(settings.innerLimit);
-+   outerLimitValue[0] = Math.cos(settings.outerLimit);
+        uniform_values[K_SHININESS_OFFSET] = shininess;
+-        uniform_values[K_LIMIT_OFFSET] = limit.cos();
++        uniform_values[K_INNER_LIMIT_OFFSET] = inner_limit.cos();
++        uniform_values[K_OUTER_LIMIT_OFFSET] = outer_limit.cos();
 
     ...
 ```
@@ -380,8 +380,8 @@ Now we're getting something that looks more like a spotlight!
 One thing to be aware of is if `innerLimit` is equal to `outerLimit`
 then `limitRange` will be 0.0. We divide by `limitRange` and dividing by
 zero is bad/undefined. There's nothing to do in the shader here. We just
-need to make sure in our JavaScript that `innerLimit` is never equal to
-`outerLimit` which, in this case, our gui does for us.
+need to make sure that `innerLimit` is never equal to
+`outerLimit` which, in this case, the gui on the example page does for us.
 
 WGSL also has a function we could use to slightly simplify this. It's
 called `smoothstep` it returns a value from 0 to 1 but

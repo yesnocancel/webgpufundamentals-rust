@@ -61,153 +61,164 @@ left is `-1, 0, 0` (negative X), Facing right is `1, 0, 0` (Positive X). Up is `
 While we're at it we'll get rid of the vertex colors since they'll
 make it harder to see the lighting.
 
-```js
-function createFVertices() {
-  const positions = [
-    // left column
-     -50,  75,  15,
-     -20,  75,  15,
-     -50, -75,  15,
-     -20, -75,  15,
+```rust
+#[rustfmt::skip]
+fn create_f_vertices() -> (Vec<f32>, u32) {
+    let positions: Vec<f32> = vec![
+        // left column
+        -50.0,  75.0,  15.0,
+        -20.0,  75.0,  15.0,
+        -50.0, -75.0,  15.0,
+        -20.0, -75.0,  15.0,
 
-    // top rung
-     -20,  75,  15,
-      50,  75,  15,
-     -20,  45,  15,
-      50,  45,  15,
+        // top rung
+        -20.0,  75.0,  15.0,
+         50.0,  75.0,  15.0,
+        -20.0,  45.0,  15.0,
+         50.0,  45.0,  15.0,
 
-    // middle rung
-     -20,  15,  15,
-      20,  15,  15,
-     -20, -15,  15,
-      20, -15,  15,
+        // middle rung
+        -20.0,  15.0,  15.0,
+         20.0,  15.0,  15.0,
+        -20.0, -15.0,  15.0,
+         20.0, -15.0,  15.0,
 
-    // left column back
-     -50,  75, -15,
-     -20,  75, -15,
-     -50, -75, -15,
-     -20, -75, -15,
+        // left column back
+        -50.0,  75.0, -15.0,
+        -20.0,  75.0, -15.0,
+        -50.0, -75.0, -15.0,
+        -20.0, -75.0, -15.0,
 
-    // top rung back
-     -20,  75, -15,
-      50,  75, -15,
-     -20,  45, -15,
-      50,  45, -15,
+        // top rung back
+        -20.0,  75.0, -15.0,
+         50.0,  75.0, -15.0,
+        -20.0,  45.0, -15.0,
+         50.0,  45.0, -15.0,
 
-    // middle rung back
-     -20,  15, -15,
-      20,  15, -15,
-     -20, -15, -15,
-      20, -15, -15,
-  ];
+        // middle rung back
+        -20.0,  15.0, -15.0,
+         20.0,  15.0, -15.0,
+        -20.0, -15.0, -15.0,
+         20.0, -15.0, -15.0,
+    ];
 
-  const indices = [
-     0,  2,  1,    2,  3,  1,   // left column
-     4,  6,  5,    6,  7,  5,   // top run
-     8, 10,  9,   10, 11,  9,   // middle run
+    let indices: Vec<u32> = vec![
+         0,  2,  1,    2,  3,  1,   // left column
+         4,  6,  5,    6,  7,  5,   // top run
+         8, 10,  9,   10, 11,  9,   // middle run
 
-    12, 13, 14,   14, 13, 15,   // left column back
-    16, 17, 18,   18, 17, 19,   // top run back
-    20, 21, 22,   22, 21, 23,   // middle run back
+        12, 13, 14,   14, 13, 15,   // left column back
+        16, 17, 18,   18, 17, 19,   // top run back
+        20, 21, 22,   22, 21, 23,   // middle run back
 
-     0,  5, 12,   12,  5, 17,   // top
-     5,  7, 17,   17,  7, 19,   // top rung right
-     6, 18,  7,   18, 19,  7,   // top rung bottom
-     6,  8, 18,   18,  8, 20,   // between top and middle rung
-     8,  9, 20,   20,  9, 21,   // middle rung top
-     9, 11, 21,   21, 11, 23,   // middle rung right
-    10, 22, 11,   22, 23, 11,   // middle rung bottom
-    10,  3, 22,   22,  3, 15,   // stem right
-     2, 14,  3,   14, 15,  3,   // bottom
-     0, 12,  2,   12, 14,  2,   // left
-  ];
+         0,  5, 12,   12,  5, 17,   // top
+         5,  7, 17,   17,  7, 19,   // top rung right
+         6, 18,  7,   18, 19,  7,   // top rung bottom
+         6,  8, 18,   18,  8, 20,   // between top and middle rung
+         8,  9, 20,   20,  9, 21,   // middle rung top
+         9, 11, 21,   21, 11, 23,   // middle rung right
+        10, 22, 11,   22, 23, 11,   // middle rung bottom
+        10,  3, 22,   22,  3, 15,   // stem right
+         2, 14,  3,   14, 15,  3,   // bottom
+         0, 12,  2,   12, 14,  2,   // left
+    ];
 
--  const quadColors = [
--      200,  70, 120,  // left column front
--      200,  70, 120,  // top rung front
--      200,  70, 120,  // middle rung front
+-    let quad_colors: Vec<u8> = vec![
+-        200,  70, 120,  // left column front
+-        200,  70, 120,  // top rung front
+-        200,  70, 120,  // middle rung front
 -
--       80,  70, 200,  // left column back
--       80,  70, 200,  // top rung back
--       80,  70, 200,  // middle rung back
+-         80,  70, 200,  // left column back
+-         80,  70, 200,  // top rung back
+-         80,  70, 200,  // middle rung back
 -
--       70, 200, 210,  // top
--      160, 160, 220,  // top rung right
--       90, 130, 110,  // top rung bottom
--      200, 200,  70,  // between top and middle rung
--      210, 100,  70,  // middle rung top
--      210, 160,  70,  // middle rung right
--       70, 180, 210,  // middle rung bottom
--      100,  70, 210,  // stem right
--       76, 210, 100,  // bottom
--      140, 210,  80,  // left
-+  const normals = [
-+        0,   0,   1,  // left column front
-+        0,   0,   1,  // top rung front
-+        0,   0,   1,  // middle rung front
+-         70, 200, 210,  // top
+-        160, 160, 220,  // top rung right
+-         90, 130, 110,  // top rung bottom
+-        200, 200,  70,  // between top and middle rung
+-        210, 100,  70,  // middle rung top
+-        210, 160,  70,  // middle rung right
+-         70, 180, 210,  // middle rung bottom
+-        100,  70, 210,  // stem right
+-         76, 210, 100,  // bottom
+-        140, 210,  80,  // left
++    let normals: Vec<f32> = vec![
++         0.0,  0.0,  1.0,  // left column front
++         0.0,  0.0,  1.0,  // top rung front
++         0.0,  0.0,  1.0,  // middle rung front
 +
-+        0,   0,  -1,  // left column back
-+        0,   0,  -1,  // top rung back
-+        0,   0,  -1,  // middle rung back
++         0.0,  0.0, -1.0,  // left column back
++         0.0,  0.0, -1.0,  // top rung back
++         0.0,  0.0, -1.0,  // middle rung back
 +
-+        0,   1,   0,  // top
-+        1,   0,   0,  // top rung right
-+        0,  -1,   0,  // top rung bottom
-+        1,   0,   0,  // between top and middle rung
-+        0,   1,   0,  // middle rung top
-+        1,   0,   0,  // middle rung right
-+        0,  -1,   0,  // middle rung bottom
-+        1,   0,   0,  // stem right
-+        0,  -1,   0,  // bottom
-+       -1,   0,   0,  // left
-  ];
++         0.0,  1.0,  0.0,  // top
++         1.0,  0.0,  0.0,  // top rung right
++         0.0, -1.0,  0.0,  // top rung bottom
++         1.0,  0.0,  0.0,  // between top and middle rung
++         0.0,  1.0,  0.0,  // middle rung top
++         1.0,  0.0,  0.0,  // middle rung right
++         0.0, -1.0,  0.0,  // middle rung bottom
++         1.0,  0.0,  0.0,  // stem right
++         0.0, -1.0,  0.0,  // bottom
++        -1.0,  0.0,  0.0,  // left
+    ];
 
-  const numVertices = indices.length;
--  const vertexData = new Float32Array(numVertices * 4); // xyz + color
-  const vertexData = new Float32Array(numVertices * 6); // xyz + normal
--  const colorData = new Uint8Array(vertexData.buffer);
+    let num_vertices = indices.len() as u32;
+-    let mut vertex_data = vec![0.0f32; indices.len() * 4]; // xyz + color
++    let mut vertex_data = vec![0.0f32; indices.len() * 6]; // xyz + normal
+    for (i, index) in indices.iter().enumerate() {
+        let position_ndx = (index * 3) as usize;
+        let position = &positions[position_ndx..position_ndx + 3];
+-        vertex_data[i * 4..i * 4 + 3].copy_from_slice(position);
++        vertex_data[i * 6..i * 6 + 3].copy_from_slice(position);
 
-  for (let i = 0; i < indices.length; ++i) {
-    const positionNdx = indices[i] * 3;
-    const position = positions.slice(positionNdx, positionNdx + 3);
-    vertexData.set(position, i * 6);
+        let quad_ndx = (i / 6) * 3;
+-        let color = &quad_colors[quad_ndx..quad_ndx + 3];
+-        // set RGB in the first 3 bytes of the 4th float, set A to 255
+-        vertex_data[i * 4 + 3] = f32::from_ne_bytes([color[0], color[1], color[2], 255]);
++        let normal = &normals[quad_ndx..quad_ndx + 3];
++        vertex_data[i * 6 + 3..i * 6 + 6].copy_from_slice(normal);
+    }
 
-    const quadNdx = (i / 6 | 0) * 3;
--    const color = quadColors.slice(quadNdx, quadNdx + 3);
--    colorData.set(color, i * 16 + 12);
--    colorData[i * 16 + 15] = 255;
-+    const normal = normals.slice(quadNdx, quadNdx + 3);
-+    vertexData.set(normal, i * 6 + 3);
-  }
-
-  return {
-    vertexData,
-    numVertices,
-  };
+    (vertex_data, num_vertices)
 }
 ```
 
 We need to change our pipeline to use these normals instead of the
 colors
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
--          arrayStride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
-+          arrayStride: (3 + 3) * 4, // (3+3) floats 4 bytes each
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
--            {shaderLocation: 1, offset: 12, format: 'unorm8x4'},  // color
-+            {shaderLocation: 1, offset: 12, format: 'float32x3'},  // normal
-          ],
-        },
-      ],
-    },
+```rust
+    let pipeline = app
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("2 attributes"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: None,
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+-                    array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
++                    array_stride: (3 + 3) * 4, // (3+3) floats 4 bytes each
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        // position
+                        wgpu::VertexAttribute {
+                            shader_location: 0,
+                            offset: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+-                        // color
++                        // normal
+                        wgpu::VertexAttribute {
+                            shader_location: 1,
+                            offset: 12,
+-                            format: wgpu::VertexFormat::Unorm8x4,
++                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                    ],
+                })],
+            },
 
     ...
 ```
@@ -270,70 +281,81 @@ of the reverse direction of the light and the normal.
 ```
 
 We need to add space to our uniform buffer for the color and
-light direction and make views for setting them.
+light direction and add offsets so we can set them.
 
-```js
--  // matrix
--  const uniformBufferSize = (16) * 4;
-+  // matrix + color + light direction
-+  const uniformBufferSize = (16 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // matrix
+-    const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
++    // matrix + color + light direction
++    const UNIFORM_BUFFER_SIZE: u64 = (16 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
-  const kMatrixOffset = 0;
-+  const kColorOffset = 16;
-+  const kLightDirectionOffset = 20;
-
-  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-+  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-+  const lightDirectionValue =
-      uniformValues.subarray(kLightDirectionOffset, kLightDirectionOffset + 3);
+    // offsets to the various uniform values in float32 indices
+    const K_MATRIX_OFFSET: usize = 0;
++    const K_COLOR_OFFSET: usize = 16;
++    const K_LIGHT_DIRECTION_OFFSET: usize = 20;
 ```
 
-and we need to set them
+and we need to set them. On the example page's JavaScript side
+we have a `rotation` setting
 
 ```js
   const settings = {
     rotation: degToRad(0),
   };
 
-  ...
+  const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
-  function render() {
+  const gui = new GUI();
+  gui.add(settings, 'rotation', radToDegOptions)
+     .onChange(v => wasm.set_setting_num('rotation', v));
+```
+
+and in the Rust render code
+
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
+        let rotation = wgpu_fun::setting_f64("rotation", 0.0) as f32;
+
     ...
 
+        let aspect = frame.width as f32 / frame.height as f32;
+        let projection = m4::perspective(
+            60.0f32.to_radians(),
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
 
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(
-        degToRad(60),
-        aspect,
-        1,      // zNear
-        2000,   // zFar
-    );
+        let eye = [100.0, 150.0, 200.0];
+        let target = [0.0, 35.0, 0.0];
+        let up = [0.0, 1.0, 0.0];
 
-    const eye = [100, 150, 200];
-    const target = [0, 35, 0];
-    const up = [0, 1, 0];
+        // Compute a view matrix
+        let view_matrix = m4::look_at(eye, target, up);
 
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+        // combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+        let matrix_value = m4::rotate_y(&view_projection_matrix, rotation);
+        uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
 
-    mat4.rotateY(viewProjectionMatrix, settings.rotation, matrixValue);
+        uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
+            .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
+        uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
+            .copy_from_slice(&vec3::normalize([-0.5, -0.7, -1.0]));
 
-    colorValue.set([0.2, 1, 0.2, 1]);  // green
-    lightDirectionValue.set(vec3.normalize([-0.5, -0.7, -1]));
-
-    // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+        // upload the uniform values to the uniform buffer
+        frame
+            .queue
+            .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 ```
 
 Our camera/eye is at z = 200 and it's looking at Z = 0. In other words
@@ -402,55 +424,56 @@ By setting `w` to 0, all the translation will be multiplied by zero[^matrix-math
 
 [^matrix-math]: see the article on [matrix math](webgpu-matrix-math.html).
 
-We need to go update our uniform buffer and values views.
+We need to go update our uniform buffer size and offsets.
 
-```js
--  const uniformBufferSize = (16 + 4 + 4) * 4;
-+  const uniformBufferSize = (16 + 16 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // matrix + color + light direction
+-    const UNIFORM_BUFFER_SIZE: u64 = (16 + 4 + 4) * 4;
++    // world + worldViewProjection + color + light direction
++    const UNIFORM_BUFFER_SIZE: u64 = (16 + 16 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
--  const kMatrixOffset = 0;
--  const kColorOffset = 16;
--  const kLightDirectionOffset = 20;
-+  const kWorldOffset = 0;
-+  const kWorldViewProjectionOffset = 16;
-+  const kColorOffset = 32;
-+  const kLightDirectionOffset = 36;
-
--  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-+  const worldValue = uniformValues.subarray(kWorldOffset, kWorldOffset + 16);
-+  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightDirectionValue =
-      uniformValues.subarray(kLightDirectionOffset, kLightDirectionOffset + 3);
+    // offsets to the various uniform values in float32 indices
+-    const K_MATRIX_OFFSET: usize = 0;
+-    const K_COLOR_OFFSET: usize = 16;
+-    const K_LIGHT_DIRECTION_OFFSET: usize = 20;
++    const K_WORLD_OFFSET: usize = 0;
++    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 16;
++    const K_COLOR_OFFSET: usize = 32;
++    const K_LIGHT_DIRECTION_OFFSET: usize = 36;
 ```
 
 And we have to change the code that updates them
 
-```js
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+```rust
+        // Compute a view matrix
+        let view_matrix = m4::look_at(eye, target, up);
 
-    // Combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+        // Combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
--    mat4.rotateY(viewProjectionMatrix, settings.rotation, matrixValue);
-+    // Compute a world matrix directly into worldValue
-+    mat4.rotationY(settings.rotation, worldValue);
+-        let matrix_value = m4::rotate_y(&view_projection_matrix, rotation);
+-        uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
++        // Compute a world matrix directly into the world value
++        let world_value = m4::rotation_y(rotation);
++        uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world_value);
 
-+    // Combine the viewProjection and world matrices
-+    mat4.multiply(viewProjectionMatrix, worldValue, worldViewProjectionValue);
++        // Combine the viewProjection and world matrices
++        let world_view_projection_value = m4::multiply(&view_projection_matrix, &world_value);
++        uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
++            .copy_from_slice(&world_view_projection_value);
 
-    colorValue.set([0.2, 1, 0.2, 1]);  // green
-    lightDirectionValue.set(vec3.normalize([-0.5, -0.7, -1]));
+        uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
+            .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
+        uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
+            .copy_from_slice(&vec3::normalize([-0.5, -0.7, -1.0]));
 ```
 
 and here's that
@@ -529,100 +552,103 @@ struct VSOutput {
 
 Because we're using a 3x3 matrix our normal calculation got slightly simpler.
 
-And of course we need to update the JavaScript for the new shape of
+And of course we need to update the Rust code for the new shape of
 our uniforms.
 
-```js
--  const uniformBufferSize = (16 + 16 + 4 + 4) * 4;
-+  const uniformBufferSize = (12 + 16 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // world + worldViewProjection + color + light direction
+-    const UNIFORM_BUFFER_SIZE: u64 = (16 + 16 + 4 + 4) * 4;
++    // normalMatrix + worldViewProjection + color + light direction
++    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
--  const kWorldOffset = 0;
--  const kWorldViewProjectionOffset = 16;
--  const kColorOffset = 32;
--  const kLightDirectionOffset = 36;
-+  const kNormalMatrixOffset = 0;
-+  const kWorldViewProjectionOffset = 12;
-+  const kColorOffset = 28;
-+  const kLightDirectionOffset = 32;
-
--  const worldValue = uniformValues.subarray(kWorldOffset, kWorldOffset + 16);
-+  const normalMatrixValue = uniformValues.subarray(
-+      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightDirectionValue =
-      uniformValues.subarray(kLightDirectionOffset, kLightDirectionOffset + 3);
+    // offsets to the various uniform values in float32 indices
+-    const K_WORLD_OFFSET: usize = 0;
+-    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 16;
+-    const K_COLOR_OFFSET: usize = 32;
+-    const K_LIGHT_DIRECTION_OFFSET: usize = 36;
++    const K_NORMAL_MATRIX_OFFSET: usize = 0;
++    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
++    const K_COLOR_OFFSET: usize = 28;
++    const K_LIGHT_DIRECTION_OFFSET: usize = 32;
 ```
 
 Before we can compute our normal matrix we need a function to transpose a matrix
 
-```js
-const mat4 = {
-  ....
-  transpose(m, dst) {
-    dst = dst || new Float32Array(16);
-
-    dst[ 0] = m[ 0];  dst[ 1] = m[ 4];  dst[ 2] = m[ 8];  dst[ 3] = m[12];
-    dst[ 4] = m[ 1];  dst[ 5] = m[ 5];  dst[ 6] = m[ 9];  dst[ 7] = m[13];
-    dst[ 8] = m[ 2];  dst[ 9] = m[ 6];  dst[10] = m[10];  dst[11] = m[14];
-    dst[12] = m[ 3];  dst[13] = m[ 7];  dst[14] = m[11];  dst[15] = m[15];
-
-    return dst;
-  },
+```rust
+mod m4 {
+  ...
++    #[rustfmt::skip]
++    pub fn transpose(m: &[f32; 16]) -> [f32; 16] {
++        let mut dst = [0.0; 16];
++
++        dst[ 0] = m[ 0];  dst[ 1] = m[ 4];  dst[ 2] = m[ 8];  dst[ 3] = m[12];
++        dst[ 4] = m[ 1];  dst[ 5] = m[ 5];  dst[ 6] = m[ 9];  dst[ 7] = m[13];
++        dst[ 8] = m[ 2];  dst[ 9] = m[ 6];  dst[10] = m[10];  dst[11] = m[14];
++        dst[12] = m[ 3];  dst[13] = m[ 7];  dst[14] = m[11];  dst[15] = m[15];
++
++        dst
++    }
   ...
 ```
 
 And we need a function to get a 3x3 matrix from a 4x4 matrix
 
-```js
-const mat3 = {
-  fromMat4(m, dst) {
-    dst = dst || new Float32Array(12);
-
-    dst[0] = m[0]; dst[1] = m[1];  dst[ 2] = m[ 2];
-    dst[4] = m[4]; dst[5] = m[5];  dst[ 6] = m[ 6];
-    dst[8] = m[8]; dst[9] = m[9];  dst[10] = m[10];
-
-    return dst;
-  },
-};
+```rust
+mod mat3 {
+    #[rustfmt::skip]
+    pub fn from_mat4(m: &[f32; 16], dst: &mut [f32]) {
+        dst[0] = m[0]; dst[1] = m[1];  dst[ 2] = m[ 2];
+        dst[4] = m[4]; dst[5] = m[5];  dst[ 6] = m[ 6];
+        dst[8] = m[8]; dst[9] = m[9];  dst[10] = m[10];
+    }
+}
 
 ```
 
-Notice that a 3x3 matrix in WebGPU has each column padded. We covered
-this in [the article on memory layout](webgpu-memory-layout.html).
+Notice that a 3x3 matrix in WebGPU has each column padded, which is why
+the matrix takes 12 floats and `from_mat4` skips every 4th one. We covered
+this in [the article on memory layout](webgpu-memory-layout.html). `dst`
+here is the normal matrix's 12 float slice of the uniform values so we can
+write the result straight into it.
 
 Now that we have these 2 functions we can compute and set the normal matrix.
 
-```js
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+```rust
+        // Compute a view matrix
+        let view_matrix = m4::look_at(eye, target, up);
 
-    // Combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+        // Combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
--    // Compute a world matrix directly into worldValue
--    mat4.rotationY(settings.rotation, worldValue);
+-        // Compute a world matrix directly into the world value
+-        let world_value = m4::rotation_y(rotation);
+-        uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world_value);
 -
--    // Combine the viewProjection and world matrices
--    mat4.multiply(viewProjectionMatrix, worldValue, worldViewProjectionValue);
-+    // Compute a world matrix
-+    const world = mat4.rotationY(settings.rotation);
+-        // Combine the viewProjection and world matrices
+-        let world_view_projection_value = m4::multiply(&view_projection_matrix, &world_value);
+-        uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
+-            .copy_from_slice(&world_view_projection_value);
++        // Compute a world matrix
++        let world = m4::rotation_y(rotation);
 +
-+    // Combine the viewProjection and world matrices
-+    mat4.multiply(viewProjectionMatrix, world, worldViewProjectionValue);
++        // Combine the viewProjection and world matrices
++        let world_view_projection_value = m4::multiply(&view_projection_matrix, &world);
++        uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
++            .copy_from_slice(&world_view_projection_value);
 +
-+    // Inverse and transpose it into the normalMatrix value
-+    mat3.fromMat4(mat4.transpose(mat4.inverse(world)), normalMatrixValue);
++        // Inverse and transpose it into the normalMatrix value
++        mat3::from_mat4(
++            &m4::transpose(&m4::inverse(&world)),
++            &mut uniform_values[K_NORMAL_MATRIX_OFFSET..K_NORMAL_MATRIX_OFFSET + 12],
++        );
 ```
 
 Because the effect is subtle and because we aren't scaling anything

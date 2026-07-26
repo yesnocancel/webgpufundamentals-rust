@@ -25,39 +25,39 @@ To keep it simple we'll make them from cubes starting with
 
 The first thing we'll do is swap the F we'be been drawing for a unit cube.
 
-```js
--function createFVertices() {
-+function createCubeVertices() {
-*    // left
-*    0, 0,  0,
-*    0, 0, -1,
-*    0, 1,  0,
-*    0, 1, -1,
+```rust
+-fn create_f_vertices() -> (Vec<f32>, u32) {
++fn create_cube_vertices() -> (Vec<f32>, u32) {
+*        // left
+*        0.0, 0.0,  0.0,
+*        0.0, 0.0, -1.0,
+*        0.0, 1.0,  0.0,
+*        0.0, 1.0, -1.0,
 *
-*    // right
-*    1, 0,  0,
-*    1, 0, -1,
-*    1, 1,  0,
-*    1, 1, -1,
-*  ];
+*        // right
+*        1.0, 0.0,  0.0,
+*        1.0, 0.0, -1.0,
+*        1.0, 1.0,  0.0,
+*        1.0, 1.0, -1.0,
+*    ];
 *
-*  const indices = [
-*     0,  2,  1,    2,  3,  1,   // left
-*     4,  5,  6,    6,  5,  7,   // right
-*     0,  4,  2,    2,  4,  6,   // front
-*     1,  3,  5,    5,  3,  7,   // back
-*     0,  1,  4,    4,  1,  5,   // bottom
-*     2,  6,  3,    3,  6,  7,   // top
-*  ];
+*    let indices: Vec<u32> = vec![
+*         0,  2,  1,    2,  3,  1,   // left
+*         4,  5,  6,    6,  5,  7,   // right
+*         0,  4,  2,    2,  4,  6,   // front
+*         1,  3,  5,    5,  3,  7,   // back
+*         0,  1,  4,    4,  1,  5,   // bottom
+*         2,  6,  3,    3,  6,  7,   // top
+*    ];
 *
-*  const quadColors = [
-*      200,  70, 120,  // left column front
-*       80,  70, 200,  // left column back
-*       70, 200, 210,  // top
-*      160, 160, 220,  // top rung right
-*       90, 130, 110,  // top rung bottom
-*      200, 200,  70,  // between top and middle rung
-*  ];
+*    let quad_colors: Vec<u8> = vec![
+*        200,  70, 120,  // left column front
+*         80,  70, 200,  // left column back
+*         70, 200, 210,  // top
+*        160, 160, 220,  // top rung right
+*         90, 130, 110,  // top rung bottom
+*        200, 200,  70,  // between top and middle rung
+*    ];
 
   ...
 ```
@@ -69,28 +69,32 @@ The data above makes a cube like this.
 The old code pre-created 26 "objectsInfos" where each "objectInfo" was a set of
 uniform buffer, and bindGroup, one for each thing we want to draw. Let's change
 the code to instead create these on demand. That way we can just draw as many
-things as we want.
+things as we want. In JavaScript this was a `createObjectInfo` function that
+captured `device` and `pipeline` from the enclosing scope. Rust functions don't
+capture, so we pass those in.
 
-```js
--  const numFs = 5 * 5 + 1;
-  const objectInfos = [];
--  for (let i = 0; i < numFs; ++i) {
-  function createObjectInfo() {
-    // matrix
-    const uniformBufferSize = (16) * 4;
-    const uniformBuffer = device.createBuffer({
-    
+```rust
+-    const NUM_FS: usize = 5 * 5 + 1;
+    let mut object_infos: Vec<ObjectInfo> = Vec::new();
+-    for _i in 0..NUM_FS {
+-        let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
++fn create_object_info(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline) -> ObjectInfo {
++    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+
     ...
 
--    objectInfos.push({
-+    return {
-      uniformBuffer,
-      uniformValues,
-      matrixValue,
-      bindGroup,
--    });
-+    };
-  }
+-        object_infos.push(ObjectInfo {
+-            uniform_buffer,
+-            uniform_values,
+-            bind_group,
+-        });
+-    }
++    ObjectInfo {
++        uniform_buffer,
++        uniform_values,
++        bind_group,
++    }
++}
 ```
 
 We're going to be using the same unit cube for everything just to keep things
@@ -133,201 +137,229 @@ struct VSOutput {
 We need to update the uniform buffer creation to
 add space for the new color.
 
-```js
-  function createObjectInfo() {
--    // matrix
--    const uniformBufferSize = (16) * 4;
-+    // matrix and color
-+    const uniformBufferSize = (16 + 4) * 4;
-    const uniformBuffer = device.createBuffer({
-      label: 'uniforms',
-      size: uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+```rust
+-// matrix
+-const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
++// matrix and color
++const UNIFORM_BUFFER_SIZE: u64 = (16 + 4) * 4;
+
+ // offsets to the various uniform values in float32 indices
+ const K_MATRIX_OFFSET: usize = 0;
++const K_COLOR_OFFSET: usize = 16;
+
+fn create_object_info(device: &wgpu::Device, pipeline: &wgpu::RenderPipeline) -> ObjectInfo {
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
 
-    const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-    // offsets to the various uniform values in float32 indices
-    const kMatrixOffset = 0;
-+    const kColorOffset = 16;
-
-    const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-+    const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-
-    const bindGroup = device.createBindGroup({
-      label: 'bind group for object',
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: uniformBuffer },
-      ],
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bind group for object"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
     });
 
-    return {
-      uniformBuffer,
-      uniformValues,
-+      colorValue,
-      matrixValue,
-      bindGroup,
-    };
-  }
+    ObjectInfo {
+        uniform_buffer,
+        uniform_values,
+        bind_group,
+    }
+}
 ```
+
+The JavaScript version made `matrixValue` and `colorValue` typed array views
+into `uniformValues`. In Rust we just index into `uniform_values` with the
+offsets when we set the values.
 
 Now we need to extract the code that "draws" an object into a
-function.
+function. In JavaScript `drawObject` was a function that captured `device`,
+`objectInfos`, `objectNdx` and `numVertices` from the enclosing scope
+and took a context called `ctx` that had the render pass encoder and the
+current `viewProjectionMatrix`. In Rust, everything the function needs goes
+into the context.
 
-```js
-  let depthTexture;
-+  let objectNdx = 0;
-
-+  function drawObject(ctx, matrix, color) {
-+    const { pass, viewProjectionMatrix } = ctx;
-+    if (objectNdx === objectInfos.length) {
-+      objectInfos.push(createObjectInfo());
-+    }
-+    const {
-+      matrixValue,
-+      colorValue,
-+      uniformBuffer,
-+      uniformValues,
-+      bindGroup,
-+    } = objectInfos[objectNdx++];
+```rust
++// In JavaScript `drawObject` was a function that captured `device`,
++// `pipeline`, `objectInfos`, `objectNdx` and `numVertices` from the
++// enclosing scope. In Rust we pass those in via the context.
++struct Ctx<'a, 'b> {
++    pass: &'a mut wgpu::RenderPass<'b>,
++    view_projection_matrix: [f32; 16],
++    device: &'a wgpu::Device,
++    queue: &'a wgpu::Queue,
++    pipeline: &'a wgpu::RenderPipeline,
++    object_infos: &'a mut Vec<ObjectInfo>,
++    object_ndx: usize,
++    num_vertices: u32,
++}
 +
-+    mat4.multiply(viewProjectionMatrix, matrix, matrixValue);
-+    colorValue.set(color);
++fn draw_object(ctx: &mut Ctx, matrix: [f32; 16], color: [f32; 4]) {
++    if ctx.object_ndx == ctx.object_infos.len() {
++        ctx.object_infos
++            .push(create_object_info(ctx.device, ctx.pipeline));
++    }
++    let object_info = &mut ctx.object_infos[ctx.object_ndx];
++    ctx.object_ndx += 1;
++
++    let matrix_value = m4::multiply(&ctx.view_projection_matrix, &matrix);
++    object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
++        .copy_from_slice(&matrix_value);
++    object_info.uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&color);
 +
 +    // upload the uniform values to the uniform buffer
-+    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
++    ctx.queue.write_buffer(
++        &object_info.uniform_buffer,
++        0,
++        bytemuck::cast_slice(&object_info.uniform_values),
++    );
 +
-+    pass.setBindGroup(0, bindGroup);
-+    pass.draw(numVertices);
-+  }
-
-  function render() {
-+    objectNdx = 0;
-
-    ...
-
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-
--    // update target X,Z based on angle
--    settings.target[0] = Math.cos(settings.targetAngle) * radius;
--    settings.target[2] = Math.sin(settings.targetAngle) * radius;
-
-    ...
-
-+    objectNdx = 0;
--    objectInfos.forEach(({
--      matrixValue,
--      uniformBuffer,
--      uniformValues,
--      bindGroup,
--    }, i) => {
--      const deep = 5;
--      const across = 5;
--      if (i < 25) {
--        // compute grid positions
--        const gridX = i % across;
--        const gridZ = i / across | 0;
--
--        // compute 0 to 1 positions
--        const u = gridX / (across - 1);
--        const v = gridZ / (deep - 1);
--
--        // center and spread out
--        const x = (u - 0.5) * across * 150;
--        const z = (v - 0.5) * deep * 150;
--
--        // aim this F from it's position toward the target F
--        const aimMatrix = mat4.aim([x, 0, z], settings.target, up);
--        mat4.multiply(viewProjectionMatrix, aimMatrix, matrixValue);
--      } else {
--        mat4.translate(viewProjectionMatrix, settings.target, matrixValue);
--      }
--
--      // upload the uniform values to the uniform buffer
--      device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
--
--      pass.setBindGroup(0, bindGroup);
--      pass.draw(numVertices);
--    });
-
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
++    ctx.pass.set_bind_group(0, &object_info.bind_group, &[]);
++    ctx.pass.draw(0..ctx.num_vertices, 0..1);
++}
 ```
 
-We added a function `drawObject` that will make a new "objectInfo" (a uniform
-buffer, and typed array views) if it needs to. `drawObject` takes a context
-called `ctx` that has the render pass encoder and the current
-`viewProjectionMatrix`. It also takes a matrix and a color. It fills out the
+and in the render code we can delete the old loop that drew the Fs
+
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
+
+    ...
+
+            pass.set_pipeline(&pipeline);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+-            // update target X,Z based on angle
+-            settings_target[0] = target_angle.cos() * radius;
+-            settings_target[2] = target_angle.sin() * radius;
+
+    ...
+
+-            for (i, object_info) in object_infos.iter_mut().enumerate() {
+-                let deep = 5;
+-                let across = 5;
+-                let matrix_value = if i < 25 {
+-                    // compute grid positions
+-                    let grid_x = i % across;
+-                    let grid_z = i / across;
+-
+-                    // compute 0 to 1 positions
+-                    let u = grid_x as f32 / (across - 1) as f32;
+-                    let v = grid_z as f32 / (deep - 1) as f32;
+-
+-                    // center and spread out
+-                    let x = (u - 0.5) * across as f32 * 150.0;
+-                    let z = (v - 0.5) * deep as f32 * 150.0;
+-
+-                    // aim this F from it's position toward the target F
+-                    let aim_matrix = m4::aim([x, 0.0, z], settings_target, up);
+-                    m4::multiply(&view_projection_matrix, &aim_matrix)
+-                } else {
+-                    m4::translate(&view_projection_matrix, settings_target)
+-                };
+-                object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
+-                    .copy_from_slice(&matrix_value);
+-
+-                // upload the uniform values to the uniform buffer
+-                frame.queue.write_buffer(
+-                    &object_info.uniform_buffer,
+-                    0,
+-                    bytemuck::cast_slice(&object_info.uniform_values),
+-                );
+-
+-                pass.set_bind_group(0, &object_info.bind_group, &[]);
+-                pass.draw(0..num_vertices, 0..1);
+-            }
+```
+
+We added a function `draw_object` that will make a new "objectInfo" (a uniform
+buffer, and a CPU side copy of its values) if it needs to. `draw_object` takes
+a context called `ctx` that has the render pass encoder and the current
+`view_projection_matrix`. It also takes a matrix and a color. It fills out the
 uniform buffer for this object by multiplying the matrix passed in with the
-`viewProjectionMatrix` and then sets the bind group to use that specific uniform
-buffer and calls `draw`.
+`view_projection_matrix` and then sets the bind group to use that specific
+uniform buffer and calls `draw`.
 
-Now let's add some code to use it to draw the cube
+Now let's add some code to use it to draw the cube. Where the JavaScript
+version reset `objectNdx = 0` before making the ctx, in Rust we just build a
+fresh `Ctx` each render with `object_ndx: 0`.
 
-```js
-  function render() {
-
-    ...
-
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
 
     ...
 
-    objectNdx = 0;
-+    const ctx = { pass, viewProjectionMatrix };
-+    drawObject(ctx, mat4.rotationY(settings.baseRotation), [1, 1, 1, 1]);
+            pass.set_pipeline(&pipeline);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
-    pass.end();
+    ...
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-}
++            let mut ctx = Ctx {
++                pass: &mut pass,
++                view_projection_matrix,
++                device: frame.device,
++                queue: frame.queue,
++                pipeline: &pipeline,
++                object_infos: &mut object_infos,
++                object_ndx: 0,
++                num_vertices,
++            };
++            draw_object(&mut ctx, m4::rotation_y(base_rotation), [1.0, 1.0, 1.0, 1.0]);
 ```
 
 Above we pass in a matrix that rotates around the y axis and the color white.
 This means the cube will be drawn with its vertex colors unchanged.
 
-We need a few more tweaks for the gui and camera
+We need a few more tweaks for the gui and camera. On the
+example page's JavaScript side
 
 ```js
--  const radius = 200;
-  const settings = {
+-  const settings = {
 -    target: [0, 200, 300],
 -    targetAngle: 0,
+-  };
++  const settings = {
 +    baseRotation: 0,
-  };
++  };
 
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
--  gui.add(settings.target, '1', -100, 300).name('target height');
--  gui.add(settings, 'targetAngle', radToDegOptions).name('target angle');
-+  gui.add(settings, 'baseRotation', radToDegOptions);
+-  gui.add(settings.target, '1', -100, 300).name('target height')
+-     .onChange(v => wasm.set_setting_num('targetHeight', v));
+-  gui.add(settings, 'targetAngle', radToDegOptions).name('target angle')
+-     .onChange(v => wasm.set_setting_num('targetAngle', v));
++  gui.add(settings, 'baseRotation', radToDegOptions)
++     .onChange(v => wasm.set_setting_num('baseRotation', v));
+```
+
+and in the Rust render code
+
+```rust
+-            let mut settings_target = [
+-                0.0,
+-                wgpu_fun::setting_f64("targetHeight", 200.0) as f32,
+-                300.0,
+-            ];
+-            let target_angle = wgpu_fun::setting_f64("targetAngle", 0.0) as f32;
++            let base_rotation = wgpu_fun::setting_f64("baseRotation", 0.0) as f32;
 
   ...
 
-  function render() {
-    ...
+-            let eye = [-500.0, 300.0, -500.0];
+-            let target = [0.0, -100.0, 0.0];
++            let eye = [0.0, 2.0, 3.0];
++            let target = [0.0, 1.0, 0.0];
+            let up = [0.0, 1.0, 0.0];
 
--    const eye = [-500, 300, -500];
--    const target = [0, -100, 0];
-+    const eye = [0, 2, 3];
-+    const target = [0, 1, 0];
-    const up = [0, 1, 0];
-
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+            // Compute a view matrix
+            let view_matrix = m4::look_at(eye, target, up);
 
 ```
 
@@ -338,66 +370,74 @@ We have a cube.
 Now that we are able to render cubes, lets use a matrix stack
 to help us make a set of file cabinets.
 
-First, lets make a matrix stack class.
+First, lets make a matrix stack struct.
 
-```js
-class MatrixStack {
-  #matrix;
-  #stack;
+```rust
+struct MatrixStack {
+    matrix: [f32; 16],
+    stack: Vec<[f32; 16]>,
+}
 
-  constructor() {
-    this.reset();
-  }
-  reset() {
-    this.#matrix = mat4.identity();
-    this.#stack = [];
-    return this;
-  }
-  save() {
-    this.#stack.push(this.#matrix);
-    this.#matrix = mat4.copy(this.#matrix);
-    return this;
-  }
-  restore() {
-    this.#matrix = this.#stack.pop();
-    return this;
-  }
-  get() {
-    return this.#matrix;
-  }
-  set(matrix) {
-    return this.#matrix.set(matrix);
-  }
-  translate(translation) {
-    mat4.translate(this.#matrix, translation, this.#matrix);
-    return this;
-  }
-  rotateX(angle) {
-    mat4.rotateX(this.#matrix, angle, this.#matrix);
-    return this;
-  }
-  rotateY(angle) {
-    mat4.rotateY(this.#matrix, angle, this.#matrix);
-    return this;
-  }
-  rotateZ(angle) {
-    mat4.rotateZ(this.#matrix, angle, this.#matrix);
-    return this;
-  }
-  scale(scale) {
-    mat4.scale(this.#matrix, scale, this.#matrix);
-    return this;
-  }
+impl MatrixStack {
+    fn new() -> Self {
+        MatrixStack {
+            matrix: m4::identity(),
+            stack: Vec::new(),
+        }
+    }
+    fn reset(&mut self) -> &mut Self {
+        self.matrix = m4::identity();
+        self.stack.clear();
+        self
+    }
+    fn save(&mut self) -> &mut Self {
+        // [f32; 16] is Copy so pushing copies the current matrix
+        self.stack.push(self.matrix);
+        self
+    }
+    fn restore(&mut self) -> &mut Self {
+        self.matrix = self.stack.pop().unwrap();
+        self
+    }
+    fn get(&self) -> [f32; 16] {
+        self.matrix
+    }
+    fn set(&mut self, matrix: [f32; 16]) -> &mut Self {
+        self.matrix = matrix;
+        self
+    }
+    fn translate(&mut self, translation: [f32; 3]) -> &mut Self {
+        self.matrix = m4::translate(&self.matrix, translation);
+        self
+    }
+    fn rotate_x(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_x(&self.matrix, angle);
+        self
+    }
+    fn rotate_y(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_y(&self.matrix, angle);
+        self
+    }
+    fn rotate_z(&mut self, angle: f32) -> &mut Self {
+        self.matrix = m4::rotate_z(&self.matrix, angle);
+        self
+    }
+    fn scale(&mut self, scale: [f32; 3]) -> &mut Self {
+        self.matrix = m4::scale(&self.matrix, scale);
+        self
+    }
 }
 ```
 
-The class above is pretty straight forward. It keeps a `#stack` which is
-an array of matrices. And, it keeps a `#matrix` which is effectively
+The struct above is pretty straight forward. It keeps a `stack` which is
+a `Vec` of matrices. And, it keeps a `matrix` which is effectively
 the top matrix on the stack.
 
-It adds a bunch of methods that use the `mat4` functions
+It adds a bunch of methods that use the `m4` functions
 [we wrote previously](webgpu-orthograph-projection.html)
-to manipulate the matrix at the top of the stack.
+to manipulate the matrix at the top of the stack. Each method returns
+`&mut Self` so calls can be chained, just like the JavaScript version
+returned `this`.
 
 Note: It's a stack but I choose the names `save` and `restore` instead of
 the more traditional `push` and `pop` because `save` and `restore` match
@@ -406,109 +446,119 @@ the functions from the Canvas 2D API's
 [restore](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/restore)
 which are used to manipulate its own matrix stack.
 
-One thing we referenced above that didn't exist yet is a `mat4.copy` function
-so let's supply that.
-
-```js
-const mat4 = {
-+  copy(src, dst) {
-+    dst = dst || new Float32Array(16);
-+    dst.set(src);
-+    return dst;
-+  },
-
-  ...
-```
+The JavaScript version needed a `mat4.copy` function so that `save` could
+push a copy of the current matrix. In Rust, `[f32; 16]` is a plain array
+which implements `Copy`, so pushing `self.matrix` onto the `Vec` already
+makes a copy. No extra function needed.
 
 With that, let's draw a single filing cabinet drawer with a handle.
 The drawer will be a large cube. The handle will be a small
-cube.
+cube. First we need to add the stack to our `Ctx`
 
-```js
-+  const kHandleColor = [0.5, 0.5, 0.5, 1];
-+  const kDrawerColor = [1, 1, 1, 1];
+```rust
+struct Ctx<'a, 'b> {
+    pass: &'a mut wgpu::RenderPass<'b>,
++    stack: &'a mut MatrixStack,
+    view_projection_matrix: [f32; 16],
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: &'a wgpu::RenderPipeline,
+    object_infos: &'a mut Vec<ObjectInfo>,
+    object_ndx: usize,
+    num_vertices: u32,
+}
+```
+
+then
+
+```rust
++const K_HANDLE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
++const K_DRAWER_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 +
-+  const kDrawerSize = [40, 30, 50];
-+  const kHandleSize = [10, 2, 2];
++const K_DRAWER_SIZE: [f32; 3] = [40.0, 30.0, 50.0];
++const K_HANDLE_SIZE: [f32; 3] = [10.0, 2.0, 2.0];
 +
-+  const [kWidth, kHeight, kDepth] = [0, 1, 2];
++const K_WIDTH: usize = 0;
++const K_HEIGHT: usize = 1;
++const K_DEPTH: usize = 2;
 +
-+  const kHandlePosition = [
-+    (kDrawerSize[kWidth] - kHandleSize[kWidth]) / 2,
-+    kDrawerSize[kHeight] * 2 / 3,
-+    kHandleSize[kDepth],
-+  ];
++const K_HANDLE_POSITION: [f32; 3] = [
++    (K_DRAWER_SIZE[K_WIDTH] - K_HANDLE_SIZE[K_WIDTH]) / 2.0,
++    K_DRAWER_SIZE[K_HEIGHT] * 2.0 / 3.0,
++    K_HANDLE_SIZE[K_DEPTH],
++];
 +
-+  function drawDrawer(ctx) {
-+    const { stack } = ctx;
-+    stack.save();
-+      stack.scale(kDrawerSize);
-+      drawObject(ctx, stack.get(), kDrawerColor);
-+    stack.restore();
++fn draw_drawer(ctx: &mut Ctx) {
++    ctx.stack.save();
++    ctx.stack.scale(K_DRAWER_SIZE);
++    draw_object(ctx, ctx.stack.get(), K_DRAWER_COLOR);
++    ctx.stack.restore();
 +
-+    stack.save();
-+      stack.translate(kHandlePosition);
-+      stack.scale(kHandleSize);
-+      drawObject(ctx, stack.get(), kHandleColor);
-+    stack.restore();
-+  }
-+
-+  const stack = new MatrixStack();
++    ctx.stack.save();
++    ctx.stack.translate(K_HANDLE_POSITION);
++    ctx.stack.scale(K_HANDLE_SIZE);
++    draw_object(ctx, ctx.stack.get(), K_HANDLE_COLOR);
++    ctx.stack.restore();
++}
+
++    let mut stack = MatrixStack::new();
 
   ...
 
-  function render() {
+    app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+            // combine the view and projection matrixes
+            let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-+    stack.save();
-+    stack.rotateY(settings.baseRotation);
-+    stack.translate([(kDrawerSize[kWidth] * -0.5), 0, 0]);
-    objectNdx = 0;
--    const ctx = { pass, stack, viewProjectionMatrix };
--    drawObject(ctx, mat4.rotationY(settings.baseRotation), [1, 1, 1, 1]);
-+    const ctx = { stack, viewProjectionMatrix };
-+    drawDrawer(ctx);
-+    stack.restore();
-
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+            let mut ctx = Ctx {
+                pass: &mut pass,
++                stack: &mut stack,
+                view_projection_matrix,
+                device: frame.device,
+                queue: frame.queue,
+                pipeline: &pipeline,
+                object_infos: &mut object_infos,
+                object_ndx: 0,
+                num_vertices,
+            };
++            ctx.stack.save();
++            ctx.stack.rotate_y(base_rotation);
++            ctx.stack.translate([K_DRAWER_SIZE[K_WIDTH] * -0.5, 0.0, 0.0]);
+-            draw_object(&mut ctx, m4::rotation_y(base_rotation), [1.0, 1.0, 1.0, 1.0]);
++            draw_drawer(&mut ctx);
++            ctx.stack.restore();
 ```
 
 The code above creates a `MatrixStack` and adds it to the
-context (ctx) passed into `drawDrawer`. It uses this to
+context (ctx) passed into `draw_drawer`. It uses this to
 help us compute matrices. Instead of creating a rotation
 matrix directly, we do it on the stack, then translate
 half the width of the drawer so as to center it.
 
-We pass the stack into `drawDrawer` which draws 2 cubes.
-One it scales to the size of `kDrawerSize`. The other it
-positions to `kHandlePosition` and scales to the size of
-`kHandleSize`. Because it's using the matrix stack, both
+We pass the stack into `draw_drawer` which draws 2 cubes.
+One it scales to the size of `K_DRAWER_SIZE`. The other it
+positions to `K_HANDLE_POSITION` and scales to the size of
+`K_HANDLE_SIZE`. Because it's using the matrix stack, both
 will be relative to the rotation and translation already
 on the stack.
 
-The drawer cube is drawn with color `kDrawerColor`, which is
+The drawer cube is drawn with color `K_DRAWER_COLOR`, which is
 white, and so will leave the vertex colors unchanged. 
-The handle is drawn with color `kHandleColor`, which is 50% gray,
+The handle is drawn with color `K_HANDLE_COLOR`, which is 50% gray,
 and so will draw the cube darker.
 
 A minor tweak for the camera position:
 
-```js
--    const eye = [0, 2, 3];
--    const target = [0, 1, 0];
-+    const eye = [0, 20, 100];
-+    const target = [0, 20, 0];
-    const up = [0, 1, 0];
+```rust
+-            let eye = [0.0, 2.0, 3.0];
+-            let target = [0.0, 1.0, 0.0];
++            let eye = [0.0, 20.0, 100.0];
++            let target = [0.0, 20.0, 0.0];
+            let up = [0.0, 1.0, 0.0];
 
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+            // Compute a view matrix
+            let view_matrix = m4::look_at(eye, target, up);
 ```
 
 That gives us a filing cabinet drawer.
@@ -519,97 +569,87 @@ You might be asking, why go through all this trouble of a
 matrix stack? Let's draw a filing cabinet with 4 draws and
 we'll see why.
 
-```js
-  const kHandleColor = [0.5, 0.5, 0.5, 1];
-  const kDrawerColor = [1, 1, 1, 1];
-+  const kCabinetColor = [0.75, 0.75, 0.75, 0.75];
-+  const kNumDrawersPerCabinet = 4;
+```rust
+  const K_HANDLE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+  const K_DRAWER_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
++const K_CABINET_COLOR: [f32; 4] = [0.75, 0.75, 0.75, 0.75];
++const K_NUM_DRAWERS_PER_CABINET: usize = 4;
 
-  const kDrawerSize = [40, 30, 50];
-  const kHandleSize = [10, 2, 2];
+  const K_DRAWER_SIZE: [f32; 3] = [40.0, 30.0, 50.0];
+  const K_HANDLE_SIZE: [f32; 3] = [10.0, 2.0, 2.0];
 
-  const [kWidth, kHeight, kDepth] = [0, 1, 2];
+  const K_WIDTH: usize = 0;
+  const K_HEIGHT: usize = 1;
+  const K_DEPTH: usize = 2;
 
-  const kHandlePosition = [
-    (kDrawerSize[kWidth] - kHandleSize[kWidth]) / 2,
-    kDrawerSize[kHeight] * 2 / 3,
-    kHandleSize[kDepth],
+  const K_HANDLE_POSITION: [f32; 3] = [
+      (K_DRAWER_SIZE[K_WIDTH] - K_HANDLE_SIZE[K_WIDTH]) / 2.0,
+      K_DRAWER_SIZE[K_HEIGHT] * 2.0 / 3.0,
+      K_HANDLE_SIZE[K_DEPTH],
   ];
 
-+  const kDrawerSpacing = kDrawerSize[kHeight] + 3;
++const K_DRAWER_SPACING: f32 = K_DRAWER_SIZE[K_HEIGHT] + 3.0;
 
-  function drawDrawer(ctx) {
-    const { stack } = ctx;
-    stack.save();
-      stack.scale(kDrawerSize);
-      drawObject(ctx, stack.get(), kDrawerColor);
-    stack.restore();
+  fn draw_drawer(ctx: &mut Ctx) {
+      ctx.stack.save();
+      ctx.stack.scale(K_DRAWER_SIZE);
+      draw_object(ctx, ctx.stack.get(), K_DRAWER_COLOR);
+      ctx.stack.restore();
 
-    stack.save();
-      stack.translate(kHandlePosition);
-      stack.scale(kHandleSize);
-      drawObject(ctx, stack.get(), kHandleColor);
-    stack.restore();
+      ctx.stack.save();
+      ctx.stack.translate(K_HANDLE_POSITION);
+      ctx.stack.scale(K_HANDLE_SIZE);
+      draw_object(ctx, ctx.stack.get(), K_HANDLE_COLOR);
+      ctx.stack.restore();
   }
 
-+  function drawCabinet(ctx, numDrawersPerCabinet) {
-+    const { stack } = ctx;
-+
-+    const kCabinetSize = [
-+      kDrawerSize[kWidth] + 6,
-+      kDrawerSpacing * numDrawersPerCabinet + 6,
-+      kDrawerSize[kDepth] + 4,
++fn draw_cabinet(ctx: &mut Ctx, num_drawers_per_cabinet: usize) {
++    let k_cabinet_size = [
++        K_DRAWER_SIZE[K_WIDTH] + 6.0,
++        K_DRAWER_SPACING * num_drawers_per_cabinet as f32 + 6.0,
++        K_DRAWER_SIZE[K_DEPTH] + 4.0,
 +    ];
 +
-+    stack.save();
-+      stack.scale(kCabinetSize);
-+      drawObject(ctx, stack.get(), kCabinetColor);
-+    stack.restore();
++    ctx.stack.save();
++    ctx.stack.scale(k_cabinet_size);
++    draw_object(ctx, ctx.stack.get(), K_CABINET_COLOR);
++    ctx.stack.restore();
 +
-+    for (let i = 0; i < numDrawersPerCabinet; ++i) {
-+      stack.save();
-+        stack.translate([3, i * kDrawerSpacing + 5, 1]);
-+        drawDrawer(ctx);
-+      stack.restore();
++    for i in 0..num_drawers_per_cabinet {
++        ctx.stack.save();
++        ctx.stack
++            .translate([3.0, i as f32 * K_DRAWER_SPACING + 5.0, 1.0]);
++        draw_drawer(ctx);
++        ctx.stack.restore();
 +    }
-+  }
++}
 
-  function render() {
+    app.run(RenderMode::Once, move |frame: &Frame| {
     ...
--    const eye = [0, 20, 100];
--    const target = [0, 20, 0];
-+    const eye = [0, 80, 200];
-+    const target = [0, 80, 0];
-    const up = [0, 1, 0];
+-            let eye = [0.0, 20.0, 100.0];
+-            let target = [0.0, 20.0, 0.0];
++            let eye = [0.0, 80.0, 200.0];
++            let target = [0.0, 80.0, 0.0];
+            let up = [0.0, 1.0, 0.0];
 
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+            // Compute a view matrix
+            let view_matrix = m4::look_at(eye, target, up);
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+            // combine the view and projection matrixes
+            let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+    ...
 
-    stack.save();
-    stack.rotateY(settings.baseRotation);
-    stack.translate([(kDrawerSize[kWidth] * -0.5), 0, 0]);
-    objectNdx = 0;
-    const ctx = { pass, stack, viewProjectionMatrix };
--    drawDrawer(ctx);
-+    drawCabinet(ctx, kNumDrawersPerCabinet);
-    stack.restore();
-
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
-
+            ctx.stack.save();
+            ctx.stack.rotate_y(base_rotation);
+            ctx.stack.translate([K_DRAWER_SIZE[K_WIDTH] * -0.5, 0.0, 0.0]);
+-            draw_drawer(&mut ctx);
++            draw_cabinet(&mut ctx, K_NUM_DRAWERS_PER_CABINET);
+            ctx.stack.restore();
 ```
 
-Above, `drawCabinet` draws a cube the size of
-`kCabinetSize` which is slightly taller than the number
+Above, `draw_cabinet` draws a cube the size of
+`k_cabinet_size` which is slightly taller than the number
 of cabinets we ask it to draw.
 
 It then just uses the matrix stack to translate each
@@ -618,90 +658,55 @@ in front of the cabinet cube.
 
 {{{example url="../webgpu-matrix-stack-filing-cabinet.html"}}}
 
-We didn't have to change `drawDrawer` at all. Because of
+We didn't have to change `draw_drawer` at all. Because of
 the matrix stack we were able to just use it as is.
 
 Let's keep going. Let's draw multiple cabinets.
 
-```js
-  const kHandleColor = [0.5, 0.5, 0.5, 1];
-  const kDrawerColor = [1, 1, 1, 1];
-  const kCabinetColor = [0.75, 0.75, 0.75, 0.75];
-  const kNumDrawersPerCabinet = 4;
-+  const kNumCabinets = 5;
-
-  const kDrawerSize = [40, 30, 50];
-  const kHandleSize = [10, 2, 2];
-
-  const [kWidth, kHeight, kDepth] = [0, 1, 2];
-
-  const kHandlePosition = [
-    (kDrawerSize[kWidth] - kHandleSize[kWidth]) / 2,
-    kDrawerSize[kHeight] * 2 / 3,
-    kHandleSize[kDepth],
-  ];
-
-  const kDrawerSpacing = kDrawerSize[kHeight] + 3;
-+  const kCabinetSpacing = kDrawerSize[kWidth] + 10;
+```rust
+  const K_HANDLE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+  const K_DRAWER_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+  const K_CABINET_COLOR: [f32; 4] = [0.75, 0.75, 0.75, 0.75];
+  const K_NUM_DRAWERS_PER_CABINET: usize = 4;
++const K_NUM_CABINETS: usize = 5;
 
   ...
 
-  function drawCabinet(ctx, numDrawersPerCabinet) {
-    const { stack } = ctx;
+  const K_DRAWER_SPACING: f32 = K_DRAWER_SIZE[K_HEIGHT] + 3.0;
++const K_CABINET_SPACING: f32 = K_DRAWER_SIZE[K_WIDTH] + 10.0;
 
-    const kCabinetSize = [
-      kDrawerSize[kWidth] + 6,
-      kDrawerSpacing * numDrawersPerCabinet + 6,
-      kDrawerSize[kDepth] + 4,
-    ];
+  ...
 
-    stack.save();
-      stack.scale(kCabinetSize);
-      drawObject(ctx, stack.get(), kCabinetColor);
-    stack.restore();
-
-    for (let i = 0; i < numDrawersPerCabinet; ++i) {
-      stack.save();
-        stack.translate([3, i * kDrawerSpacing + 5, 1]);
-        drawDrawer(ctx);
-      stack.restore();
-    }
-  }
-
-+  function drawCabinets(ctx, numCabinets) {
-+    const { stack } = ctx;
-+    for (let i = 0; i < numCabinets; ++i) {
-+      stack.save();
-+        stack.translate([i * kCabinetSpacing, 0, 0]);
-+        drawCabinet(ctx, kNumDrawersPerCabinet);
-+      stack.restore();
++fn draw_cabinets(ctx: &mut Ctx, num_cabinets: usize) {
++    for i in 0..num_cabinets {
++        ctx.stack.save();
++        ctx.stack.translate([i as f32 * K_CABINET_SPACING, 0.0, 0.0]);
++        draw_cabinet(ctx, K_NUM_DRAWERS_PER_CABINET);
++        ctx.stack.restore();
 +    }
-+  }
++}
 
-  function render() {
+    app.run(RenderMode::Once, move |frame: &Frame| {
     ...
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+            // combine the view and projection matrixes
+            let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-    stack.save();
-    stack.rotateY(settings.baseRotation);
--    stack.translate([(kDrawerSize[kWidth] * -0.5), 0, 0]);
-+    stack.translate([(kNumCabinets - 0.5) * kCabinetSpacing * -0.5, 0, 0]);
-    objectNdx = 0;
-    const ctx = { pass, stack, viewProjectionMatrix };
--    drawCabinet(ctx, kNumDrawersPerCabinet);
-+    drawCabinets(ctx, kNumCabinets);
-    stack.restore();
+    ...
 
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
-
+            ctx.stack.save();
+            ctx.stack.rotate_y(base_rotation);
+-            ctx.stack.translate([K_DRAWER_SIZE[K_WIDTH] * -0.5, 0.0, 0.0]);
++            ctx.stack.translate([
++                (K_NUM_CABINETS as f32 - 0.5) * K_CABINET_SPACING * -0.5,
++                0.0,
++                0.0,
++            ]);
+-            draw_cabinet(&mut ctx, K_NUM_DRAWERS_PER_CABINET);
++            draw_cabinets(&mut ctx, K_NUM_CABINETS);
+            ctx.stack.restore();
 ```
 
-Now we have `drawCabinets` that just uses `drawCabinet`
+Now we have `draw_cabinets` that just uses `draw_cabinet`
 to draw however many cabinets we specify.
 
 Back out in `render` we translate half the width of the
@@ -717,9 +722,11 @@ and scale them.
 
 Let's make another example. Let's create a recursive tree out
 of cubes. To do this we need a function that will add a "branch" of the
-tree. We'll make it recursive and pass in `treeDepth`. If the
+tree. We'll make it recursive and pass in `tree_depth`. If the
 depth is > 0 then we will recursively add 2 more branches and pass
 in one lower depth.
+
+First the new settings, on the example page's JavaScript side
 
 ```js
   const degToRad = d => d * Math.PI / 180;
@@ -735,105 +742,141 @@ in one lower depth.
 +  const treeRadToDegOptions = { min: 0, max: 90, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-+  gui.add(settings, 'scale', 0.1, 1.2);
-+  gui.add(settings, 'rotationX', treeRadToDegOptions);
-+  gui.add(settings, 'rotationY', treeRadToDegOptions);
-  gui.add(settings, 'baseRotation', radToDegOptions);
-
-+  const kTreeDepth = 6;
-+  const [/*kWidth*/, kHeight, /*kDepth*/] = [0, 1, 2];
-+  // Moves the 1 unit cube so it's center above the origin so that when it scales
-+  // it scales out in x and z and up (y) from the origin
-+  const kBranchPosition = [-0.5, 0, 0.5];
-+  const kBranchSize = [20, 150, 20];
-+
-+  const kWhite = [1, 1, 1, 1];
-+
-+  function drawBranch(ctx) {
-+    const { stack } = ctx;
-+    stack
-+      .save()
-+      .scale(kBranchSize)
-+      .translate(kBranchPosition);
-+    drawObject(ctx, stack.get(), kWhite);
-+    stack.restore();
-+  }
-+
-+  function drawTreeLevel(ctx, offset, treeDepth) {
-+    const { stack } = ctx;
-+    const s = offset ? settings.scale : 1;
-+    const y = offset ? kBranchSize[kHeight] : 0;
-+    stack
-+      .save()
-+      .translate([0, y, 0])
-+      .rotateZ(offset * settings.rotationX)
-+      .rotateY(Math.abs(offset) * settings.rotationY)
-+      .scale([s, s, s]);
-+
-+    drawBranch(ctx);
-+
-+    if (treeDepth > 0) {
-+      drawTreeLevel(ctx, -1, treeDepth - 1);
-+      drawTreeLevel(ctx, +1, treeDepth - 1);
-+    }
-+
-+    stack.restore();
-+  }
-
-  function render() {
-    ...
-
--    const eye = [0, 80, 200];
--    const target = [0, 80, 0];
-+    const eye = [0, 450, 1000];
-+    const target = [0, 450, 0];
-    const up = [0, 1, 0];
-
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
-
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
-
-    stack.save();
-    stack.rotateY(settings.baseRotation);
--    stack.translate([(kNumCabinets - 0.5) * kCabinetSpacing * -0.5, 0, 0]);
-    objectNdx = 0;
-    const ctx = { pass, stack, viewProjectionMatrix };
--    drawCabinets(ctx, kNumCabinets);
-+    drawTreeLevel(ctx, 0, kTreeDepth);
-    stack.restore();
-
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
-
++  gui.add(settings, 'scale', 0.1, 1.2)
++     .onChange(v => wasm.set_setting_num('scale', v));
++  gui.add(settings, 'rotationX', treeRadToDegOptions)
++     .onChange(v => wasm.set_setting_num('rotationX', v));
++  gui.add(settings, 'rotationY', treeRadToDegOptions)
++     .onChange(v => wasm.set_setting_num('rotationY', v));
+  gui.add(settings, 'baseRotation', radToDegOptions)
+     .onChange(v => wasm.set_setting_num('baseRotation', v));
 ```
 
-`drawTreeLevel` uses our matrix stack. First it calls `save` to save the current
+The tree drawing code needs to read those settings so we make a small
+struct for them and add it to the `Ctx`.
+
+```rust
++#[derive(Clone, Copy)]
++struct Settings {
++    scale: f32,
++    rotation_x: f32,
++    rotation_y: f32,
++}
+
+struct Ctx<'a, 'b> {
+    pass: &'a mut wgpu::RenderPass<'b>,
+    stack: &'a mut MatrixStack,
++    settings: Settings,
+    view_projection_matrix: [f32; 16],
+    ...
+```
+
+and in the render code we read the current values
+
+```rust
+            let base_rotation = wgpu_fun::setting_f64("baseRotation", 0.0) as f32;
++            let settings = Settings {
++                scale: wgpu_fun::setting_f64("scale", 0.9) as f32,
++                rotation_x: wgpu_fun::setting_f64("rotationX", 20.0f64.to_radians()) as f32,
++                rotation_y: wgpu_fun::setting_f64("rotationY", 10.0f64.to_radians()) as f32,
++            };
+```
+
+Then the tree itself
+
+```rust
++const K_TREE_DEPTH: usize = 6;
++const K_HEIGHT: usize = 1;
++// Moves the 1 unit cube so it's center above the origin so that when it scales
++// it scales out in x and z and up (y) from the origin
++const K_BRANCH_POSITION: [f32; 3] = [-0.5, 0.0, 0.5];
++const K_BRANCH_SIZE: [f32; 3] = [20.0, 150.0, 20.0];
++
++const K_WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
++
++fn draw_branch(ctx: &mut Ctx) {
++    ctx.stack
++        .save()
++        .scale(K_BRANCH_SIZE)
++        .translate(K_BRANCH_POSITION);
++    draw_object(ctx, ctx.stack.get(), K_WHITE);
++    ctx.stack.restore();
++}
++
++fn draw_tree_level(ctx: &mut Ctx, offset: f32, tree_depth: usize) {
++    let s = if offset != 0.0 { ctx.settings.scale } else { 1.0 };
++    let y = if offset != 0.0 {
++        K_BRANCH_SIZE[K_HEIGHT]
++    } else {
++        0.0
++    };
++    ctx.stack
++        .save()
++        .translate([0.0, y, 0.0])
++        .rotate_z(offset * ctx.settings.rotation_x)
++        .rotate_y(offset.abs() * ctx.settings.rotation_y)
++        .scale([s, s, s]);
++
++    draw_branch(ctx);
++
++    if tree_depth > 0 {
++        draw_tree_level(ctx, -1.0, tree_depth - 1);
++        draw_tree_level(ctx, 1.0, tree_depth - 1);
++    }
++
++    ctx.stack.restore();
++}
+
+    app.run(RenderMode::Once, move |frame: &Frame| {
+    ...
+
+-            let eye = [0.0, 80.0, 200.0];
+-            let target = [0.0, 80.0, 0.0];
++            let eye = [0.0, 450.0, 1000.0];
++            let target = [0.0, 450.0, 0.0];
+            let up = [0.0, 1.0, 0.0];
+
+            // Compute a view matrix
+            let view_matrix = m4::look_at(eye, target, up);
+
+            // combine the view and projection matrixes
+            let view_projection_matrix = m4::multiply(&projection, &view_matrix);
+
+    ...
+
+            ctx.stack.save();
+            ctx.stack.rotate_y(base_rotation);
+-            ctx.stack.translate([
+-                (K_NUM_CABINETS as f32 - 0.5) * K_CABINET_SPACING * -0.5,
+-                0.0,
+-                0.0,
+-            ]);
+-            draw_cabinets(&mut ctx, K_NUM_CABINETS);
++            draw_tree_level(&mut ctx, 0.0, K_TREE_DEPTH);
+            ctx.stack.restore();
+```
+
+`draw_tree_level` uses our matrix stack. First it calls `save` to save the current
 matrix. Then `translate`s it to move the branch to the end of the current
 branch. If the `offset` is `0` it's the root so no translation needed.
 
-The `offset` is then used to `rotateZ` the current branch either clockwise or
+The `offset` is then used to `rotate_z` the current branch either clockwise or
 counter-clockwise. Because of the matrix stack it will be rotated relative to
 the parent branch.
 
-The `offset` is used again to `rotateY` the branch. This time we use the
-absolute value of `offset`. Feel free to remove the `Math.abs` so see the
+The `offset` is used again to `rotate_y` the branch. This time we use the
+absolute value of `offset`. Feel free to remove the `.abs()` so see the
 difference.
 
 Finally we `scale` the branch, making each one smaller (or larger) than its
 parent, except for the root, the branch with an `offset` of `0`.
 
-We then call `drawBranch`. Draw branch draws a cube that is `kBranchSize` big.
+We then call `draw_branch`. Draw branch draws a cube that is `K_BRANCH_SIZE` big.
 It also translates the original unit cube so that the cube will be centered over
 and above the origin. That way, when it scales, it will grow up (along the +Y
 axis).
 
-Then, if the depth > 0 we recursively call `drawTreeLevel` to add 2 more
+Then, if the depth > 0 we recursively call `draw_tree_level` to add 2 more
 branches. One with an offset of `-1` and one with `+1`. Each branch will start
 with the matrix on the stack and so will be positioned and oriented relative
 to its parent.
@@ -858,200 +901,242 @@ build a single mesh for the entire tree.
 Let's add an ornament to each branch. Instead of using a cube, let's use a cone
 for the ornament. Here's some code to generate cone vertices.
 
-```js
+```rust
 // tip is at origin, base is below
-function createConeVertices({radius = 1, height = 1, subdivisions = 6} = {}) {
-  const positions = [];
-  const colors = [];
+fn create_cone_vertices(radius: f32, height: f32, subdivisions: usize) -> (Vec<f32>, u32) {
+    let mut positions: Vec<f32> = Vec::new();
+    let mut colors: Vec<f32> = Vec::new();
 
-  function addVertex(angle, radius, height, color) {
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    positions.push(c * radius, height, s * radius);
-    colors.push(...color);
-  }
+    let mut add_vertex = |angle: f32, radius: f32, height: f32, color: &[f32; 3]| {
+        let c = angle.cos();
+        let s = angle.sin();
+        positions.extend_from_slice(&[c * radius, height, s * radius]);
+        colors.extend_from_slice(color);
+    };
 
-  for (let i = 0; i < subdivisions; ++i) {
-    const angle0 = (i + 0) / subdivisions * Math.PI * 2;
-    const angle1 = (i + 1) / subdivisions * Math.PI * 2;
+    for i in 0..subdivisions {
+        let angle0 = (i + 0) as f32 / subdivisions as f32 * std::f32::consts::PI * 2.0;
+        let angle1 = (i + 1) as f32 / subdivisions as f32 * std::f32::consts::PI * 2.0;
 
-    const u = (i + 1) / subdivisions;
-    const color = [u * 128 + 127, 0, 0];
+        let u = (i + 1) as f32 / subdivisions as f32;
+        let color = [u * 128.0 + 127.0, 0.0, 0.0];
 
-    // add side
-    addVertex(angle0, 0, 0, color);
-    addVertex(angle1, radius, -height, color);
-    addVertex(angle0, radius, -height, color);
+        // add side
+        add_vertex(angle0, 0.0, 0.0, &color);
+        add_vertex(angle1, radius, -height, &color);
+        add_vertex(angle0, radius, -height, &color);
 
-    // add top
-    addVertex(angle0, radius, -height, color);
-    addVertex(angle1, radius, -height, color);
-    addVertex(angle0, 0, -height, color);
-  }
+        // add top
+        add_vertex(angle0, radius, -height, &color);
+        add_vertex(angle1, radius, -height, &color);
+        add_vertex(angle0, 0.0, -height, &color);
+    }
 
-  const numVertices = positions.length / 3;
-  const vertexData = new Float32Array(numVertices * 4); // xyz + color
-  const colorData = new Uint8Array(vertexData.buffer);
+    let num_vertices = positions.len() / 3;
+    let mut vertex_data = vec![0.0f32; num_vertices * 4]; // xyz + color
 
-  for (let i = 0; i < numVertices; ++i) {
-    const position = positions.slice(i * 3, i * 3 + 3);
-    vertexData.set(position, i * 4);
+    for i in 0..num_vertices {
+        let position = &positions[i * 3..i * 3 + 3];
+        vertex_data[i * 4..i * 4 + 3].copy_from_slice(position);
 
-    const color = colors.slice(i * 3, i * 3 + 3);
-    colorData.set(color, i * 16 + 12);
-    colorData[i * 16 + 15] = 255;
-  }
+        let color = &colors[i * 3..i * 3 + 3];
+        // set RGB in the first 3 bytes of the 4th float, set A to 255
+        vertex_data[i * 4 + 3] =
+            f32::from_ne_bytes([color[0] as u8, color[1] as u8, color[2] as u8, 255]);
+    }
 
-  return {
-    vertexData,
-    numVertices,
-  };
+    (vertex_data, num_vertices as u32)
 }
 ```
 
 The code above walks around a circle and adds a triangle on each side and a
 corresponding triangle on top. It sets each face to a shade of red. Like the
-cube function it returns `vertexData` and `numVertices`. We'll go over [making
-various geometric primitives in another article](webgpu-primitives.html).
+cube function it returns the vertex data and the number of vertices. We'll go
+over [making various geometric primitives in another
+article](webgpu-primitives.html).
 
 Let's wrap our code that makes a vertex buffer into a function so we can call it
 twice, once for the cube and once for the cone.
 
-```js
--  const { vertexData, numVertices } = createCubeVertices();
+```rust
++struct Vertices {
++    vertex_buffer: wgpu::Buffer,
++    num_vertices: u32,
++}
 
-+  function createVertices({vertexData, numVertices}, name) {
-*    const vertexBuffer = device.createBuffer({
--      label: `vertex buffer vertices`,
-+      label: `${name}: vertex buffer vertices`,
-      size: vertexData.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+-    let (vertex_data, num_vertices) = create_cube_vertices();
++fn create_vertices(
++    device: &wgpu::Device,
++    queue: &wgpu::Queue,
++    (vertex_data, num_vertices): (Vec<f32>, u32),
++    name: &str,
++) -> Vertices {
+*    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+-        label: Some("vertex buffer vertices"),
++        label: Some(&format!("{name}: vertex buffer vertices")),
+        size: (vertex_data.len() * 4) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
-    device.queue.writeBuffer(vertexBuffer, 0, vertexData);
-+    return {
-+      vertexBuffer,
-+      numVertices,
-+    };
-*  }
+    queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
++    Vertices {
++        vertex_buffer,
++        num_vertices,
++    }
+*}
 
-+  const cubeVertices = createVertices(createCubeVertices(), 'cube');
-+  const ornamentVertices = createVertices(createConeVertices({
-+    radius: 20,
-+    height: 60,
-+  }), 'ornament');
++    let cube_vertices = create_vertices(&app.device, &app.queue, create_cube_vertices(), "cube");
++    let ornament_vertices = create_vertices(
++        &app.device,
++        &app.queue,
++        create_cone_vertices(
++            20.0, // radius
++            60.0, // height
++            6,    // subdivisions
++        ),
++        "ornament",
++    );
 ```
 
-Then let's update are `drawObject` function to take a vertices parameter.
+Then let's update are `draw_object` function to take a vertices parameter.
+The `Ctx` keeps references to both sets of vertices instead of a single
+`num_vertices`.
 
-```js
--  function drawObject(ctx, matrix, color) {
-+  function drawObject(ctx, vertices, matrix, color) {
-    const { pass, viewProjectionMatrix } = ctx;
-+    const { vertexBuffer, numVertices } = vertices;
-    if (objectNdx === objectInfos.length) {
-      objectInfos.push(createObjectInfo());
+```rust
+struct Ctx<'a, 'b> {
+    pass: &'a mut wgpu::RenderPass<'b>,
+    stack: &'a mut MatrixStack,
+    settings: Settings,
+    view_projection_matrix: [f32; 16],
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: &'a wgpu::RenderPipeline,
+    object_infos: &'a mut Vec<ObjectInfo>,
+    object_ndx: usize,
+-    num_vertices: u32,
++    cube_vertices: &'a Vertices,
++    ornament_vertices: &'a Vertices,
+}
+
+-fn draw_object(ctx: &mut Ctx, matrix: [f32; 16], color: [f32; 4]) {
++fn draw_object(ctx: &mut Ctx, vertices: &Vertices, matrix: [f32; 16], color: [f32; 4]) {
++    let Vertices {
++        vertex_buffer,
++        num_vertices,
++    } = vertices;
+    if ctx.object_ndx == ctx.object_infos.len() {
+        ctx.object_infos
+            .push(create_object_info(ctx.device, ctx.pipeline));
     }
-    const {
-      matrixValue,
-      colorValue,
-      uniformBuffer,
-      uniformValues,
-      bindGroup,
-    } = objectInfos[objectNdx++];
+    let object_info = &mut ctx.object_infos[ctx.object_ndx];
+    ctx.object_ndx += 1;
 
-    mat4.multiply(viewProjectionMatrix, matrix, matrixValue);
-    colorValue.set(color);
+    let matrix_value = m4::multiply(&ctx.view_projection_matrix, &matrix);
+    object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
+        .copy_from_slice(&matrix_value);
+    object_info.uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&color);
 
     // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+    ctx.queue.write_buffer(
+        &object_info.uniform_buffer,
+        0,
+        bytemuck::cast_slice(&object_info.uniform_values),
+    );
 
-+    pass.setVertexBuffer(0, vertexBuffer);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(numVertices);
-  }
++    ctx.pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    ctx.pass.set_bind_group(0, &object_info.bind_group, &[]);
+-    ctx.pass.draw(0..ctx.num_vertices, 0..1);
++    ctx.pass.draw(0..*num_vertices, 0..1);
+}
 ```
 
 and update the code that draws a branch to pass in the cube vertices
 
-```js
-  function drawBranch(ctx) {
-    const { stack } = ctx;
-    stack
-      .save()
-      .scale(kBranchSize)
-      .translate(kBranchPosition);
--    drawObject(ctx, stack.get(), kWhite);
-+    drawObject(ctx, cubeVertices, stack.get(), kWhite);
-    stack.restore();
-  }
+```rust
+fn draw_branch(ctx: &mut Ctx) {
+    ctx.stack
+        .save()
+        .scale(K_BRANCH_SIZE)
+        .translate(K_BRANCH_POSITION);
+-    draw_object(ctx, ctx.stack.get(), K_WHITE);
++    draw_object(ctx, ctx.cube_vertices, ctx.stack.get(), K_WHITE);
+    ctx.stack.restore();
+}
 ```
 
 And we no longer need to set the vertex buffer early.
 
-```js
-  function render() {
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
 
     ...
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
--    pass.setVertexBuffer(0, vertexBuffer);
+
+            pass.set_pipeline(&pipeline);
+-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
     ...
 ```
 
-And then, let's add some code to `drawTreeLevel` to draw an ornament when
+And then, let's add some code to `draw_tree_level` to draw an ornament when
 depth equals zero.
 
-```js
-  function drawTreeLevel(ctx, offset, treeDepth) {
-    const { stack } = ctx;
-    const s = offset ? settings.scale : 1;
-    const y = offset ? kBranchSize[kHeight] : 0;
-    stack
-      .save()
-      .translate([0, y, 0])
-      .rotateZ(offset * settings.rotationX)
-      .rotateY(Math.abs(offset) * settings.rotationY)
-      .scale([s, s, s]);
+```rust
+fn draw_tree_level(ctx: &mut Ctx, offset: f32, tree_depth: usize) {
+    let s = if offset != 0.0 { ctx.settings.scale } else { 1.0 };
+    let y = if offset != 0.0 {
+        K_BRANCH_SIZE[K_HEIGHT]
+    } else {
+        0.0
+    };
+    ctx.stack
+        .save()
+        .translate([0.0, y, 0.0])
+        .rotate_z(offset * ctx.settings.rotation_x)
+        .rotate_y(offset.abs() * ctx.settings.rotation_y)
+        .scale([s, s, s]);
 
-    drawBranch(ctx);
+    draw_branch(ctx);
 
-    if (treeDepth > 0) {
-      drawTreeLevel(ctx, -1, treeDepth - 1);
-      drawTreeLevel(ctx, +1, treeDepth - 1);
+    if tree_depth > 0 {
+        draw_tree_level(ctx, -1.0, tree_depth - 1);
+        draw_tree_level(ctx, 1.0, tree_depth - 1);
     }
 
-+    if (treeDepth === 0 && offset > 0) {
-+      const position = vec3.getTranslation(stack.get());
-+      drawObject(ctx, ornamentVertices, mat4.translation(position), kWhite);
++    if tree_depth == 0 && offset > 0.0 {
++        let position = vec3::get_translation(&ctx.stack.get());
++        draw_object(
++            ctx,
++            ctx.ornament_vertices,
++            m4::translation(position),
++            K_WHITE,
++        );
 +    }
 
-    stack.restore();
-  }
+    ctx.stack.restore();
+}
 ```
 
-We're using a function `vec3.getTranslation` which we need to supply.
+We're using a function `vec3::get_translation` which we need to supply.
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-  getTranslation(m, dst) {
-    dst = dst || new Float32Array(3);
-
-    dst[0] = m[12];
-    dst[1] = m[13];
-    dst[2] = m[14];
-
-    return dst;
-  },
-};
++    pub fn get_translation(m: &[f32; 16]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
++
++        dst[0] = m[12];
++        dst[1] = m[13];
++        dst[2] = m[14];
++
++        dst
++    }
+}
 ```
 
-`getTranslation` gets the current translation from a matrix like we covered in
+`get_translation` gets the current translation from a matrix like we covered in
 [the article on 3d math](webgpu-orthographic-projection.html).
 
-Above, the code we added to draw an ornament, calls `getTranslation` to get the
+Above, the code we added to draw an ornament, calls `get_translation` to get the
 current translation of the matrix stack. This will be the base of the last
 branch. We can not just draw an ornament directly from the matrix stack because
 it would be oriented and scaled with the branch and we want the ornaments to
@@ -1063,4 +1148,3 @@ of the branch we only need to draw one which is why we only draw if `offset >
 {{{example url="../webgpu-matrix-stack-tree-with-ornaments.html"}}}
 
 Next Up, [Scene graphs](webgpu-scene-graphs.html).
-

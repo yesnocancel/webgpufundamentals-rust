@@ -337,8 +337,8 @@ Like the previous example, we need to increase the buffer sizes
 
   let result_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
     label: None,
--    size: (chunk_size * 4) as u64,
-+    size: (chunk_size * 4 * 4) as u64,
+-    size: (chunk_size * 4) as u64, // 4 bytes per (u32)
++    size: (chunk_size * 4 * 4) as u64, // 16 bytes per (vec4u)
     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
     mapped_at_creation: false,
   });

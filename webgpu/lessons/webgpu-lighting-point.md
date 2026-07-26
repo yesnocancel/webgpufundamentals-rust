@@ -140,70 +140,73 @@ and so would not be a complete unit vector
 }
 ```
 
-Then we need to update our uniform buffer, offsets, and views
+Then we need to update our uniform buffer size and offsets
 
-```js
--  const uniformBufferSize = (12 + 16 + 4 + 4) * 4;
-+  const uniformBufferSize = (12 + 16 + 16 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // normalMatrix + worldViewProjection + color + light direction
+-    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 4 + 4) * 4;
++    // normalMatrix + worldViewProjection + world + color + light position
++    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
-  const kNormalMatrixOffset = 0;
-  const kWorldViewProjectionOffset = 12;
--  const kColorOffset = 28;
--  const kLightDirectionOffset = 32;
-+  const kWorldOffset = 28;
-+  const kColorOffset = 44;
-+  const kLightPositionOffset = 48;
-
-  const normalMatrixValue = uniformValues.subarray(
-      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-+  const worldValue = uniformValues.subarray(
-+      kWorldOffset, kWorldOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
--  const lightDirectionValue =
--      uniformValues.subarray(kLightDirectionOffset, kLightDirectionOffset + 3);
-+  const lightPositionValue =
-+      uniformValues.subarray(kLightPositionOffset, kLightPositionOffset + 3);
+    // offsets to the various uniform values in float32 indices
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+-    const K_COLOR_OFFSET: usize = 28;
+-    const K_LIGHT_DIRECTION_OFFSET: usize = 32;
++    const K_WORLD_OFFSET: usize = 28;
++    const K_COLOR_OFFSET: usize = 44;
++    const K_LIGHT_POSITION_OFFSET: usize = 48;
 ```
 
 and we need to set them
 
-```js
-    const eye = [100, 150, 200];
-    const target = [0, 35, 0];
-    const up = [0, 1, 0];
+```rust
+        let eye = [100.0, 150.0, 200.0];
+        let target = [0.0, 35.0, 0.0];
+        let up = [0.0, 1.0, 0.0];
 
-    // Compute a view matrix
-    const viewMatrix = mat4.lookAt(eye, target, up);
+        // Compute a view matrix
+        let view_matrix = m4::look_at(eye, target, up);
 
-    // Combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+        // Combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-    // Compute a world matrix
--    const world = mat4.rotationY(settings.rotation);
-+    const world = mat4.rotationY(settings.rotation, worldValue);
+-        // Compute a world matrix
+-        let world = m4::rotation_y(rotation);
++        // Compute a world matrix directly into the world value
++        let world = m4::rotation_y(rotation);
++        uniform_values[K_WORLD_OFFSET..K_WORLD_OFFSET + 16].copy_from_slice(&world);
 
-    // Combine the viewProjection and world matrices
-    mat4.multiply(viewProjectionMatrix, world, worldViewProjectionValue);
+        // Combine the viewProjection and world matrices
+        let world_view_projection_value = m4::multiply(&view_projection_matrix, &world);
+        uniform_values[K_WORLD_VIEW_PROJECTION_OFFSET..K_WORLD_VIEW_PROJECTION_OFFSET + 16]
+            .copy_from_slice(&world_view_projection_value);
 
-    // Inverse and transpose it into the worldInverseTranspose value
-    mat3.fromMat4(mat4.transpose(mat4.inverse(world)), normalMatrixValue);
+        // Inverse and transpose it into the worldInverseTranspose value
+        mat3::from_mat4(
+            &m4::transpose(&m4::inverse(&world)),
+            &mut uniform_values[K_NORMAL_MATRIX_OFFSET..K_NORMAL_MATRIX_OFFSET + 12],
+        );
 
-    colorValue.set([0.2, 1, 0.2, 1]);  // green
-=    lightDirectionValue.set(vec3.normalize([-0.5, -0.7, -1]));
-+    lightPositionValue.set([-10, 30, 100]);
+        uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
+            .copy_from_slice(&[0.2, 1.0, 0.2, 1.0]); // green
+-        uniform_values[K_LIGHT_DIRECTION_OFFSET..K_LIGHT_DIRECTION_OFFSET + 3]
+-            .copy_from_slice(&vec3::normalize([-0.5, -0.7, -1.0]));
++        uniform_values[K_LIGHT_POSITION_OFFSET..K_LIGHT_POSITION_OFFSET + 3]
++            .copy_from_slice(&[-10.0, 30.0, 100.0]);
 
-    // upload the uniform values to the uniform buffer
-    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+        // upload the uniform values to the uniform buffer
+        frame
+            .queue
+            .write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
 
 ```
 
@@ -319,50 +322,44 @@ into the view.
 ```
 
 Again we have add room for viewWorldPosition to our
-uniformBuffer.
+uniform buffer.
 
-```js
--  const uniformBufferSize = (12 + 16 + 16 + 4 + 4) * 4;
-+  const uniformBufferSize = (12 + 16 + 16 + 4 + 4 + 4) * 4;
-  const uniformBuffer = device.createBuffer({
-    label: 'uniforms',
-    size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
+```rust
+-    // normalMatrix + worldViewProjection + world + color + light position
+-    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4) * 4;
++    // normalMatrix + worldViewProjection + world + color + light position +
++    // view position
++    const UNIFORM_BUFFER_SIZE: u64 = (12 + 16 + 16 + 4 + 4 + 4) * 4;
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("uniforms"),
+        size: UNIFORM_BUFFER_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-  const uniformValues = new Float32Array(uniformBufferSize / 4);
+    let mut uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-  // offsets to the various uniform values in float32 indices
-  const kNormalMatrixOffset = 0;
-  const kWorldViewProjectionOffset = 12;
-  const kWorldOffset = 28;
-  const kColorOffset = 44;
-  const kLightPositionOffset = 48;
-+  const kViewWorldPositionOffset = 52;
-
-  const normalMatrixValue = uniformValues.subarray(
-      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const worldValue = uniformValues.subarray(
-      kWorldOffset, kWorldOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightPositionValue = uniformValues.subarray(
-      kLightPositionOffset, kLightPositionOffset + 3);
-+  const viewWorldPositionValue = uniformValues.subarray(
-+      kViewWorldPositionOffset, kViewWorldPositionOffset + 3);
+    // offsets to the various uniform values in float32 indices
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+    const K_WORLD_OFFSET: usize = 28;
+    const K_COLOR_OFFSET: usize = 44;
+-    const K_LIGHT_POSITION_OFFSET: usize = 48;
++    const K_LIGHT_WORLD_POSITION_OFFSET: usize = 48;
++    const K_VIEW_WORLD_POSITION_OFFSET: usize = 52;
 ```
 
 and set it
 
-```js
-    const eye = [100, 150, 200];
-    const target = [0, 35, 0];
-    const up = [0, 1, 0];
+```rust
+        let eye = [100.0, 150.0, 200.0];
+        let target = [0.0, 35.0, 0.0];
+        let up = [0.0, 1.0, 0.0];
 
-    ...
+        ...
 
-    viewWorldPositionValue.set(eye);
++        uniform_values[K_VIEW_WORLD_POSITION_OFFSET..K_VIEW_WORLD_POSITION_OFFSET + 3]
++            .copy_from_slice(&eye);
 ```
 
 And here's that
@@ -411,31 +408,19 @@ The dot product can go negative. Taking a negative number to a power is undefine
 
 Of course we need to set `shininess`.
 
+```rust
+    const K_NORMAL_MATRIX_OFFSET: usize = 0;
+    const K_WORLD_VIEW_PROJECTION_OFFSET: usize = 12;
+    const K_WORLD_OFFSET: usize = 28;
+    const K_COLOR_OFFSET: usize = 44;
+    const K_LIGHT_WORLD_POSITION_OFFSET: usize = 48;
+    const K_VIEW_WORLD_POSITION_OFFSET: usize = 52;
++    const K_SHININESS_OFFSET: usize = 55;
+```
+
+On the example page's JavaScript side we add a `shininess` setting
+
 ```js
-  const kNormalMatrixOffset = 0;
-  const kWorldViewProjectionOffset = 12;
-  const kWorldOffset = 28;
-  const kColorOffset = 44;
-  const kLightWorldPositionOffset = 48;
-  const kViewWorldPositionOffset = 52;
-+  const kShininessOffset = 55;
-
-  const normalMatrixValue = uniformValues.subarray(
-      kNormalMatrixOffset, kNormalMatrixOffset + 12);
-  const worldViewProjectionValue = uniformValues.subarray(
-      kWorldViewProjectionOffset, kWorldViewProjectionOffset + 16);
-  const worldValue = uniformValues.subarray(
-      kWorldOffset, kWorldOffset + 16);
-  const colorValue = uniformValues.subarray(kColorOffset, kColorOffset + 4);
-  const lightWorldPositionValue = uniformValues.subarray(
-      kLightWorldPositionOffset, kLightWorldPositionOffset + 3);
-  const viewWorldPositionValue = uniformValues.subarray(
-      kViewWorldPositionOffset, kViewWorldPositionOffset + 3);
-+  const shininessValue = uniformValues.subarray(
-+      kShininessOffset, kShininessOffset + 1);
-
-...
-
   const settings = {
     rotation: degToRad(0),
 +    shininess: 30,
@@ -444,17 +429,22 @@ Of course we need to set `shininess`.
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'rotation', radToDegOptions);
-+  gui.add(settings, 'shininess', { min: 1, max: 250 });
+  gui.add(settings, 'rotation', radToDegOptions)
+     .onChange(v => wasm.set_setting_num('rotation', v));
++  gui.add(settings, 'shininess', { min: 1, max: 250 })
++     .onChange(v => wasm.set_setting_num('shininess', v));
+```
 
-...
+and in the Rust render code we read it and set it
 
-  function render() {
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
+        let rotation = wgpu_fun::setting_f64("rotation", 0.0) as f32;
++        let shininess = wgpu_fun::setting_f64("shininess", 30.0) as f32;
 
    ...
 
-+    shininessValue[0] = settings.shininess;
++        uniform_values[K_SHININESS_OFFSET] = shininess;
 
 ```
 
