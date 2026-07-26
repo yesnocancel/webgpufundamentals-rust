@@ -4,3 +4,7 @@ node_modules
 out
 extra
 
+rust/target/
+rust/test_frames/
+out/
+webgpu/wasm/

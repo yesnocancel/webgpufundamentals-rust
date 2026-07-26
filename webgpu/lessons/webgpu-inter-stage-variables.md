@@ -16,11 +16,11 @@ values will be interpolated between the 3 points.
 Let's make a small example. We'll start with the triangle shaders from the
 previous article. All we're going to do is change the shaders.
 
-```js
-  const module = device.createShaderModule({
--    label: 'our hardcoded red triangle shaders',
-+    label: 'our hardcoded rgb triangle shaders',
-    code: /* wgsl */ `
+```rust
+  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+-    label: Some("our hardcoded red triangle shaders"),
++    label: Some("our hardcoded rgb triangle shaders"),
+    source: wgpu::ShaderSource::Wgsl(r#"
 +      struct OurVertexShaderOutput {
 +        @builtin(position) position: vec4f,
 +        @location(0) color: vec4f,
@@ -53,7 +53,7 @@ previous article. All we're going to do is change the shaders.
 +      @fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
 +        return fsInput.color;
       }
-    `,
+    "#.into()),
   });
 ```
 
@@ -156,20 +156,19 @@ a fragment shader. In fact a better way to think about it is vertex shaders
 and fragment shader are just 2 different functions that happen to have a parameter
 with the same name.
 
-Imagine we have 2 JavaScript functions
+Imagine we have 2 Rust functions
 
-```js
-// Draw a circle size radius, at position: [x, y]
-function drawCircle({ ctx, position, radius }) {
-  // from CanvasRenderingContext2D
-  ctx.beginPath();
-  ctx.arc(...position, radius, 0, Math.PI * 2);
-  ctx.fill();
+```rust
+// Draw a circle of size radius, at position: [x, y]
+fn draw_circle(ctx: &mut Context, position: [f32; 2], radius: f32) {
+    ctx.begin_path();
+    ctx.arc(position, radius, 0.0, PI * 2.0);
+    ctx.fill();
 }
 
-// Return the index of an element in an array starting at position
-function findIndex({ array, position, value }) {
-  return array.indexOf(value, position);
+// Return the index of a value in a slice, starting the search at position
+fn find_index(slice: &[i32], position: usize, value: i32) -> Option<usize> {
+    slice[position..].iter().position(|&v| v == value).map(|i| i + position)
 }
 ```
 
@@ -197,10 +196,10 @@ coordinates:
 We can change our shader to use this position. For example, let's draw a
 checkerboard.
 
-```js
-  const module = device.createShaderModule({
-    label: 'our hardcoded checkerboard triangle shaders',
-    code: /* wgsl */ `
+```rust
+  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("hardcoded checkerboard triangle shaders"),
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
 -        @location(0) color: vec4f,
@@ -236,7 +235,7 @@ checkerboard.
 +
 +        return select(red, cyan, checker);
       }
-    `,
+    "#.into()),
   });
 ```
 
@@ -247,11 +246,13 @@ every 8 pixels. It then adds the `x` and `y` grid coordinates together, computes
 modulo 2, and compares the result to 1. This will give us a boolean that is true
 or false for every other integer. Finally, it uses the WGSL function `select` which
 given 2 values, selects one or the other based on a boolean condition. In
-JavaScript `select` would be written like this:
+Rust `select` would be written like this:
 
-```js
+```rust
 // If condition is false return `a`, otherwise return `b`
-select = (a, b, condition) => condition ? b : a;
+fn select<T>(a: T, b: T, condition: bool) -> T {
+    if condition { b } else { a }
+}
 ```
 
 {{{example url="../webgpu-fragment-shader-builtin-position.html"}}}
@@ -270,12 +271,12 @@ To hopefully make this more clear, the fact that the vertex shader and
 fragment shader are in the same string in our examples is just a convenience.
 We could also split them into separate modules:
 
-```js
--  const module = device.createShaderModule({
--    label: 'hardcoded checkerboard triangle shaders',
-+  const vsModule = device.createShaderModule({
-+    label: 'hardcoded triangle',
-    code: /* wgsl */ `
+```rust
+-  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+-    label: Some("hardcoded checkerboard triangle shaders"),
++  let vs_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
++    label: Some("hardcoded triangle"),
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
       };
@@ -293,12 +294,12 @@ We could also split them into separate modules:
         vsOutput.position = vec4f(pos[vertexIndex], 0.0, 1.0);
         return vsOutput;
       }
-+    `,
++    "#.into()),
 +  });
 +
-+  const fsModule = device.createShaderModule({
-+    label: 'checkerboard',
-+    code: /* wgsl */ `
++  let fs_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
++    label: Some("checkerboard"),
++    source: wgpu::ShaderSource::Wgsl(r#"
 -      @fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
 +      @fragment fn fs(@builtin(position) pixelPosition: vec4f) -> @location(0) vec4f {
         let red = vec4f(1, 0, 0, 1);
@@ -310,25 +311,31 @@ We could also split them into separate modules:
 
         return select(red, cyan, checker);
       }
-    `,
+    "#.into()),
   });
 ```
 
 And we'd have to update our pipeline creation to use these:
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'hardcoded checkerboard triangle pipeline',
-    layout: 'auto',
-    vertex: {
--      module,
-+      module: vsModule,
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("hardcoded checkerboard triangle pipeline"),
+    layout: None,
+    vertex: wgpu::VertexState {
+-      module: &module,
++      module: &vs_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
--      module,
-+      module: fsModule,
-      targets: [{ format: presentationFormat }],
-    },
+    fragment: Some(wgpu::FragmentState {
+-      module: &module,
++      module: &fs_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    ...
   });
 
 ```
@@ -339,14 +346,14 @@ And this works the same:
 
 The point is, the fact that both shaders are in the same string in most WebGPU
 examples is just a convenience. In reality, first WebGPU parses the WGSL to make
-sure it's syntactically correct. Then, WebGPU looks at each `entryPoint`
-you specify, separately. It looks at the parts that each entryPoint references
+sure it's syntactically correct. Then, WebGPU looks at each entry point
+you specify, separately. It looks at the parts that each entry point references
 and nothing else. 
 
 Shared strings are useful because multiple shaders can then share things like 
 structures, binding and group locations, constants, and functions.
 But, from the POV of WebGPU, it's as though you did duplicate 
-all of them, once for each entryPoint.
+all of them, once for each entry point.
 
 Note: It is not that common to generate a checkerboard using the
 `@builtin(position)`. Checkerboards or other patterns are far more commonly

@@ -6,29 +6,31 @@ This article is about storage buffers and continues where the
 [previous article](webgpu-uniforms.html) left off.
 
 Storage buffers are similar to uniform buffers in many ways.
-If all we did was change `UNIFORM` to `STORAGE` in our JavaScript
+If all we did was change `UNIFORM` to `STORAGE` in our Rust
 and `var<uniform>` to `var<storage, read>` in our WGSL, the examples
 on the previous page would just work.
 
 In fact, here are the differences, without renaming variables to have more
 appropriate names.
 
-```js
-    const staticUniformBuffer = device.createBuffer({
-      label: `static uniforms for obj: ${i}`,
-      size: staticUniformBufferSize,
--      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+```rust
+    let static_uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some(&format!("static uniforms for obj: {i}")),
+      size: static_uniform_buffer_size as u64,
+-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++      usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 
 
 ...
 
-    const uniformBuffer = device.createBuffer({
-      label: `changing uniforms for obj: ${i}`,
-      size: uniformBufferSize,
--      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some(&format!("changing uniforms for obj: {i}")),
+      size: uniform_buffer_size as u64,
+-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++      usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
 ```
 
@@ -77,7 +79,7 @@ Given the first 2 points above, let's take our last example and change it
 to draw all 100 triangles in a single draw call. This is a use-case that
 *might* fit storage buffers. I say might because again, WebGPU is similar
 to other programming languages. There are many ways to achieve the same thing.
-`array.forEach` vs `for (const elem of array)` vs `for (let i = 0; i < array.length; ++i)`. Each has its uses. The same is true of WebGPU. Each thing we try to do
+`iter().for_each` vs `for elem in &array` vs `for i in 0..array.len()`. Each has its uses. The same is true of WebGPU. Each thing we try to do
 has multiple ways we can achieve it. When it comes to drawing triangles,
 all that WebGPU cares about is we return a value for `builtin(position)` from
 the vertex shader and return a color/value for `location(0)` from the fragment shader.[^colorAttachments] 
@@ -118,7 +120,7 @@ Then we'll change the shader to use these values.
 We added a new parameter to our vertex shader called
 `instanceIndex` and gave it the `@builtin(instance_index)` attribute
 which means it gets its value from WebGPU for each "instance" drawn.
-When we call `draw`, we can pass a second argument for *number of instances*
+When we call `draw`, we can pass a second range for *the instances to draw*
 and for each instance drawn, the number of the instance being processed
 will be passed to our function.
 
@@ -172,67 +174,73 @@ To do this we'll use another struct like we did in
 
 ```
 
-Now that we've modified our WGSL shaders, let's update the JavaScript.
+Now that we've modified our WGSL shaders, let's update the Rust.
 
 Here's the setup.
 
-```js
-  const kNumObjects = 100;
-  const objectInfos = [];
+```rust
+  struct ObjectInfo {
+    scale: f32,
+  }
+
+  const K_NUM_OBJECTS: usize = 100;
+  let mut object_infos: Vec<ObjectInfo> = Vec::new();
 
   // create 2 storage buffers
-  const staticUnitSize =
-    4 * 4 + // color is 4 32bit floats (4bytes each)
-    2 * 4 + // offset is 2 32bit floats (4bytes each)
-    2 * 4;  // padding
-  const changingUnitSize =
-    2 * 4;  // scale is 2 32bit floats (4bytes each)
-  const staticStorageBufferSize = staticUnitSize * kNumObjects;
-  const changingStorageBufferSize = changingUnitSize * kNumObjects;
+  let static_unit_size = 4 * 4 + // color is 4 32bit floats (4bytes each)
+      2 * 4 + // offset is 2 32bit floats (4bytes each)
+      2 * 4; // padding
+  let changing_unit_size = 2 * 4; // scale is 2 32bit floats (4bytes each)
+  let static_storage_buffer_size = static_unit_size * K_NUM_OBJECTS;
+  let changing_storage_buffer_size = changing_unit_size * K_NUM_OBJECTS;
 
-  const staticStorageBuffer = device.createBuffer({
-    label: 'static storage for objects',
-    size: staticStorageBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  let static_storage_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("static storage for objects"),
+    size: static_storage_buffer_size as u64,
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  const changingStorageBuffer = device.createBuffer({
-    label: 'changing storage for objects',
-    size: changingStorageBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  let changing_storage_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("changing storage for objects"),
+    size: changing_storage_buffer_size as u64,
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
   // offsets to the various uniform values in float32 indices
-  const kColorOffset = 0;
-  const kOffsetOffset = 4;
+  const K_COLOR_OFFSET: usize = 0;
+  const K_OFFSET_OFFSET: usize = 4;
 
-  const kScaleOffset = 0;
+  const K_SCALE_OFFSET: usize = 0;
 
   {
-    const staticStorageValues = new Float32Array(staticStorageBufferSize / 4);
-    for (let i = 0; i < kNumObjects; ++i) {
-      const staticOffset = i * (staticUnitSize / 4);
+    let mut static_storage_values = vec![0.0f32; static_storage_buffer_size / 4];
+    for i in 0..K_NUM_OBJECTS {
+      let static_offset = i * (static_unit_size / 4);
 
       // These are only set once so set them now
-      staticStorageValues.set([rand(), rand(), rand(), 1], staticOffset + kColorOffset);        // set the color
-      staticStorageValues.set([rand(-0.9, 0.9), rand(-0.9, 0.9)], staticOffset + kOffsetOffset);      // set the offset
+      static_storage_values[static_offset + K_COLOR_OFFSET..static_offset + K_COLOR_OFFSET + 4]
+          .copy_from_slice(&[rand(0.0, 1.0), rand(0.0, 1.0), rand(0.0, 1.0), 1.0]); // set the color
+      static_storage_values[static_offset + K_OFFSET_OFFSET..static_offset + K_OFFSET_OFFSET + 2]
+          .copy_from_slice(&[rand(-0.9, 0.9), rand(-0.9, 0.9)]); // set the offset
 
-      objectInfos.push({
+      object_infos.push(ObjectInfo {
         scale: rand(0.2, 0.5),
       });
     }
-    device.queue.writeBuffer(staticStorageBuffer, 0, staticStorageValues);
+    app.queue.write_buffer(&static_storage_buffer, 0, bytemuck::cast_slice(&static_storage_values));
   }
 
-  // a typed array we can use to update the changingStorageBuffer
-  const storageValues = new Float32Array(changingStorageBufferSize / 4);
+  // a Vec<f32> we can use to update the changing_storage_buffer
+  let mut storage_values = vec![0.0f32; changing_storage_buffer_size / 4];
 
-  const bindGroup = device.createBindGroup({
-    label: 'bind group for objects',
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: staticStorageBuffer },
-      { binding: 1, resource: changingStorageBuffer },
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("bind group for objects"),
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry { binding: 0, resource: static_storage_buffer.as_entire_binding() },
+      wgpu::BindGroupEntry { binding: 1, resource: changing_storage_buffer.as_entire_binding() },
     ],
   });
 ```
@@ -241,56 +249,62 @@ Above we create 2 storage buffers. One for an array of `OurStruct`
 and the other for an array of `OtherStruct`.
 
 We then fill out the values for the array of `OurStruct` with offsets
-and colors and then upload that data to the `staticStorageBuffer`.
+and colors and then upload that data to the `static_storage_buffer`.
 
 We make just one bind group that references both buffers.
 
 The new rendering code is
 
-```js
-  function render() {
-    // Get the current texture from the canvas context and
-    // set it as the texture to render to.
-    renderPassDescriptor.colorAttachments[0].view =
-        context.getCurrentTexture().createView();
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    let mut encoder = frame
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        ...
+      });
+      pass.set_pipeline(&pipeline);
 
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
+      // Set the uniform values in our Rust side Vec
+      let aspect = frame.width as f32 / frame.height as f32;
 
-    // Set the uniform values in our JavaScript side Float32Array
-    const aspect = canvas.width / canvas.height;
-
--    for (const {scale, bindGroup, uniformBuffer, uniformValues} of objectInfos) {
--      uniformValues.set([scale / aspect, scale], kScaleOffset); // set the scale
--      device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+-      for object_info in object_infos.iter_mut() {
+-        let scale = object_info.scale;
+-        object_info.uniform_values[K_SCALE_OFFSET..K_SCALE_OFFSET + 2]
+-            .copy_from_slice(&[scale / aspect, scale]); // set the scale
+-        frame.queue.write_buffer(
+-            &object_info.uniform_buffer,
+-            0,
+-            bytemuck::cast_slice(&object_info.uniform_values),
+-        );
 -
--      pass.setBindGroup(0, bindGroup);
--      pass.draw(3);  // call our vertex shader 3 times
--    }
+-        pass.set_bind_group(0, &object_info.bind_group, &[]);
+-        pass.draw(0..3, 0..1); // call our vertex shader 3 times
+-      }
 
-+    // set the scales for each object
-+    objectInfos.forEach(({scale}, ndx) => {
-+      const offset = ndx * (changingUnitSize / 4);
-+      storageValues.set([scale / aspect, scale], offset + kScaleOffset); // set the scale
-+    });
-+    // upload all scales at once
-+    device.queue.writeBuffer(changingStorageBuffer, 0, storageValues);
++      // set the scales for each object
++      for (ndx, ObjectInfo { scale }) in object_infos.iter().enumerate() {
++        let offset = ndx * (changing_unit_size / 4);
++        storage_values[offset + K_SCALE_OFFSET..offset + K_SCALE_OFFSET + 2]
++            .copy_from_slice(&[scale / aspect, *scale]); // set the scale
++      }
++      // upload all scales at once
++      frame.queue.write_buffer(&changing_storage_buffer, 0, bytemuck::cast_slice(&storage_values));
 +
-+    pass.setBindGroup(0, bindGroup);
-+    pass.draw(3, kNumObjects);  // call our vertex shader 3 times for each instance
++      pass.set_bind_group(0, &bind_group, &[]);
++      pass.draw(0..3, 0..K_NUM_OBJECTS as u32); // call our vertex shader 3 times for each instance
+    }
 
-
-    pass.end();
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
+  });
 ```
 
-The code above is going to draw `kNumObjects` instances. For each instance
+The code above is going to draw `K_NUM_OBJECTS` instances. For each instance
 WebGPU will call the vertex shader 3 times with `vertex_index` set to 0, 1, 2
-and `instance_index` set to 0 ~ kNumObjects - 1
+and `instance_index` set to 0 ~ K_NUM_OBJECTS - 1
 
 {{{example url="../webgpu-simple-triangle-storage-buffer-split.html"}}}
 
@@ -360,54 +374,53 @@ Now we need to set up one more storage buffer with some vertex data.
 First, let's make a function to generate some vertex data. Let's make a circle.
 <a id="a-create-circle"></a>
 
-```js
-function createCircleVertices({
-  radius = 1,
-  numSubdivisions = 24,
-  innerRadius = 0,
-  startAngle = 0,
-  endAngle = Math.PI * 2,
-} = {}) {
-  // 2 triangles per subdivision, 3 verts per tri, 2 values (xy) each.
-  const numVertices = numSubdivisions * 3 * 2;
-  const vertexData = new Float32Array(numSubdivisions * 2 * 3 * 2);
+```rust
+fn create_circle_vertices(
+    radius: f32,
+    num_subdivisions: usize,
+    inner_radius: f32,
+    start_angle: f32,
+    end_angle: f32,
+) -> (Vec<f32>, usize) {
+    // 2 triangles per subdivision, 3 verts per tri, 2 values (xy) each.
+    let num_vertices = num_subdivisions * 3 * 2;
+    let mut vertex_data = vec![0.0f32; num_subdivisions * 2 * 3 * 2];
 
-  let offset = 0;
-  const addVertex = (x, y) => {
-    vertexData[offset++] = x;
-    vertexData[offset++] = y;
-  };
+    let mut offset = 0;
+    let mut add_vertex = |x: f32, y: f32| {
+        vertex_data[offset] = x;
+        offset += 1;
+        vertex_data[offset] = y;
+        offset += 1;
+    };
 
-  // 2 triangles per subdivision
-  //
-  // 0--1 4
-  // | / /|
-  // |/ / |
-  // 2 3--5
-  for (let i = 0; i < numSubdivisions; ++i) {
-    const angle1 = startAngle + (i + 0) * (endAngle - startAngle) / numSubdivisions;
-    const angle2 = startAngle + (i + 1) * (endAngle - startAngle) / numSubdivisions;
+    // 2 triangles per subdivision
+    //
+    // 0--1 4
+    // | / /|
+    // |/ / |
+    // 2 3--5
+    for i in 0..num_subdivisions {
+        let angle1 = start_angle + (i + 0) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
+        let angle2 = start_angle + (i + 1) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
 
-    const c1 = Math.cos(angle1);
-    const s1 = Math.sin(angle1);
-    const c2 = Math.cos(angle2);
-    const s2 = Math.sin(angle2);
+        let c1 = angle1.cos();
+        let s1 = angle1.sin();
+        let c2 = angle2.cos();
+        let s2 = angle2.sin();
 
-    // first triangle
-    addVertex(c1 * radius, s1 * radius);
-    addVertex(c2 * radius, s2 * radius);
-    addVertex(c1 * innerRadius, s1 * innerRadius);
+        // first triangle
+        add_vertex(c1 * radius, s1 * radius);
+        add_vertex(c2 * radius, s2 * radius);
+        add_vertex(c1 * inner_radius, s1 * inner_radius);
 
-    // second triangle
-    addVertex(c1 * innerRadius, s1 * innerRadius);
-    addVertex(c2 * radius, s2 * radius);
-    addVertex(c2 * innerRadius, s2 * innerRadius);
-  }
+        // second triangle
+        add_vertex(c1 * inner_radius, s1 * inner_radius);
+        add_vertex(c2 * radius, s2 * radius);
+        add_vertex(c2 * inner_radius, s2 * inner_radius);
+    }
 
-  return {
-    vertexData,
-    numVertices,
-  };
+    (vertex_data, num_vertices)
 }
 ```
 
@@ -417,39 +430,43 @@ The code above makes a circle from triangles like this.
 
 So we can use that to fill a storage buffer with the vertices for a circle.
 
-```js
+```rust
   // setup a storage buffer with vertex data
-  const { vertexData, numVertices } = createCircleVertices({
-    radius: 0.5,
-    innerRadius: 0.25,
+  let (vertex_data, num_vertices) = create_circle_vertices(
+    0.5,                        // radius
+    24,                         // numSubdivisions
+    0.25,                       // innerRadius
+    0.0,                        // startAngle
+    std::f32::consts::PI * 2.0, // endAngle
+  );
+  let vertex_storage_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("storage buffer vertices"),
+    size: (vertex_data.len() * std::mem::size_of::<f32>()) as u64,
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const vertexStorageBuffer = device.createBuffer({
-    label: 'storage buffer vertices',
-    size: vertexData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
-  device.queue.writeBuffer(vertexStorageBuffer, 0, vertexData);
+  app.queue.write_buffer(&vertex_storage_buffer, 0, bytemuck::cast_slice(&vertex_data));
 ```
 
 And then we need to add it to our bind group.
 
-```js
-  const bindGroup = device.createBindGroup({
-    label: 'bind group for objects',
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: staticStorageBuffer },
-      { binding: 1, resource: changingStorageBuffer },
-+      { binding: 2, resource: vertexStorageBuffer },
+```rust
+  let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: Some("bind group for objects"),
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry { binding: 0, resource: static_storage_buffer.as_entire_binding() },
+      wgpu::BindGroupEntry { binding: 1, resource: changing_storage_buffer.as_entire_binding() },
++      wgpu::BindGroupEntry { binding: 2, resource: vertex_storage_buffer.as_entire_binding() },
     ],
   });
 ```
 
 and finally, at render time, we need to ask to render all the vertices in the circle.
 
-```js
--    pass.draw(3, kNumObjects);  // call our vertex shader 3 times for several instances
-+    pass.draw(numVertices, kNumObjects);
+```rust
+-    pass.draw(0..3, 0..K_NUM_OBJECTS as u32); // call our vertex shader 3 times for several instances
++    pass.draw(0..num_vertices as u32, 0..K_NUM_OBJECTS as u32);
 ```
 
 {{{example url="../webgpu-storage-buffer-vertices.html"}}}

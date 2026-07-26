@@ -35,6 +35,9 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "puppeteer": "^24.34.0"
+  },
   "scripts": {
     "build": "ld-check-dependencies && grunt",
     "build-ci": "grunt",

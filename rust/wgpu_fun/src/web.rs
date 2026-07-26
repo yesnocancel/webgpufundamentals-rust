@@ -1,0 +1,224 @@
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use wasm_bindgen::prelude::*;
+use web_sys::HtmlCanvasElement;
+
+use crate::{Frame, RenderMode};
+
+/// Browser entry point: spawn the async run function on the JS event loop.
+pub fn start(fut: impl std::future::Future<Output = ()> + 'static) {
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(log::Level::Warn);
+    wasm_bindgen_futures::spawn_local(fut);
+}
+
+pub struct App {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub format: wgpu::TextureFormat,
+    /// When true the canvas drawing buffer resolution follows the canvas's
+    /// displayed size (like the ResizeObserver code in the lessons). False
+    /// by default: the canvas keeps its own resolution and CSS just
+    /// stretches it, like a raw `<canvas>`.
+    pub auto_resize: bool,
+    surface: wgpu::Surface<'static>,
+    canvas: HtmlCanvasElement,
+    max_texture_dimension: u32,
+}
+
+fn canvas() -> HtmlCanvasElement {
+    web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .query_selector("canvas")
+        .unwrap()
+        .expect("no <canvas> element on the page")
+        .dyn_into()
+        .unwrap()
+}
+
+/// Show a message on the page, like the JS examples' fail().
+pub fn fail(msg: &str) {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let div = document.create_element("div").unwrap();
+    div.set_attribute(
+        "style",
+        "position:fixed;inset:0;display:flex;justify-content:center;align-items:center;\
+         background:#400;color:white;font-size:x-large;font-family:sans-serif;\
+         text-align:center;padding:1em;",
+    )
+    .unwrap();
+    div.set_text_content(Some(msg));
+    document.body().unwrap().append_child(&div).unwrap();
+}
+
+impl App {
+    pub async fn new(_title: &str) -> App {
+        let canvas = canvas();
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .expect("failed to create surface from canvas");
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(adapter) => adapter,
+            Err(_) => {
+                fail("need a browser that supports WebGPU");
+                panic!("no adapter");
+            }
+        };
+        let (device, queue) = match adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+        {
+            Ok(pair) => pair,
+            Err(_) => {
+                fail("need a browser that supports WebGPU");
+                panic!("no device");
+            }
+        };
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps.formats[0];
+        let max_texture_dimension = device.limits().max_texture_dimension_2d;
+        App {
+            device,
+            queue,
+            format,
+            auto_resize: false,
+            surface,
+            canvas,
+            max_texture_dimension,
+        }
+    }
+
+    pub fn run(self, mode: RenderMode, frame_fn: impl FnMut(&Frame) + 'static) {
+        let app = Rc::new(self);
+        let frame_fn = Rc::new(RefCell::new(frame_fn));
+        // Current canvas size in device pixels, updated by the ResizeObserver.
+        let size = Rc::new(Cell::new((0u32, 0u32)));
+        let configured = Rc::new(Cell::new((0u32, 0u32)));
+        let start_time = web_sys::window().unwrap().performance().unwrap().now();
+
+        let render = {
+            let app = app.clone();
+            let frame_fn = frame_fn.clone();
+            let size = size.clone();
+            let configured = configured.clone();
+            move || {
+                let (width, height) = if app.auto_resize {
+                    size.get()
+                } else {
+                    (app.canvas.width(), app.canvas.height())
+                };
+                if width == 0 || height == 0 {
+                    return;
+                }
+                if configured.get() != (width, height) {
+                    if app.auto_resize {
+                        app.canvas.set_width(width);
+                        app.canvas.set_height(height);
+                    }
+                    app.surface.configure(
+                        &app.device,
+                        &wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            format: app.format,
+                            color_space: wgpu::SurfaceColorSpace::Auto,
+                            width,
+                            height,
+                            present_mode: wgpu::PresentMode::default(),
+                            desired_maximum_frame_latency: 2,
+                            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                            view_formats: vec![],
+                        },
+                    );
+                    configured.set((width, height));
+                }
+                let frame = match app.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                    _ => return,
+                };
+                let view = frame.texture.create_view(&Default::default());
+                let now = web_sys::window().unwrap().performance().unwrap().now();
+                (frame_fn.borrow_mut())(&Frame {
+                    device: &app.device,
+                    queue: &app.queue,
+                    view: &view,
+                    format: app.format,
+                    width,
+                    height,
+                    time: (now - start_time) / 1000.0,
+                });
+                app.queue.present(frame);
+            }
+        };
+        let render = Rc::new(render);
+
+        // Watch the canvas's device-pixel size, like the JS lessons do.
+        {
+            let app = app.clone();
+            let size = size.clone();
+            let render = render.clone();
+            let observer_cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+                for entry in entries.iter() {
+                    let entry: web_sys::ResizeObserverEntry = entry.dyn_into().unwrap();
+                    let (mut width, mut height);
+                    let dpr_boxes = entry.device_pixel_content_box_size();
+                    if dpr_boxes.length() > 0 {
+                        let box_size: web_sys::ResizeObserverSize =
+                            dpr_boxes.get(0).dyn_into().unwrap();
+                        width = box_size.inline_size() as u32;
+                        height = box_size.block_size() as u32;
+                    } else {
+                        let rect = entry.content_rect();
+                        let dpr = web_sys::window().unwrap().device_pixel_ratio();
+                        width = (rect.width() * dpr) as u32;
+                        height = (rect.height() * dpr) as u32;
+                    }
+                    width = width.clamp(1, app.max_texture_dimension);
+                    height = height.clamp(1, app.max_texture_dimension);
+                    size.set((width, height));
+                }
+                // Re-render on resize; the continuous loop picks the new
+                // size up on its own.
+                if mode == RenderMode::Once {
+                    render();
+                }
+            });
+            let observer =
+                web_sys::ResizeObserver::new(observer_cb.as_ref().unchecked_ref()).unwrap();
+            observer.observe(&app.canvas);
+            observer_cb.forget();
+        }
+
+        if mode == RenderMode::Continuous {
+            // requestAnimationFrame loop.
+            let raf: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+            let raf2 = raf.clone();
+            let render = render.clone();
+            *raf.borrow_mut() = Some(Closure::new(move || {
+                render();
+                web_sys::window()
+                    .unwrap()
+                    .request_animation_frame(
+                        raf2.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+                    )
+                    .unwrap();
+            }));
+            web_sys::window()
+                .unwrap()
+                .request_animation_frame(raf.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+                .unwrap();
+            // Leak the closure: the loop runs for the page's lifetime.
+            std::mem::forget(raf);
+        }
+    }
+}
