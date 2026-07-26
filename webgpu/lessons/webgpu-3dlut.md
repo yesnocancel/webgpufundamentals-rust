@@ -17,7 +17,7 @@ tall. A 3D-LUT is the same idea but in 3D.
 
 How it works is we make a cube of colors. Then we index the cube using the colors of our source image. For each pixel in the original image we look up a position in the cube based on the red, green, and blue colors of the original pixel. The value we pull out of the 3D-LUT is the new color.
 
-In Javascript we might do it like this. Imagine the colors are specified in integers from 0 to 255 and we have a large 3 dimensional array 256x256x256 in size. Then to translate a color through the look up table we'd do this
+In code we might do it like this. Imagine the colors are specified in integers from 0 to 255 and we have a large 3 dimensional array 256x256x256 in size. Then to translate a color through the look up table we'd do this
 
 ```js
     const newColor = lut[origColor.red][origColor.green][origColor.bue];
@@ -107,18 +107,28 @@ To use it we'll need a 3D texture. The simplest 3D-LUT is a 2x2x2 identity LUT w
 
 <div class="webgpu_center"><img src="resources/images/3dlut-standard-2x2.svg" class="noinvertdark" style="width: 200px"></div>
 
-Here's the code to make a 2ˣ2ˣ2 3D texture with the colors required for an identity LUT.
+Here's the code to make a 2ˣ2ˣ2 3D texture with the colors required for an
+identity LUT. Note the texture's `dimension` is `D3`.
 
-```js
-function makeIdentityLutTexture(device) {
-  const texture = device.createTexture({
-    size: [2, 2, 2],
-    dimension: '3d',
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+```rust
+fn make_identity_lut_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
+  let texture = device.create_texture(&wgpu::TextureDescriptor {
+    label: None,
+    size: wgpu::Extent3d {
+      width: 2,
+      height: 2,
+      depth_or_array_layers: 2,
+    },
+    dimension: wgpu::TextureDimension::D3,
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    mip_level_count: 1,
+    sample_count: 1,
+    view_formats: &[],
   });
 
-  const identityLUT = new Uint8Array([
+  #[rustfmt::skip]
+  let identity_lut: [u8; 32] = [
       0,   0,   0, 255,  // black
     255,   0,   0, 255,  // red
       0, 255,   0, 255,  // green
@@ -127,102 +137,125 @@ function makeIdentityLutTexture(device) {
     255,   0, 255, 255,  // magenta
       0, 255, 255, 255,  // cyan
     255, 255, 255, 255,  // white
-  ]);
+  ];
 
-  device.queue.writeTexture(
-    { texture },
-    identityLUT,
-    { bytesPerRow: 8, rowsPerImage: 2 },
-    [2, 2, 2],
+  queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture: &texture,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+    &identity_lut,
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(8),
+      rows_per_image: Some(2),
+    },
+    wgpu::Extent3d {
+      width: 2,
+      height: 2,
+      depth_or_array_layers: 2,
+    },
   );
 
-  return texture;
+  texture
 }
 ```
 
 We need some code to use it. Let's use it twice, once with linear filtering
-and once without.
+and once without. We give each entry a name; the page's GUI dropdown shows
+the same names and forwards the selected index as the `lut` setting.
 
-```js
-  const lutNearestSampler = device.createSampler();
-  const lutLinearSampler = device.createSampler({
-    magFilter: 'linear',
-    minFilter: 'linear',
+```rust
+  let lut_nearest_sampler = app.device.create_sampler(&Default::default());
+  let lut_linear_sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
   });
 
-  function makeLutBindGroup(texture, sampler) {
-    return device.createBindGroup({
-      layout: postProcessPipeline.getBindGroupLayout(1),
-      entries: [
-        { binding: 0, resource: texture },
-        { binding: 1, resource: sampler },
+  let make_lut_bind_group = |texture: &wgpu::Texture, sampler: &wgpu::Sampler| {
+    app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &post_process_pipeline.get_bind_group_layout(1),
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::TextureView(
+            &texture.create_view(&Default::default()),
+          ),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: wgpu::BindingResource::Sampler(sampler),
+        },
       ],
-    });
-  }
+    })
+  };
 
-  const identityLutTexture = makeIdentityLutTexture(device);
-  const lutBindGroups = [
-    {
-      name: 'identity',
-      bindGroup: makeLutBindGroup(identityLutTexture, lutLinearSampler),
-    },
-    {
-      name: 'identity (nearest)',
-      bindGroup: makeLutBindGroup(identityLutTexture, lutNearestSampler),
-    },
+  let identity_lut_texture = make_identity_lut_texture(&app.device, &app.queue);
+  // (name, bindGroup) pairs; the names fill the GUI dropdown on the page
+  let lut_bind_groups: Vec<(&str, wgpu::BindGroup)> = vec![
+    (
+      "identity",
+      make_lut_bind_group(&identity_lut_texture, &lut_linear_sampler),
+    ),
+    (
+      "identity (nearest)",
+      make_lut_bind_group(&identity_lut_texture, &lut_nearest_sampler),
+    ),
   ];
 
   ...
 
-  function postProcess(encoder, srcTexture, dstTexture) {
-    device.queue.writeBuffer(
-      postProcessUniformBuffer,
+    // read the settings the GUI on the page sets
+-    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
+-    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
+    let lut_amount = wgpu_fun::setting_f64("lutAmount", 1.0) as f32;
+    let lut = wgpu_fun::setting_f64("lut", 0.0) as usize % lut_bind_groups.len();
+    frame.queue.write_buffer(
+      &post_process_uniform_buffer,
       0,
-      new Float32Array([
--        settings.brightness,
--        settings.contrast,
-        settings.lutAmount,
-      ]),
+-      bytemuck::cast_slice(&[brightness, contrast, lut_amount]),
++      bytemuck::cast_slice(&[lut_amount]),
     );
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
--    pass.setBindGroup(1, lutBindGroups[settings.lut]);
-+    pass.setBindGroup(1, lutBindGroups[settings.lut].bindGroup);
-    pass.draw(3);
-    pass.end();
-  }
+    ...
 
-  const settings = {
--    brightness: 0,
--    contrast: 0,
-    lutAmount: 1,
-    lut: 0,
-  };
+      pass.set_pipeline(&post_process_pipeline);
+      pass.set_bind_group(0, post_process_bind_group.as_ref().unwrap(), &[]);
+-      pass.set_bind_group(1, &lut_bind_groups[lut], &[]);
++      pass.set_bind_group(1, &lut_bind_groups[lut].1, &[]);
+      pass.draw(0..3, 0..1);
+```
 
-  const gui = new GUI();
-  gui.onChange(render);
--  gui.add(settings, 'brightness', -1, 1);
--  gui.add(settings, 'contrast', -1, 10);
-  gui.add(settings, 'lutAmount', 0, 1);
-+  const keyValues = Object.fromEntries(lutBindGroups.map(({name}, i) => [name, i]));
-+  gui.add(settings, 'lut', { keyValues });
+and in the page we swap the gradient swatches for a dropdown
 
--  const uiElem = document.querySelector('#ui');
--  gradients.forEach((stops, i) => {
--    const div = document.createElement('div');
--    div.className = 'gradient';
--    div.style.background = `linear-gradient(to right,
--      ${stops.map(([r, g, b, stop]) => `rgb(${r}, ${g}, ${b}) ${stop * 100}%`).join(',')}
--    )`;
--    div.addEventListener('click', () => {
--      settings.lut = i;
--      render();
--    });
--    uiElem.append(div);
--  });
+```js
++// must match the lut_bind_groups order in the Rust example
++const lutNames = [
++  'identity',
++  'identity (nearest)',
++];
+
+const settings = {
+-  brightness: 0,
+-  contrast: 0,
+  lutAmount: 1,
+  lut: 0,
+};
+
+const gui = new GUI();
+-gui.add(settings, 'brightness', -1, 1)
+-   .onChange(v => wasm.set_setting_num('brightness', v));
+-gui.add(settings, 'contrast', -1, 10)
+-   .onChange(v => wasm.set_setting_num('contrast', v));
+gui.add(settings, 'lutAmount', 0, 1)
+   .onChange(v => wasm.set_setting_num('lutAmount', v));
++const keyValues = Object.fromEntries(lutNames.map((name, i) => [name, i]));
++gui.add(settings, 'lut', { keyValues })
++   .onChange(v => wasm.set_setting_num('lut', v));
 ```
 
 With that we get the identity lut which has zero affect 😂 but at least
@@ -230,7 +263,7 @@ we can try it without filtering and see a strong effect.
 
 {{{example url="../webgpu-post-processing-image-adjustments-3d-lut.html" }}}
 
-First decide on the resolution of the LUT you want and generate the slices of the lookup cube using a simple script.
+First decide on the resolution of the LUT you want and generate the slices of the lookup cube using a simple script. This is a standalone 2d-canvas utility webpage, so it stays plain JavaScript.
 
 ```js
 const ctx = document.querySelector('canvas').getContext('2d');
@@ -344,60 +377,89 @@ Okay but how do we use it?
 
 First I saved it as a png `3d-lut-orange-to-green-s16.png`. To save memory we could have cropped it to just the 256ˣ16 top left corner of the LUT table but just for fun we'll crop it after loading. The good thing about using this method is we can get some idea of the effective of the LUT just by looking at the .png file. The bad thing is of course wasted bandwidth.
 
-Here's some code to load it. The code loads the image, copies out only the 3D-LUT part into a canvas, gets the data from the canvas, uploads it to the texture one slice at a time.
+Here's some code to load it. The code loads the image, copies out only the 3D-LUT part, then uploads it to the texture one slice at a time.
 
-```js
-/**
- * create a LUT texture from an image URL. You must pass in the size of the LUT
- * It's assumed to be in the top left corner of the image.
- *
- * +---------+---------+---------+---------+---------+---------+---→
- * |         |         |         |         |         |         |
- * | layer 0 | layer 1 | layer 2 | layer 3 |   ...   | layer n |
- * |         |         |         |         |         |         |
- * +---------+---------+---------+---------+---------+---------+
- * |
- * ↓
- */
-const createLUTTextureFromImage = (function() {
-  const ctx = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
+```rust
+/// create a LUT texture from an image URL. You must pass in the size of the LUT
+/// It's assumed to be in the top left corner of the image.
+///
+/// +---------+---------+---------+---------+---------+---------+---→
+/// |         |         |         |         |         |         |
+/// | layer 0 | layer 1 | layer 2 | layer 3 |   ...   | layer n |
+/// |         |         |         |         |         |         |
+/// +---------+---------+---------+---------+---------+---------+
+/// |
+/// ↓
+async fn create_lut_texture_from_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    url: &str,
+    lut_size: u32,
+) -> wgpu::Texture {
+    let img = wgpu_fun::load_image(url).await;
+    // The JS version draws the image into a lutSize² x lutSize 2d canvas
+    // and reads it back; we copy the same top left region ourselves.
+    let width = lut_size * lut_size;
+    let mut data = vec![0u8; (width * lut_size * 4) as usize];
+    for y in 0..lut_size.min(img.height) {
+        let src = (y * img.width * 4) as usize;
+        let dst = (y * width * 4) as usize;
+        let len = (width.min(img.width) * 4) as usize;
+        data[dst..dst + len].copy_from_slice(&img.data[src..src + len]);
+    }
 
-  return async function createLUTTextureFromImage(device, url, lutSize) {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    ctx.canvas.width = lutSize * lutSize;
-    ctx.canvas.height = lutSize;
-    ctx.drawImage(img, 0, 0);
-    const imgData = ctx.getImageData(0, 0, lutSize * lutSize, lutSize);
-
-    const texture = device.createTexture({
-      size: [lutSize, lutSize, lutSize],
-      dimension: '3d',
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: lut_size,
+            height: lut_size,
+            depth_or_array_layers: lut_size,
+        },
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        mip_level_count: 1,
+        sample_count: 1,
+        view_formats: &[],
     });
 
-    for (let z = 0; z < lutSize; ++z) {
-      device.queue.writeTexture(
-        { texture, origin: [0, 0, z] },
-        imgData.data,
-        { offset: z * lutSize * 4, bytesPerRow: imgData.width * 4 },
-        [lutSize, lutSize],
-      );
+    for z in 0..lut_size {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: (z * lut_size * 4) as u64,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: lut_size,
+                height: lut_size,
+                depth_or_array_layers: 1,
+            },
+        );
     }
-    return texture;
-  };
-})();
+    texture
+}
 ```
 
 Let's add our custom lut to the list of existing luts.
 
-```js
-+  const lutTextures = [
-+    { name: 'custom',          url: 'resources/images/lut/3d-lut-orange-to-green-s16.png'},
+```rust
+-  let lut_bind_groups: Vec<(&str, wgpu::BindGroup)> = vec![
++  let mut lut_bind_groups: Vec<(&str, wgpu::BindGroup)> = vec![
+    ...
+
++  let lut_textures: &[(&str, &str)] = &[
++    ("custom",          "resources/images/lut/3d-lut-orange-to-green-s16.png"),
 +  ];
-+  lutBindGroups.push(...await Promise.all(lutTextures.map(async({name, url}) => {
++
++  for &(name, url) in lut_textures {
 +    // assumes filename ends in '-s<num>[n]'
 +    // where <num> is the size of the 3DLUT cube
 +    // and [n] means 'no filtering' or 'nearest'
@@ -405,50 +467,56 @@ Let's add our custom lut to the list of existing luts.
 +    // examples:
 +    //    'foo-s16.png' = size:16, filter: true
 +    //    'bar-s8n.png' = size:8, filter: false
-+    const m = /-s(\d+)(n*)\.[^.]+$/.exec(url);
-+    const size = parseInt(m[1]);
-+    const filter = m[2] === '';
++    let m = url.rsplit_once("-s").unwrap().1;
++    let digits: String = m.chars().take_while(|c| c.is_ascii_digit()).collect();
++    let size: u32 = digits.parse().unwrap();
++    let filter = !m[digits.len()..].starts_with('n');
 +
-+    const texture = await createLUTTextureFromImage(device, url, size);
-+    const sampler = filter
-+      ? lutLinearSampler
-+      : lutNearestSampler;
-+    return {name, bindGroup: makeLutBindGroup(texture, sampler)};
-+  })));
++    let texture = create_lut_texture_from_image(&app.device, &app.queue, url, size).await;
++    let sampler = if filter {
++      &lut_linear_sampler
++    } else {
++      &lut_nearest_sampler
++    };
++    lut_bind_groups.push((name, make_lut_bind_group(&texture, sampler)));
++  }
 ```
 
 Above you can see we encoded the size of the LUT into the end of the filename. This makes it easier to pass around LUTs as pngs
 
 While we're at it, , lets load a bunch more image based 3D-luts 
 
-```js
-  const lutTextures = [
-    { name: 'custom',          url: 'resources/images/lut/3d-lut-orange-to-green-s16.png'},
-+    { name: 'monochrome',      url: 'resources/images/lut/monochrome-s8.png' },
-+    { name: 'sepia',           url: 'resources/images/lut/sepia-s8.png' },
-+    { name: 'saturated',       url: 'resources/images/lut/saturated-s8.png', },
-+    { name: 'posterize',       url: 'resources/images/lut/posterize-s8n.png', },
-+    { name: 'posterize-3-rgb', url: 'resources/images/lut/posterize-3-rgb-s8n.png', },
-+    { name: 'posterize-3-lab', url: 'resources/images/lut/posterize-3-lab-s8n.png', },
-+    { name: 'posterize-4-lab', url: 'resources/images/lut/posterize-4-lab-s8n.png', },
-+    { name: 'posterize-more',  url: 'resources/images/lut/posterize-more-s8n.png', },
-+    { name: 'inverse',         url: 'resources/images/lut/inverse-s8.png', },
-+    { name: 'color negative',  url: 'resources/images/lut/color-negative-s8.png', },
-+    { name: 'funky contrast',  url: 'resources/images/lut/funky-contrast-s8.png', },
-+    { name: 'nightvision',     url: 'resources/images/lut/nightvision-s8.png', },
-+    { name: 'thermal',         url: 'resources/images/lut/thermal-s8.png', },
-+    { name: 'b/w',             url: 'resources/images/lut/black-white-s8n.png', },
-+    { name: 'hue +60',         url: 'resources/images/lut/hue-plus-60-s8.png', },
-+    { name: 'hue +180',        url: 'resources/images/lut/hue-plus-180-s8.png', },
-+    { name: 'hue -60',         url: 'resources/images/lut/hue-minus-60-s8.png', },
-+    { name: 'red to cyan',     url: 'resources/images/lut/red-to-cyan-s8.png' },
-+    { name: 'blues',           url: 'resources/images/lut/blues-s8.png' },
-+    { name: 'infrared',        url: 'resources/images/lut/infrared-s8.png' },
-+    { name: 'radioactive',     url: 'resources/images/lut/radioactive-s8.png' },
-+    { name: 'goolgey',         url: 'resources/images/lut/googley-s8.png' },
-+    { name: 'bgy',             url: 'resources/images/lut/bgy-s8.png' },
+```rust
+  let lut_textures: &[(&str, &str)] = &[
+    ("custom",          "resources/images/lut/3d-lut-orange-to-green-s16.png"),
++    ("monochrome",      "resources/images/lut/monochrome-s8.png"),
++    ("sepia",           "resources/images/lut/sepia-s8.png"),
++    ("saturated",       "resources/images/lut/saturated-s8.png"),
++    ("posterize",       "resources/images/lut/posterize-s8n.png"),
++    ("posterize-3-rgb", "resources/images/lut/posterize-3-rgb-s8n.png"),
++    ("posterize-3-lab", "resources/images/lut/posterize-3-lab-s8n.png"),
++    ("posterize-4-lab", "resources/images/lut/posterize-4-lab-s8n.png"),
++    ("posterize-more",  "resources/images/lut/posterize-more-s8n.png"),
++    ("inverse",         "resources/images/lut/inverse-s8.png"),
++    ("color negative",  "resources/images/lut/color-negative-s8.png"),
++    ("funky contrast",  "resources/images/lut/funky-contrast-s8.png"),
++    ("nightvision",     "resources/images/lut/nightvision-s8.png"),
++    ("thermal",         "resources/images/lut/thermal-s8.png"),
++    ("b/w",             "resources/images/lut/black-white-s8n.png"),
++    ("hue +60",         "resources/images/lut/hue-plus-60-s8.png"),
++    ("hue +180",        "resources/images/lut/hue-plus-180-s8.png"),
++    ("hue -60",         "resources/images/lut/hue-minus-60-s8.png"),
++    ("red to cyan",     "resources/images/lut/red-to-cyan-s8.png"),
++    ("blues",           "resources/images/lut/blues-s8.png"),
++    ("infrared",        "resources/images/lut/infrared-s8.png"),
++    ("radioactive",     "resources/images/lut/radioactive-s8.png"),
++    ("goolgey",         "resources/images/lut/googley-s8.png"),
++    ("bgy",             "resources/images/lut/bgy-s8.png"),
   ];
 ```
+
+(the page's `lutNames` list gets the same names added so the dropdown
+matches)
 
 And where's a bunch of luts to try.
 
@@ -463,106 +531,10 @@ Here's all the luts applied to our image
 One last thing, just for fun, it turns out there's a standard LUT format defined by Adobe. If you [search on the net you can find lots of these LUT files](https://www.google.com/search?q=lut+files). For example [this site](https://freshluts.com/) has
 lots of luts.
 
-I wrote a quick loader. Unfortunately there's 4 variations of the format but I could only find examples of 1 variation so I couldn't easily test that all variations work.
-
-Let's make it so if you drag and drop a lut file it gets applied.
-
-First we need the library
-
-```js
-import * as lutParser from './resources/lut-reader.js';
-```
-
-Then we can use them like this
-
-```js
--  dragAndDrop.setup({msg: 'Drop Image File here'});
--  dragAndDrop.onDropFile(readImageFile);
-+  dragAndDrop.setup({msg: 'Drop LUT or Img File here'});
-+  dragAndDrop.onDropFile(readLUTOrImgFile);
-
-+  function ext(s) {
-+    return s.substr(s.lastIndexOf('.') + 1);
-+  }
-+  
-+  function readLUTOrImgFile(file) {
-+    const type = ext(file.name);
-+    switch (type.toLowerCase()) {
-+      case 'jpg':
-+      case 'jpeg':
-+      case 'png':
-+      case 'webp':
-+        readImageFile(file);
-+        break;
-+      default:
-+        readLUTFile(file);
-+        break;
-+    }
-+  }
-
-  async function readImageFile(file) {
-    const newImageTexture = await createTextureFromImage(device, URL.createObjectURL(file));
-    imageTexture.destroy();
-    imageTexture = newImageTexture;
-    updateBindGroup();
-    render();
-  }
-
-+  function readLUTFile(file) {
-+    const reader = new FileReader();
-+    reader.onload = (e) => {
-+      const type = ext(file.name);
-+      const name = file.name.substring(file.name.lastIndexOf('/'));
-+      const {size, data} = lutParser.lutTo2D3Drgba8(lutParser.parse(e.target.result, type));
-+      const texture = device.createTexture({
-+        size: [size, size, size],
-+        dimension: '3d',
-+        format: 'rgba8unorm',
-+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-+      });
-+      device.queue.writeTexture(
-+        { texture },
-+        data,
-+        { bytesPerRow: size * 4, rowsPerImage: size },
-+        [size, size, size],
-+      );
-+      lutBindGroups.push({
-+        name: (name && name.toLowerCase().trim() !== 'untitled')
-+          ? name
-+          : file.name,
-+        bindGroup: makeLutBindGroup(texture, lutLinearSampler),
-+      });
-+      settings.lut = lutBindGroups.length - 1;
-+      updateGUI();
-+      render();
-+    };
-+
-+    reader.readAsText(file);
-+  }
-```
-
-and we need to make the GUI update to include the new file(s)
-
-```js
-  const gui = new GUI();
-  gui.name('Choose LUT or Drag&Drop LUT File(s)');
-  gui.onChange(render);
-  gui.add(settings, 'amount', 0, 1);
--  const keyValues = Object.fromEntries(lutBindGroups.map(({name}, i) => [name, i]));
--  gui.add(settings, 'lut', { keyValues });
-
-+  let lutGUI;
-+  function updateGUI() {
-+    if (lutGUI) {
-+      gui.remove(lutGUI);
-+    }
-+    const keyValues = Object.fromEntries(lutBindGroups.map(({name}, i) => [name, i]));
-+    lutGUI = gui.add(settings, 'lut', { keyValues });
-+  }
-+  updateGUI();
-```
-
-so you should be able to [download an Adobe LUT](https://www.google.com/search?q=lut+files) and then drag and drop it on the example below.
+The original JavaScript version of the next example includes a quick loader
+(`resources/js/lut-reader.js`) so you can drag-and-drop an Adobe LUT file
+and have it applied; that's built on browser file APIs so the converted
+example omits the drag-and-drop part and just offers the built-in LUTs.
 
 {{{example url="../webgpu-post-processing-image-adjustments-3d-luts-w-loader.html"}}}
 
@@ -573,7 +545,7 @@ Here's some luts I found online and applied them to an image
 </div>
 
 Note that Adobe LUTs are not designed for online usage. They are large files.
-(~1meg). You can convert them to smaller files and save as our PNG format by dragging and dropping on the sample below and clicking "Save...". The PNG files are typically ~20x smaller, around 50k.
+(~1meg). You can convert them to smaller files and save as our PNG format by dragging and dropping on the sample below (a standalone 2d-canvas JavaScript page) and clicking "Save...". The PNG files are typically ~20x smaller, around 50k.
 
 {{{example url="../adobe-lut-to-png-converter.html" }}}
 

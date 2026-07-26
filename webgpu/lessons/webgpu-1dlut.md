@@ -118,63 +118,88 @@ struct Uniforms {
 }
 ```
 
-And we need to update our JavaScript to set the duotone parameters.
+And we need to update our Rust to set the duotone parameters.
 
-```js
-  function postProcess(encoder, srcTexture, dstTexture) {
-    device.queue.writeBuffer(
-      postProcessUniformBuffer,
+```rust
+    // read the settings the GUI on the page sets
+    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
+    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
+-    let hue = wgpu_fun::setting_f64("hue", 0.0) as f32;
+-    let saturation = wgpu_fun::setting_f64("saturation", 0.0) as f32;
+-    let lightness = wgpu_fun::setting_f64("lightness", 0.0) as f32;
++    let duotone = wgpu_fun::setting_f64("duotone", 1.0) as f32;
++    let duotone_color1 = [
++      wgpu_fun::setting_f64("duotoneColor1_0", 0.1) as f32,
++      wgpu_fun::setting_f64("duotoneColor1_1", 0.0) as f32,
++      wgpu_fun::setting_f64("duotoneColor1_2", 0.5) as f32,
++    ];
++    let duotone_color2 = [
++      wgpu_fun::setting_f64("duotoneColor2_0", 1.0) as f32,
++      wgpu_fun::setting_f64("duotoneColor2_1", 0.69) as f32,
++      wgpu_fun::setting_f64("duotoneColor2_2", 0.4) as f32,
++    ];
+    frame.queue.write_buffer(
+      &post_process_uniform_buffer,
       0,
-      new Float32Array([
-        settings.brightness,
-        settings.contrast,
-        0,
-        0,
--        settings.hue,
--        settings.saturation,
--        settings.lightness,
--        0,
-+        settings.duotone,
-+        0,
-+        0,
-+        0,
-+        ...settings.duotoneColor1, 0,
-+        ...settings.duotoneColor2, 0,
+      bytemuck::cast_slice(&[
+        brightness,
+        contrast,
+        0.0,
+        0.0,
+-        hue, saturation, lightness,
++        duotone,
++        0.0,
++        0.0,
++        0.0,
++        duotone_color1[0], duotone_color1[1], duotone_color1[2], 0.0,
++        duotone_color2[0], duotone_color2[1], duotone_color2[2], 0.0,
       ]),
     );
-
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
-
-  const settings = {
-    brightness: 0,
-    contrast: 0,
--    hue: 0,
--    saturation: 0,
--    lightness: 0,
-+    duotone: 1,
-+    duotoneColor1: new Float32Array([0.1, 0, 0.5]),
-+    duotoneColor2: new Float32Array([1, 0.69, 0.4]),
-  };
-
-  const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'brightness', -1, 1);
-  gui.add(settings, 'contrast', -1, 10);
--  gui.add(settings, 'hue', -0.5, 0.5);
--  gui.add(settings, 'saturation', -1, 1);
--  gui.add(settings, 'lightness', -1, 1);
-+  gui.add(settings, 'duotone', 0, 1);
-+  gui.addColor(settings, 'duotoneColor1');
-+  gui.addColor(settings, 'duotoneColor2');
 ```
 
-And with that we get a duotone affect.
+The colors from the GUI arrive as 3 values so the page forwards each
+component as its own setting
+
+```js
+const settings = {
+  brightness: 0,
+  contrast: 0,
+-  hue: 0,
+-  saturation: 0,
+-  lightness: 0,
++  duotone: 1,
++  duotoneColor1: new Float32Array([0.1, 0, 0.5]),
++  duotoneColor2: new Float32Array([1, 0.69, 0.4]),
+};
+
++const setColor = (name, v) => {
++  wasm.set_setting_num(`${name}_0`, v[0]);
++  wasm.set_setting_num(`${name}_1`, v[1]);
++  wasm.set_setting_num(`${name}_2`, v[2]);
++};
+
+const gui = new GUI();
+gui.add(settings, 'brightness', -1, 1)
+   .onChange(v => wasm.set_setting_num('brightness', v));
+gui.add(settings, 'contrast', -1, 10)
+   .onChange(v => wasm.set_setting_num('contrast', v));
+-gui.add(settings, 'hue', -0.5, 0.5)
+-   .onChange(v => wasm.set_setting_num('hue', v));
+-gui.add(settings, 'saturation', -1, 1)
+-   .onChange(v => wasm.set_setting_num('saturation', v));
+-gui.add(settings, 'lightness', -1, 1)
+-   .onChange(v => wasm.set_setting_num('lightness', v));
++gui.add(settings, 'duotone', 0, 1)
++   .onChange(v => wasm.set_setting_num('duotone', v));
++gui.addColor(settings, 'duotoneColor1')
++   .onChange(v => setColor('duotoneColor1', v));
++gui.addColor(settings, 'duotoneColor2')
++   .onChange(v => setColor('duotoneColor2', v));
+```
+
+And with that we get a duotone affect. (Like the previous article, the
+original example's drag-and-drop-an-image feature is a browser file API so
+the converted example leaves it out.)
 
 {{{example url="../webgpu-post-processing-image-adjustments-duotone.html"}}}
 
@@ -246,7 +271,7 @@ struct Uniforms {
 -  @align(16) duotone: f32,
 -  @align(16) duotoneColor1: vec3f,
 -  @align(16) duotoneColor2: vec3f,
-+  gradient: f32,
++  lutAmount: f32,
 };
 
 @group(0) @binding(0) var postTexture2d: texture_2d<f32>;
@@ -261,7 +286,7 @@ struct Uniforms {
   rgb = adjustBrightness(rgb, uni.brightness);
   rgb = adjustContrast(rgb, uni.contrast);
 -  rgb = mix(rgb, applyDuotone(rgb, uni.duotoneColor1, uni.duotoneColor2), uni.duotone);
-+  rgb = mix(rgb, apply1DLUT(rgb, lut, lutSampler), uni.gradient);
++  rgb = mix(rgb, apply1DLUT(rgb, lut, lutSampler), uni.lutAmount);
 
   return vec4f(rgb, color.a);
 }
@@ -271,34 +296,66 @@ In the shader we put the gradient texture and sampler in their own group.
 
 We then need to create a texture, a sampler, and a bindGroup
 
-```js
-  const lutSampler = device.createSampler({
-    magFilter: 'linear',
-    minFilter: 'linear',
+```rust
+  let lut_sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
   });
 
-  const rgbToUnorm8 = (rgb) => [0, 0, 0, 1].map((v, i) => (rgb[i] ?? v) * 255 | 0);
-  const gradientColors = new Uint8Array([
-    ...rgbToUnorm8([0.1, 0, 0.5]),
-    ...rgbToUnorm8([1, 0.69, 0.4]),
-  ]);
-  const lutTexture = device.createTexture({
-    size: [2],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+  // 2 rgba8unorm values from our previous duotone colors
+  let rgb_to_unorm8 = |rgb: [f32; 3]| -> [u8; 4] {
+    [
+      (rgb[0] * 255.0) as u8,
+      (rgb[1] * 255.0) as u8,
+      (rgb[2] * 255.0) as u8,
+      255,
+    ]
+  };
+  let gradient_colors: Vec<u8> = [
+    rgb_to_unorm8([0.1, 0.0, 0.5]),
+    rgb_to_unorm8([1.0, 0.69, 0.4]),
+  ].concat();
+  let lut_texture = app.device.create_texture(&wgpu::TextureDescriptor {
+    label: None,
+    size: wgpu::Extent3d { width: 2, height: 1, depth_or_array_layers: 1 },
+    format: wgpu::TextureFormat::Rgba8Unorm,
+    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+    mip_level_count: 1,
+    sample_count: 1,
+    dimension: wgpu::TextureDimension::D2,
+    view_formats: &[],
   });
-  device.queue.writeTexture(
-    { texture: lutTexture },
-    gradientColors,
-    { },
-    [2],
+  app.queue.write_texture(
+    wgpu::TexelCopyTextureInfo {
+      texture: &lut_texture,
+      mip_level: 0,
+      origin: wgpu::Origin3d::ZERO,
+      aspect: wgpu::TextureAspect::All,
+    },
+    &gradient_colors,
+    wgpu::TexelCopyBufferLayout {
+      offset: 0,
+      bytes_per_row: Some(2 * 4),
+      rows_per_image: None,
+    },
+    wgpu::Extent3d { width: 2, height: 1, depth_or_array_layers: 1 },
   );
 
-  const lutBindGroup = device.createBindGroup({
-    layout: postProcessPipeline.getBindGroupLayout(1),
-    entries: [
-      { binding: 0, resource: lutTexture },
-      { binding: 1, resource: lutSampler },
+  let lut_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &post_process_pipeline.get_bind_group_layout(1),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: wgpu::BindingResource::TextureView(
+          &lut_texture.create_view(&Default::default()),
+        ),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: wgpu::BindingResource::Sampler(&lut_sampler),
+      },
     ],
   });
 ```
@@ -306,52 +363,65 @@ We then need to create a texture, a sampler, and a bindGroup
 Here we're making 2 rgba8unorm values from our previous duotone colors.
 and uploading them to a 2ˣ1 texture.
 
-```js
-  function postProcess(encoder, srcTexture, dstTexture) {
-    device.queue.writeBuffer(
-      postProcessUniformBuffer,
+```rust
+    // read the settings the GUI on the page sets
+    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
+    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
+-    let duotone = wgpu_fun::setting_f64("duotone", 1.0) as f32;
+-    let duotone_color1 = [ ... ];
+-    let duotone_color2 = [ ... ];
++    let lut_amount = wgpu_fun::setting_f64("lutAmount", 1.0) as f32;
+    frame.queue.write_buffer(
+      &post_process_uniform_buffer,
       0,
-      new Float32Array([
-        settings.brightness,
-        settings.contrast,
--        0,
--        0,
--        settings.duotone,
--        0,
--        0,
--        0,
--        ...settings.duotoneColor1, 0,
--        ...settings.duotoneColor2, 0,
-+        settings.lutAmount,
-      ]),
+-      bytemuck::cast_slice(&[
+-        brightness,
+-        contrast,
+-        0.0,
+-        0.0,
+-        duotone,
+-        0.0,
+-        0.0,
+-        0.0,
+-        duotone_color1[0], duotone_color1[1], duotone_color1[2], 0.0,
+-        duotone_color2[0], duotone_color2[1], duotone_color2[2], 0.0,
+-      ]),
++      bytemuck::cast_slice(&[brightness, contrast, lut_amount]),
     );
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-+    pass.setBindGroup(0, lutBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
+    ...
 
-  const settings = {
-    brightness: 0,
-    contrast: 0,
--    duotone: 1,
--    duotoneColor1: new Float32Array([0.1, 0, 0.5]),
--    duotoneColor2: new Float32Array([1, 0.69, 0.4]),
-+    lutAmount: 1,
-  };
+      pass.set_pipeline(&post_process_pipeline);
+      pass.set_bind_group(0, post_process_bind_group.as_ref().unwrap(), &[]);
++      pass.set_bind_group(1, &lut_bind_group, &[]);
+      pass.draw(0..3, 0..1);
+```
 
-  const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'brightness', -1, 1);
-  gui.add(settings, 'contrast', -1, 10);
--  gui.add(settings, 'duotone', 0, 1);
--  gui.addColor(settings, 'duotoneColor1');
--  gui.addColor(settings, 'duotoneColor2');
-+  gui.add(settings, 'lutAmount', 0, 1);
+and in the page
+
+```js
+const settings = {
+  brightness: 0,
+  contrast: 0,
+-  duotone: 1,
+-  duotoneColor1: new Float32Array([0.1, 0, 0.5]),
+-  duotoneColor2: new Float32Array([1, 0.69, 0.4]),
++  lutAmount: 1,
+};
+
+const gui = new GUI();
+gui.add(settings, 'brightness', -1, 1)
+   .onChange(v => wasm.set_setting_num('brightness', v));
+gui.add(settings, 'contrast', -1, 10)
+   .onChange(v => wasm.set_setting_num('contrast', v));
+-gui.add(settings, 'duotone', 0, 1)
+-   .onChange(v => wasm.set_setting_num('duotone', v));
+-gui.addColor(settings, 'duotoneColor1')
+-   .onChange(v => setColor('duotoneColor1', v));
+-gui.addColor(settings, 'duotoneColor2')
+-   .onChange(v => setColor('duotoneColor2', v));
++gui.add(settings, 'lutAmount', 0, 1)
++   .onChange(v => wasm.set_setting_num('lutAmount', v));
 ```
 
 And with that we've switched to using a texture.
@@ -373,198 +443,251 @@ couple of examples where the texture has solid colors, not gradients.
 <div class="webgpu_center center"><div data-diagram="luts" class="fill-container" style="max-width: 1200px"></div></div>
 
 Let's make some code to make these gradient textures. Given a set of colors
-and stops between 0 an 1, we could write code to interpolate between them and create the textures. But,
-the browser already has gradient making code in its 2d library so let's use
-that.
+and stops between 0 an 1, we could write code to interpolate between them and create the textures. The browser
+has gradient making code in its 2d canvas library, which is what the original
+JavaScript version uses, but there's no 2d canvas in Rust so we'll write the
+interpolation ourselves.
 
 Here's some gradient data where each entry is r, g, b in unorm8 format (0-255)
 and the last number is a value 0.0 to 1.0 where on the gradient that color is
 
-```js
-  const gradients = [
-    [
-      [  0,   0,   0, 0.0],
-      [236,  23, 223, 0.37],
-      [255, 144,   0, 0.48],
-      [255, 255, 255, 1],
+```rust
+// Each gradient entry is r, g, b in unorm8 format (0-255) and the last
+// number is a value 0.0 to 1.0 for where on the gradient that color is.
+#[rustfmt::skip]
+const GRADIENTS: &[&[[f32; 4]]] = &[
+    &[
+        [  0.,   0.,   0., 0.0],
+        [236.,  23., 223., 0.37],
+        [255., 144.,   0., 0.48],
+        [255., 255., 255., 1.],
     ],
-    [
-      [  0,   0,   0, 0.0],
-      [236,  23,  23, 0.33],
-      [230, 194, 108, 0.50],
-      [249, 197, 241, 0.64],
-      [255, 255, 255, 1],
+    &[
+        [  0.,   0.,   0., 0.0],
+        [236.,  23.,  23., 0.33],
+        [230., 194., 108., 0.50],
+        [249., 197., 241., 0.64],
+        [255., 255., 255., 1.],
     ],
-    [
-      [ 10,  10,  10, 0.0],
-      [ 90,   0, 255, 0.40],
-      [255,   0,   0, 0.70],
-      [132, 255,   0, 1],
+    &[
+        [ 10.,  10.,  10., 0.0],
+        [ 90.,   0., 255., 0.40],
+        [255.,   0.,   0., 0.70],
+        [132., 255.,   0., 1.],
     ],
-    [
-      [ 20,  20,  20, 0.0],
-      [  0,  61, 201, 0.24],
-      [ 76, 229, 155, 0.47],
-      [246, 239,  45, 0.66],
-      [255, 255, 255, 0.80],
+    &[
+        [ 20.,  20.,  20., 0.0],
+        [  0.,  61., 201., 0.24],
+        [ 76., 229., 155., 0.47],
+        [246., 239.,  45., 0.66],
+        [255., 255., 255., 0.80],
     ],
-    [
-      [  4,   4,   4, 0.0],
-      [  0, 184, 255, 0.50],
-      [255, 133,   0, 0.60],
-      [255, 255, 255, 1],
+    &[
+        [  4.,   4.,   4., 0.0],
+        [  0., 184., 255., 0.50],
+        [255., 133.,   0., 0.60],
+        [255., 255., 255., 1.],
     ],
-    [
-      [ 17,  37,  81, 0.0],
-      [198, 229, 112, 0.43],
-      [255, 215, 104, 0.51],
-      [252, 235, 241, 0.59],
-      [ 97, 159, 234, 0.85],
-      [  0,  65, 128, 1],
+    &[
+        [ 17.,  37.,  81., 0.0],
+        [198., 229., 112., 0.43],
+        [255., 215., 104., 0.51],
+        [252., 235., 241., 0.59],
+        [ 97., 159., 234., 0.85],
+        [  0.,  65., 128., 1.],
     ],
-    [
-      [  0,   0,   0, 0.0],
-      [ 10,   0, 178, 0.14],
-      [255,   0,   0, 0.50],
-      [ 50, 178,   0, 0.61],
-      [255, 252,   0, 0.80],
-      [255, 255, 255, 0.98],
+    &[
+        [  0.,   0.,   0., 0.0],
+        [ 10.,   0., 178., 0.14],
+        [255.,   0.,   0., 0.50],
+        [ 50., 178.,   0., 0.61],
+        [255., 252.,   0., 0.80],
+        [255., 255., 255., 0.98],
     ],
-    [
-      [  0,   0,   0, 0.0],
-      [204,  27, 236, 0.25],
-      [ 54, 129, 221, 0.41],
-      [ 71, 193, 223, 0.60],
-      [231, 203,  47, 0.79],
-      [255, 255, 255, 1],
+    &[
+        [  0.,   0.,   0., 0.0],
+        [204.,  27., 236., 0.25],
+        [ 54., 129., 221., 0.41],
+        [ 71., 193., 223., 0.60],
+        [231., 203.,  47., 0.79],
+        [255., 255., 255., 1.],
     ],
-    [
-      [ 27,  27,  27, 0.4],
-      [114,   0, 255, 0.15],
-      [  0, 228, 255, 0.61],
-      [236, 196, 196, 0.68],
-      [255, 211, 211, 1],
+    &[
+        [ 27.,  27.,  27., 0.4],
+        [114.,   0., 255., 0.15],
+        [  0., 228., 255., 0.61],
+        [236., 196., 196., 0.68],
+        [255., 211., 211., 1.],
     ],
-    [
-      [ 26,  47,  71, 0.44],
-      [207,  27,  38, 0.44],
-      [207,  27,  38, 0.64],
-      [103, 138, 146, 0.64],
-      [103, 138, 146, 0.75],
-      [231, 210, 155, 0.75],
+    &[
+        [ 26.,  47.,  71., 0.44],
+        [207.,  27.,  38., 0.44],
+        [207.,  27.,  38., 0.64],
+        [103., 138., 146., 0.64],
+        [103., 138., 146., 0.75],
+        [231., 210., 155., 0.75],
     ],
-    [
-      [  0,   0,   0, 0.0],
-      [ 51, 186, 236, 0.42],
-      [248, 179,  13, 0.74],
-      [255, 255, 255, 1],
+    &[
+        [  0.,   0.,   0., 0.0],
+        [ 51., 186., 236., 0.42],
+        [248., 179.,  13., 0.74],
+        [255., 255., 255., 1.],
     ],
-    [
-      [  0,   0,   0, 0.27],
-      [ 54, 167, 227, 0.27],
-      [ 54, 167, 227, 0.38],
-      [154, 148, 194, 0.38],
-      [154, 148, 194, 0.49],
-      [166, 204,  59, 0.49],
-      [166, 204,  59, 0.60],
-      [227, 141,  32, 0.60],
-      [227, 141,  32, 0.73],
-      [246, 231,   8, 0.73],
-      [246, 231,   8, 0.82],
-      [255, 255, 255, 0.82],
+    &[
+        [  0.,   0.,   0., 0.27],
+        [ 54., 167., 227., 0.27],
+        [ 54., 167., 227., 0.38],
+        [154., 148., 194., 0.38],
+        [154., 148., 194., 0.49],
+        [166., 204.,  59., 0.49],
+        [166., 204.,  59., 0.60],
+        [227., 141.,  32., 0.60],
+        [227., 141.,  32., 0.73],
+        [246., 231.,   8., 0.73],
+        [246., 231.,   8., 0.82],
+        [255., 255., 255., 0.82],
     ],
-    [
-      [  0,   0,   0, 0],
-      [255, 255, 255, 1],
+    &[
+        [  0.,   0.,   0., 0.],
+        [255., 255., 255., 1.],
     ],
-    [
-      [  0,   0,   0, 0.25],
-      [255, 255, 255, 0.75],
+    &[
+        [  0.,   0.,   0., 0.25],
+        [255., 255., 255., 0.75],
     ],
-    [
-      [112,  66,  20, 0],
-      [250, 235, 215, 1],
+    &[
+        [112.,  66.,  20., 0.],
+        [250., 235., 215., 1.],
     ],
-  ];
+];
 ```
 
-We can make gradient textures from those using a 2d
-[linear gradient](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/createLinearGradient).
+We can rasterize a 256ˣ1 strip of pixels from those with a small function,
+mimicking what the canvas's
+[linear gradient](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/createLinearGradient)
+does: stops are sorted by position, colors before the first stop and after
+the last are clamped, and every pixel samples the gradient at its center.
 
-```js
-  const lutSampler = device.createSampler({
-    magFilter: 'linear',
-    minFilter: 'linear',
+```rust
+fn make_gradient_pixels(stops: &[[f32; 4]], width: u32) -> Vec<u8> {
+    let mut stops: Vec<[f32; 4]> = stops.to_vec();
+    stops.sort_by(|a, b| a[3].partial_cmp(&b[3]).unwrap());
+    let mut pixels = Vec::with_capacity((width * 4) as usize);
+    for x in 0..width {
+        let t = (x as f32 + 0.5) / width as f32;
+        let rgb: [f32; 3] = if t <= stops[0][3] {
+            [stops[0][0], stops[0][1], stops[0][2]]
+        } else if t >= stops[stops.len() - 1][3] {
+            let s = &stops[stops.len() - 1];
+            [s[0], s[1], s[2]]
+        } else {
+            let i = stops.windows(2).position(|w| t <= w[1][3]).unwrap();
+            let (lo, hi) = (&stops[i], &stops[i + 1]);
+            let span = hi[3] - lo[3];
+            let f = if span > 0.0 { (t - lo[3]) / span } else { 1.0 };
+            [
+                lo[0] + (hi[0] - lo[0]) * f,
+                lo[1] + (hi[1] - lo[1]) * f,
+                lo[2] + (hi[2] - lo[2]) * f,
+            ]
+        };
+        pixels.extend_from_slice(&[rgb[0] as u8, rgb[1] as u8, rgb[2] as u8, 255]);
+    }
+    pixels
+}
+```
+
+Then, instead of one 2ˣ1 texture, we make a 256ˣ1 texture and a bind group
+for each gradient
+
+```rust
+  let lut_sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
   });
 
--  const rgbToUnorm8 = (rgb) => [0, 0, 0, 1].map((v, i) => (rgb[i] ?? v) * 255 | 0);
--  const gradientColors = new Uint8Array([
--    ...rgbToUnorm8([0.1, 0, 0.5]),
--    ...rgbToUnorm8([1, 0.69, 0.4]),
--  ]);
--  const lutTexture = device.createTexture({
--    size: [2],
--    format: 'rgba8unorm',
--    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
--  });
--  device.queue.writeTexture(
--    { texture: lutTexture },
--    gradientColors,
--    { },
--    [2],
--  );
-+  const ctx = new OffscreenCanvas(256, 1).getContext('2d');
-+  const lutBindGroups = gradients.map(stops => {
-+    const grad = ctx.createLinearGradient(0, 0, ctx.canvas.width, 0);
-+    for (const [r, g, b, stop] of stops) {
-+      grad.addColorStop(stop, `rgb(${r}, ${g}, ${b})`);
-+    }
-+    ctx.fillStyle = grad;
-+    ctx.fillRect(0, 0, ctx.canvas.width, 1);
-+    const texture = createTextureFromSource(device, ctx.canvas);
+-  // 2 rgba8unorm values from our previous duotone colors
+-  let rgb_to_unorm8 = |rgb: [f32; 3]| -> [u8; 4] {
+-    ...
+-  };
+-  let gradient_colors: Vec<u8> = [
+-    rgb_to_unorm8([0.1, 0.0, 0.5]),
+-    rgb_to_unorm8([1.0, 0.69, 0.4]),
+-  ].concat();
+-  let lut_texture = app.device.create_texture(&wgpu::TextureDescriptor {
+-    ...
++  // make a 256x1 texture and a bind group for each gradient
++  let lut_bind_groups: Vec<wgpu::BindGroup> = GRADIENTS
++    .iter()
++    .map(|stops| {
++      let pixels = make_gradient_pixels(stops, 256);
++      let texture = app.device.create_texture(&wgpu::TextureDescriptor {
++        label: None,
++        size: wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
++        format: wgpu::TextureFormat::Rgba8Unorm,
++        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
++        mip_level_count: 1,
++        sample_count: 1,
++        dimension: wgpu::TextureDimension::D2,
++        view_formats: &[],
++      });
++      app.queue.write_texture(
++        wgpu::TexelCopyTextureInfo {
++          texture: &texture,
++          mip_level: 0,
++          origin: wgpu::Origin3d::ZERO,
++          aspect: wgpu::TextureAspect::All,
++        },
++        &pixels,
++        wgpu::TexelCopyBufferLayout {
++          offset: 0,
++          bytes_per_row: Some(256 * 4),
++          rows_per_image: None,
++        },
++        wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
++      );
 +
-+    return device.createBindGroup({
-+      layout: postProcessPipeline.getBindGroupLayout(1),
-+      entries: [
-+        { binding: 0, resource: texture },
-+        { binding: 1, resource: lutSampler },
-+      ],
-+    });
-+  });
++      app.device.create_bind_group(&wgpu::BindGroupDescriptor {
++        label: None,
++        layout: &post_process_pipeline.get_bind_group_layout(1),
++        entries: &[
++          wgpu::BindGroupEntry {
++            binding: 0,
++            resource: wgpu::BindingResource::TextureView(
++              &texture.create_view(&Default::default()),
++            ),
++          },
++          wgpu::BindGroupEntry {
++            binding: 1,
++            resource: wgpu::BindingResource::Sampler(&lut_sampler),
++          },
++        ],
++      })
++    })
++    .collect();
 ```
 
 We made a bindGroup for each gradient. Now need to use them
 
-```js
-  function postProcess(encoder, srcTexture, dstTexture) {
+```rust
+    // read the settings the GUI on the page sets
+    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
+    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
+    let lut_amount = wgpu_fun::setting_f64("lutAmount", 1.0) as f32;
++    let lut = wgpu_fun::setting_f64("lut", 0.0) as usize % lut_bind_groups.len();
+
     ...
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
--    pass.setBindGroup(1, lutBindGroup);
-+    pass.setBindGroup(1, lutBindGroups[settings.lut]);
-    pass.draw(3);
-    pass.end();
-  }
-
-  const settings = {
-    brightness: 0,
-    contrast: 0,
-    lutAmount: 1,
-+    lut: 0,
-  };
-
-  const gui = new GUI();
-  gui.onChange(render);
-  gui.add(settings, 'brightness', -1, 1);
-  gui.add(settings, 'contrast', -1, 10);
-  gui.add(settings, 'lutAmount', 0, 1);
+      pass.set_pipeline(&post_process_pipeline);
+      pass.set_bind_group(0, post_process_bind_group.as_ref().unwrap(), &[]);
+-      pass.set_bind_group(1, &lut_bind_group, &[]);
++      pass.set_bind_group(1, &lut_bind_groups[lut], &[]);
+      pass.draw(0..3, 0..1);
 ```
 
 And we need a way to select a gradient. Let's use CSS to display the
-gradients so we can click on them.
+gradients so we can click on them. This part is all page HTML/JavaScript.
 
 First a container element.
 
@@ -594,21 +717,24 @@ and some CSS
 
 And then lets created elements with gradients using CSS
 [linear-gradient](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/gradient/linear-gradient).
+The page keeps its own copy of the gradient data just for display, and
+clicking a gradient forwards the index to our wasm module as the `lut`
+setting.
 
 ```js
-  const uiElem = document.querySelector('#ui');
-  gradients.forEach((stops, i) => {
-    const div = document.createElement('div');
-    div.className = 'gradient';
-    div.style.background = `linear-gradient(to right,
-      ${stops.map(([r, g, b, stop]) => `rgb(${r}, ${g}, ${b}) ${stop * 100}%`).join(',')}
-    )`;
-    div.addEventListener('click', () => {
-      settings.lut = i;
-      render();
-    });
-    uiElem.append(div);
+const uiElem = document.querySelector('#ui');
+gradients.forEach((stops, i) => {
+  const div = document.createElement('div');
+  div.className = 'gradient';
+  div.style.background = `linear-gradient(to right,
+    ${stops.map(([r, g, b, stop]) => `rgb(${r}, ${g}, ${b}) ${stop * 100}%`).join(',')}
+  )`;
+  div.addEventListener('click', () => {
+    settings.lut = i;
+    wasm.set_setting_num('lut', i);
   });
+  uiElem.append(div);
+});
 ```
 
 And, the result:

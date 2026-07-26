@@ -78,28 +78,17 @@ This will let us orient, position, and scale the quad.
 
 Here's the code to use it
 
-```js
-import {mat4} from '../3rdparty/wgpu-matrix.module.js';
+```rust
+use glam::{Mat4, Vec3};
+use wgpu_fun::{App, Frame, ImageData, RenderMode};
 
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+async fn run() {
+  let mut app = App::new("WebGPU Post Processing - Image Adjustment - No-op").await;
+  app.auto_resize = true;
 
-  // Get a WebGPU context from the canvas and configure it
-  const canvas = document.querySelector('canvas');
-  const context = canvas.getContext('webgpu');
-  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({
-    device,
-    format: presentationFormat,
-  });
-
-  const module = device.createShaderModule({
-    code: `
+  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -132,58 +121,76 @@ async function main() {
       @fragment fn fs(fsInput: VSOutput) -> @location(0) vec4f {
         return textureSample(tex, smp, fsInput.texcoord);
       }
-    `,
+    "#.into()),
   });
 
-  const pipeline = device.createRenderPipeline({
-    label: 'textured unit quad',
-    layout: 'auto',
-    vertex: {
-      module,
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("textured unit quad"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
-      module,
-      targets: [{ format: 'rgba8unorm' }],
-    },
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 
-  const renderPassDescriptor = {
-    label: 'our basic canvas renderPass',
-    colorAttachments: [
-      {
-        // view: <- to be filled out when we render
-        clearValue: [0.3, 0.3, 0.3, 1],
-        loadOp: 'clear',
-        storeOp: 'store',
+  let image_uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: 4 * 16,  // mat4x4
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
+  });
+
+  let image_texture = create_texture_from_image(
+    &app.device,
+    &app.queue,
+    "resources/images/david-clode-clown-fish.jpg",
+  ).await;
+
+  let image_sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    min_filter: wgpu::FilterMode::Linear,
+    mag_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
+  });
+
+  let image_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[
+      wgpu::BindGroupEntry {
+        binding: 0,
+        resource: image_uniform_buffer.as_entire_binding(),
+      },
+      wgpu::BindGroupEntry {
+        binding: 1,
+        resource: wgpu::BindingResource::TextureView(
+          &image_texture.create_view(&Default::default()),
+        ),
+      },
+      wgpu::BindGroupEntry {
+        binding: 2,
+        resource: wgpu::BindingResource::Sampler(&image_sampler),
       },
     ],
-  };
-
-  const imageUniformBuffer = device.createBuffer({
-    size: 4 * 16,  // mat4x4
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-
-  const imageTexture = await createTextureFromImage(
-    device,
-    'resources/images/david-clode-clown-fish.jpg',
-  );
-
-  const imageSampler = device.createSampler({
-    minFilter: 'linear',
-    magFilter: 'linear',
-  });
-
-  const imageBindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: imageUniformBuffer  },
-      { binding: 1, resource: imageTexture },
-      { binding: 2, resource: imageSampler },
-    ],
-  });
-
 ```
+
+`create_texture_from_image` is the same helper we wrote in
+[the article on loading images into textures](webgpu-importing-textures.html):
+it calls `wgpu_fun::load_image` to load and decode the image, makes an
+`rgba8unorm` texture, and copies the pixels in with `write_texture`.
 
 The image being loaded is by [David Clode](https://unsplash.com/@davidclode) from [here](https://unsplash.com/photos/orange-and-white-clown-fish-x9yfTxHpj5w).
 
@@ -191,9 +198,10 @@ The post processing code is pretty much the same as the first post processing ex
 It does nothing but we keep the a superfluous uniform struct just so we don't have to
 remove the uniform buffer setting code and add it back in the next step.
 
-```js
-  const postProcessModule = device.createShaderModule({
-    code: `
+```rust
+  let post_process_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -229,200 +237,187 @@ remove the uniform buffer setting code and add it back in the next step.
         var rgb = color.rgb;
         return vec4f(rgb, color.a);
       }
-    `,
+    "#.into()),
   });
 
-  const postProcessPipeline = device.createRenderPipeline({
-    layout: 'auto',
-    vertex: { module: postProcessModule },
-    fragment: {
-      module: postProcessModule,
-      targets: [ { format: presentationFormat }],
+  let post_process_pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: None,
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &post_process_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
+    fragment: Some(wgpu::FragmentState {
+      module: &post_process_module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 
-  const postProcessSampler = device.createSampler({
-    minFilter: 'linear',
-    magFilter: 'linear',
+  let post_process_sampler = app.device.create_sampler(&wgpu::SamplerDescriptor {
+    min_filter: wgpu::FilterMode::Linear,
+    mag_filter: wgpu::FilterMode::Linear,
+    ..Default::default()
   });
 
-  const postProcessRenderPassDescriptor = {
-    label: 'post process render pass',
-    colorAttachments: [
-      { loadOp: 'clear', storeOp: 'store' },
-    ],
-  };
-
-  const postProcessUniformBuffer = device.createBuffer({
-    size: 16,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  let post_process_uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: 80,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
-  let renderTarget;
-  let postProcessBindGroup;
-
-  function setupPostProcess(canvasTexture) {
-    if (renderTarget?.width === canvasTexture.width &&
-        renderTarget?.height === canvasTexture.height) {
-      return;
-    }
-
-    renderTarget?.destroy();
-    renderTarget = device.createTexture({
-      size: canvasTexture,
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    const renderTargetView = renderTarget.createView();
-    renderPassDescriptor.colorAttachments[0].view = renderTargetView;
-
-    postProcessBindGroup = device.createBindGroup({
-      layout: postProcessPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: renderTargetView },
-        { binding: 1, resource: postProcessSampler },
-        { binding: 2, resource: postProcessUniformBuffer  },
-      ],
-    });
-  }
-
-  function postProcess(encoder, srcTexture, dstTexture) {
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
+  let mut render_target: Option<wgpu::Texture> = None;
+  let mut post_process_bind_group: Option<wgpu::BindGroup> = None;
 ```
 
-The rendering switches from a request animation frame loop
-to rendering on demand.
+Like the previous article, at the start of each frame, if we don't have a
+render target texture or it doesn't match the canvas size, we make a new one
+and a matching post process bind group (this was `setupPostProcess` in the
+JS version).
 
-```js
-    const canvasTexture = context.getCurrentTexture();
-    setupPostProcess(canvasTexture);
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    // If we don't have a render target or it doesn't match the canvas
+    // size, make a new one (setupPostProcess in the JS version).
+    if render_target
+        .as_ref()
+        .is_none_or(|t| t.width() != frame.width || t.height() != frame.height)
+    {
+      if let Some(t) = render_target.take() {
+        t.destroy();
+      }
+      let texture = frame.device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+          width: frame.width,
+          height: frame.height,
+          depth_or_array_layers: 1,
+        },
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT |
+               wgpu::TextureUsages::TEXTURE_BINDING,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        view_formats: &[],
+      });
+      post_process_bind_group =
+          Some(frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &post_process_pipeline.get_bind_group_layout(0),
+        entries: &[
+          wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(
+              &texture.create_view(&Default::default()),
+            ),
+          },
+          wgpu::BindGroupEntry {
+            binding: 1,
+            resource: wgpu::BindingResource::Sampler(&post_process_sampler),
+          },
+          wgpu::BindGroupEntry {
+            binding: 2,
+            resource: post_process_uniform_buffer.as_entire_binding(),
+          },
+        ],
+      }));
+      render_target = Some(texture);
+    }
+    let render_target_view = render_target
+        .as_ref()
+        .unwrap()
+        .create_view(&Default::default());
+```
 
+The rest of the frame callback draws the image into the render target and
+then post processes the render target to the canvas. Note we're using
+`RenderMode::Once`, rendering on demand, instead of a continuous
+requestAnimationFrame style loop.
+
+```rust
 *    // css 'cover'
-*    const canvasAspect = canvas.clientWidth / canvas.clientHeight;
-*    const imageAspect = imageTexture.width / imageTexture.height;
-*    const aspect = canvasAspect / imageAspect;
-*    const aspectScale = aspect > 1 ? [1, aspect, 1] : [1 / aspect, 1, 1];
+*    let canvas_aspect = frame.width as f32 / frame.height as f32;
+*    let image_aspect = image_texture.width() as f32 / image_texture.height() as f32;
+*    let aspect = canvas_aspect / image_aspect;
+*    let aspect_scale = if aspect > 1.0 {
+*      Vec3::new(1.0, aspect, 1.0)
+*    } else {
+*      Vec3::new(1.0 / aspect, 1.0, 1.0)
+*    };
 *
-*    const matrix = mat4.identity();
-*    mat4.scale(matrix, [2, 2, 1], matrix);
-*    mat4.scale(matrix, aspectScale, matrix);
-*    mat4.translate(matrix, [-0.5, -0.5, 1], matrix);
+*    let matrix = Mat4::from_scale(Vec3::new(2.0, 2.0, 1.0))
+*        * Mat4::from_scale(aspect_scale)
+*        * Mat4::from_translation(Vec3::new(-0.5, -0.5, 1.0));
 *
 *    // Copy our the uniform values to the GPU
-*    device.queue.writeBuffer(imageUniformBuffer, 0, matrix);
+*    frame.queue.write_buffer(
+*      &image_uniform_buffer,
+*      0,
+*      bytemuck::cast_slice(&matrix.to_cols_array()),
+*    );
 
     // Draw the image to a texture.
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, imageBindGroup);
-    pass.draw(6);
-    pass.end();
-
-    postProcess(encoder, renderTarget, canvasTexture);
-
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+    let mut encoder = frame.device.create_command_encoder(
+        &wgpu::CommandEncoderDescriptor::default());
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("our basic canvas renderPass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &render_target_view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.3, g: 0.3, b: 0.3, a: 1.0 }),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
+      pass.set_pipeline(&pipeline);
+      pass.set_bind_group(0, &image_bind_group, &[]);
+      pass.draw(0..6, 0..1);
     }
-    render();
+
+    // post process the render target to the canvas
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("post process render pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: frame.view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            store: wgpu::StoreOp::Store,
+          },
+          depth_slice: None,
+        })],
+        ..Default::default()
+      });
+      pass.set_pipeline(&post_process_pipeline);
+      pass.set_bind_group(0, post_process_bind_group.as_ref().unwrap(), &[]);
+      pass.draw(0..3, 0..1);
+    }
+
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
   });
-  observer.observe(canvas);
 ```
 
 The code above computes a matrix that produces a CSS style `cover` mode for our image. In other words, it scales the image so the entire canvas is covered.
 
-Let's add a few tiny embellishments:
-
-Let's make it so you can drag and drop an image.
-We'll use a helper library.
-
-```js
-+import * as dragAndDrop from './resources/js/drag-and-drop.js';
-
-...
-
--  const imageTexture = await createTextureFromImage(
-+  let imageTexture = await createTextureFromImage(
-    device,
-    'resources/images/david-clode-clown-fish.jpg',
-  );
-
-  const imageSampler = device.createSampler({
-    minFilter: 'linear',
-    magFilter: 'linear',
-  });
-
--  const imageBindGroup = device.createBindGroup({
-+  let imageBindGroup;
-+  function updateBindGroup() {
-+    imageBindGroup = device.createBindGroup({
-*      layout: pipeline.getBindGroupLayout(0),
-*      entries: [
-*        { binding: 0, resource: imageUniformBuffer  },
-*        { binding: 1, resource: imageTexture },
-*        { binding: 2, resource: imageSampler },
-*      ],
-*    });
-+  }
-+  updateBindGroup();
-
-...
-
-+  const gui = new GUI();
-+  gui.name('Drag-n-Drop Image');
-+  gui.onChange(render);
-
-...
-
-+  async function readImageFile(file) {
-+    const newImageTexture = await createTextureFromImage(device, URL.createObjectURL(file));
-+    imageTexture.destroy();
-+    imageTexture = newImageTexture;
-+    updateBindGroup();
-+    render();
-+  }
-+
-+  dragAndDrop.setup({msg: 'Drop Image File here'});
-+  dragAndDrop.onDropFile(readImageFile);
-
-```
-
-The `GUI` part is not needed but it will tell the user they can drag-and-drop an image.
-
-Then, since most phone's don't support drag-and-drop, lets
-make it so you can paste in an image. Again we'll use a helper.
-
-```js
-+import onPasteImage from './resources/js/on-paste-image.js';
-
-...
-
-  dragAndDrop.setup({msg: 'Drop Image File here'});
-  dragAndDrop.onDropFile(readImageFile);
-
-+  onPasteImage(readImageFile);
-```
-
-Now you should be able to select an image on your phone
-and paste it into the example. Note, this will only work
-if the same has the focus or if you run it in its own page.
-
-Those details were maybe not important but they were small and will let you try your own images.
+The original JavaScript version also lets you drag-and-drop or paste your own
+image onto the example; those are browser file APIs so the converted examples
+skip that feature and always show the default image.
 
 So here's that running.
 
@@ -498,35 +493,45 @@ struct Uniforms {
 }
 ```
 
-Then we need to set the brightness.
+Then we need to set the brightness. Like the other examples with settings,
+the settings UI is a muigui panel in the page's JavaScript and each change is
+forwarded to our wasm module, where our frame callback reads the current
+value through wgpu_fun's settings store, just before the post process pass.
 
-```js
-  function postProcess(encoder, srcTexture, dstTexture) {
-+    device.queue.writeBuffer(
-+      postProcessUniformBuffer,
+```rust
++    // read the settings the GUI on the page sets
++    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
++    frame.queue.write_buffer(
++      &post_process_uniform_buffer,
 +      0,
-+      new Float32Array([
-+        settings.brightness,
-+      ]),
++      bytemuck::cast_slice(&[brightness]),
 +    );
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
-
-+  const settings = {
-+    brightness: 0,
-+  };
-
-  const gui = new GUI();
-  gui.name('Drag-n-Drop Image');
-  gui.onChange(render);
-+  gui.add(settings, 'brightness', -1, 1);
+    // post process the render target to the canvas
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        ...
+      pass.set_pipeline(&post_process_pipeline);
+      pass.set_bind_group(0, post_process_bind_group.as_ref().unwrap(), &[]);
+      pass.draw(0..3, 0..1);
+    }
 ```
+
+And in the page
+
+```js
++const settings = {
++  brightness: 0,
++};
+
++const gui = new GUI();
++gui.add(settings, 'brightness', -1, 1)
++   .onChange(v => wasm.set_setting_num('brightness', v));
+```
+
+Remember, the default in the Rust code must match the page's initial
+`settings` value, and a changed setting automatically triggers a re-render
+for `RenderMode::Once` examples.
 
 And with that we can adjust the brightness
 
@@ -604,35 +609,31 @@ the colors will be pushed away from 0.5.
 
 Again we need to make a way to set the new adjustment.
 
-```js
-  function postProcess(encoder, srcTexture, dstTexture) {
-    device.queue.writeBuffer(
-      postProcessUniformBuffer,
+```rust
+    // read the settings the GUI on the page sets
+    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
++    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
+    frame.queue.write_buffer(
+      &post_process_uniform_buffer,
       0,
-      new Float32Array([
-        settings.brightness,
-+        settings.contrast,
-      ]),
+-      bytemuck::cast_slice(&[brightness]),
++      bytemuck::cast_slice(&[brightness, contrast]),
     );
+```
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
+and in the page
 
-  const settings = {
-    brightness: 0,
-+    contrast: 0,
-  };
+```js
+const settings = {
+  brightness: 0,
++  contrast: 0,
+};
 
-  const gui = new GUI();
-  gui.name('Drag-n-Drop Image');
-  gui.onChange(render);
-  gui.add(settings, 'brightness', -1, 1);
-+  gui.add(settings, 'contrast', -1, 10);
+const gui = new GUI();
+gui.add(settings, 'brightness', -1, 1)
+   .onChange(v => wasm.set_setting_num('brightness', v));
++gui.add(settings, 'contrast', -1, 10)
++   .onChange(v => wasm.set_setting_num('contrast', v));
 ```
 
 Note that our setting of 10 as the maximum is a little arbitrary. Since we're
@@ -779,56 +780,57 @@ when restriction was removed, lots of code would break. [^alignment]
 
 [^alignment]: removing this restriction is [already in progress](https://github.com/gpuweb/gpuweb/issues/4973), at least for newer devices.
 
-To use this we still need to update the JavaScript to set the new uniform values.
+To use this we still need to update the Rust to set the new uniform values.
 
-```js
-  const postProcessUniformBuffer = device.createBuffer({
+```rust
+  let post_process_uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
 -    size: 16,
 +    size: 32,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
 
 ...
 
-  function postProcess(encoder, srcTexture, dstTexture) {
-    device.queue.writeBuffer(
-      postProcessUniformBuffer,
+    // read the settings the GUI on the page sets
+    let brightness = wgpu_fun::setting_f64("brightness", 0.0) as f32;
+    let contrast = wgpu_fun::setting_f64("contrast", 0.0) as f32;
++    let hue = wgpu_fun::setting_f64("hue", 0.0) as f32;
++    let saturation = wgpu_fun::setting_f64("saturation", 0.0) as f32;
++    let lightness = wgpu_fun::setting_f64("lightness", 0.0) as f32;
+    frame.queue.write_buffer(
+      &post_process_uniform_buffer,
       0,
-      new Float32Array([
-        settings.brightness,
-        settings.contrast,
-+        0,
-+        0,
-+        settings.hue,
-+        settings.saturation,
-+        settings.lightness,
-      ]),
+-      bytemuck::cast_slice(&[brightness, contrast]),
++      bytemuck::cast_slice(&[
++        brightness, contrast, 0.0, 0.0, hue, saturation, lightness,
++      ]),
     );
+```
 
-    postProcessRenderPassDescriptor.colorAttachments[0].view = dstTexture.createView();
-    const pass = encoder.beginRenderPass(postProcessRenderPassDescriptor);
-    pass.setPipeline(postProcessPipeline);
-    pass.setBindGroup(0, postProcessBindGroup);
-    pass.draw(3);
-    pass.end();
-  }
+and add the new settings to the page
 
-  const settings = {
-    brightness: 0,
-    contrast: 0,
-+    hue: 0,
-+    saturation: 0,
-+    lightness: 0,
-  };
+```js
+const settings = {
+  brightness: 0,
+  contrast: 0,
++  hue: 0,
++  saturation: 0,
++  lightness: 0,
+};
 
-  const gui = new GUI();
-  gui.name('Drag-n-Drop Image');
-  gui.onChange(render);
-  gui.add(settings, 'brightness', -1, 1);
-  gui.add(settings, 'contrast', -1, 10);
-+  gui.add(settings, 'hue', -0.5, 0.5);
-+  gui.add(settings, 'saturation', -1, 1);
-+  gui.add(settings, 'lightness', -1, 1);
+const gui = new GUI();
+gui.add(settings, 'brightness', -1, 1)
+   .onChange(v => wasm.set_setting_num('brightness', v));
+gui.add(settings, 'contrast', -1, 10)
+   .onChange(v => wasm.set_setting_num('contrast', v));
++gui.add(settings, 'hue', -0.5, 0.5)
++   .onChange(v => wasm.set_setting_num('hue', v));
++gui.add(settings, 'saturation', -1, 1)
++   .onChange(v => wasm.set_setting_num('saturation', v));
++gui.add(settings, 'lightness', -1, 1)
++   .onChange(v => wasm.set_setting_num('lightness', v));
 ```
 
 And now you should be able to adjust the hue, saturation, and lightness.
