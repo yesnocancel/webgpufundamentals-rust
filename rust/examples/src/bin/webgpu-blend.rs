@@ -530,8 +530,8 @@ async fn run() {
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
     let src_texture_unpremultiplied_alpha = create_texture_from_source(
@@ -728,7 +728,7 @@ async fn run() {
 
         let update_uniforms =
             |uniform_buffer: &wgpu::Buffer, values: &mut [f32; 16], texture: &wgpu::Texture| {
-                let projection_matrix = Mat4::orthographic_rh(
+                let projection_matrix = glam::camera::rh::proj::directx::orthographic(
                     0.0,
                     frame.width as f32,
                     frame.height as f32,

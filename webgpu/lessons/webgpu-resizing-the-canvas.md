@@ -2,9 +2,21 @@ Title: WebGPU Resizing the Canvas.
 Description: How to resize a WebGPU canvas and the issues involved
 TOC: Resizing the Canvas
 
-In [the article on webgpu fundamentals](webgpu-fundamentals.html) we setup a basic
-structure for setting the resolution of the canvas to match the size it's displayed.
-Let's go over some of the details of resizing a canvas.
+In [the article on webgpu fundamentals](webgpu-fundamentals.html) we turned on
+`app.auto_resize` to make the resolution of the canvas match the size it's
+displayed. Let's go over some of the details of resizing a canvas.
+
+A note up front: this article is about what happens **in the browser**, where
+our examples run as WebAssembly against a `<canvas>`. When the same examples
+run natively, the window system tells us the window's size in actual device
+pixels and the surface must simply be configured to match (wgpu_fun does that
+on every resize event) — none of the subtleties below exist. In the browser
+they very much do, and even though our helper deals with them for us, it's
+worth understanding what it has to do. The code snippets showing browser APIs
+below are JavaScript, since they are about the browser's own APIs; wgpu_fun's
+web backend implements the final solution from this article with Rust DOM
+bindings in
+[web.rs](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/web.rs).
 
 Every canvas has 2 sizes. The size of its *drawing buffer*. 
 This is how many pixels are in the canvas itself.
@@ -17,13 +29,12 @@ You can set the size of the canvas's drawing buffer in 2 ways. One using HTML
 <canvas id="c" width="400" height="300"></canvas>
 ```
 
-The other using JavaScript
+The other from code (here JavaScript, though on the Rust side
+`web-sys` exposes the same `set_width`/`set_height`)
 
 ```html
 <canvas id="c"></canvas>
 ```
-
-JavaScript
 
 ```js
 const canvas = document.querySelector("#c");
@@ -89,7 +100,8 @@ This is unfortunately a more complicated topic than you might expect. Let's go o
 
 ## Use `ResizeObserver`
 
-We covered this in [the article on webgpu fundamentals](webgpu-fundamentals.html).
+This is what `app.auto_resize = true` uses, as we covered in
+[the article on webgpu fundamentals](webgpu-fundamentals.html).
 This is the modern way and every browser that supports WebGPU also supports
 `ResizeObserver`.
 
@@ -117,11 +129,10 @@ to the largest size our device supports otherwise WebGPU will start generating
 errors that we tried to make a texture that is too large. We also need to make
 sure it doesn't go to zero or again we'll get errors. 
 
-If we're only rendering on demand then we might put a call to our render
-function inside the code above. Otherwise, if we're animating by using a
-`requestAnimationFrame` loop (rAF loop), or other means, then the next time we
-render we'll get a texture that matches the size we set on the canvas when we
-call `context.getCurrentTexture()`.
+If we're only rendering on demand (`RenderMode::Once`) then the observer
+callback re-runs our frame function. Otherwise, if we're animating
+(`RenderMode::Continuous`, a `requestAnimationFrame` loop), then the next
+frame simply gets a texture that matches the new canvas size.
 
 > Note that `inlineSize` and `blockSize` are not integers
 
@@ -411,7 +422,8 @@ As of November 2023 then, the solution to getting the actual number of pixels
 is to request both types of boxes above, trap the safari issue, and, if
 `devicePixelContentBoxSize` is not available, fallback to `contentBoxSize`.
 
-Here's is our boilerplate canvas resizing code updated to support pixel
+Here is the boilerplate canvas resizing code — the code wgpu_fun's
+`auto_resize` performs, shown as JavaScript — updated to support pixel
 perfect rendering on all standards compliant browsers [^safari]
 
 ```js
@@ -438,8 +450,15 @@ perfect rendering on all standards compliant browsers [^safari]
 We can test this by drawing a pattern that will show a [moiré effect](https://www.google.com/search?q=moire+effect) if
 the rendering is not pixel perfect. We drew a pattern like this in [the article on inter-stage variables](webgpu-inter-stage-variables.html#a-builtin-position).
 
-Replacing the canvas resizing code with the snippet above and changing
-the pattern to a magenta, green, white, black checkerboard.
+Since our helper already resizes exactly that way, the Rust example just
+turns it on:
+
+```rust
+let mut app = App::new("WebGPU resize pixel perfect").await;
+app.auto_resize = true;
+```
+
+Then we change the pattern to a magenta, green, white, black checkerboard.
 
 ```wgsl
   @fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
@@ -457,7 +476,7 @@ Let's also make the triangle big enough to cover the canvas [^large-triangle]
 
 [^large-triangle]: See [this article](webgpu-large-triangle-to-cover-clip-space.html) for why these vertex positions.
 
-```js
+```wgsl
     let pos = array(
 -      vec2f( 0.0,  0.5),  // top center
 -      vec2f(-0.5, -0.5),  // bottom left

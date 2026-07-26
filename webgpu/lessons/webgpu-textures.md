@@ -246,8 +246,8 @@ We need to add both the texture and the sampler to a bind group with bindings
 that match the `@binding(?)`s we put in the shader. One wgpu detail: we don't
 bind the texture itself, we bind a *view* of the texture. (The JavaScript API
 creates a default view for you when you pass a texture directly; in wgpu we
-call `create_view` ourselves.) We'll cover texture views
-[later in this article](#texture-types-and-texture-views).
+call `create_view` ourselves.) We'll cover texture views later in this
+article.
 
 ```rust
   let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
