@@ -28,40 +28,40 @@ The scene graph for the filing cabinets would look something like this
 
 ```
 root
-  +-cabinet0
-  |  +-cabinet0-mesh
-  |  +-drawer0
-  |  |  +-drawer0-drawer-mesh
-  |  |  +-drawer0-handle-mesh
-  |  +-drawer1
-  |  |  +-drawer1-drawer-mesh
-  |  |  +-drawer1-handle-mesh
-  |  +-drawer2
-  |  |  +-drawer2-drawer-mesh
-  |  |  +-drawer2-handle-mesh
-  |  +-drawer3
-  |     +-drawer3-drawer-mesh
-  |     +-drawer3-handle-mesh
-  +-cabinet1
-  |  ...
-  +-cabinet2
-  |  ...
-  +-cabinet3
-  |  ...
-  +-cabinet4
-     +-cabinet4-mesh
-     +-drawer0
-     |  +-drawer0-drawer-mesh
-     |  +-drawer0-handle-mesh
-     +-drawer1
-     |  +-drawer1-drawer-mesh
-     |  +-drawer1-handle-mesh
-     +-drawer2
-     |  +-drawer2-drawer-mesh
-     |  +-drawer2-handle-mesh
-     +-drawer3
-        +-drawer3-drawer-mesh
-        +-drawer3-handle-mesh
+  +-cabinet0
+  |  +-cabinet0-mesh
+  |  +-drawer0
+  |  |  +-drawer0-drawer-mesh
+  |  |  +-drawer0-handle-mesh
+  |  +-drawer1
+  |  |  +-drawer1-drawer-mesh
+  |  |  +-drawer1-handle-mesh
+  |  +-drawer2
+  |  |  +-drawer2-drawer-mesh
+  |  |  +-drawer2-handle-mesh
+  |  +-drawer3
+  |     +-drawer3-drawer-mesh
+  |     +-drawer3-handle-mesh
+  +-cabinet1
+  |  ...
+  +-cabinet2
+  |  ...
+  +-cabinet3
+  |  ...
+  +-cabinet4
+     +-cabinet4-mesh
+     +-drawer0
+     |  +-drawer0-drawer-mesh
+     |  +-drawer0-handle-mesh
+     +-drawer1
+     |  +-drawer1-drawer-mesh
+     |  +-drawer1-handle-mesh
+     +-drawer2
+     |  +-drawer2-drawer-mesh
+     |  +-drawer2-handle-mesh
+     +-drawer3
+        +-drawer3-drawer-mesh
+        +-drawer3-handle-mesh
 ```
 
 The advantage to a scene graph is it stores data as nodes in a graph
@@ -70,108 +70,174 @@ having to recurse in code.
 
 ## Let's switch the file cabinet example from the previous article to use a scene graph.
 
-The first thing we need is a class to represent our scene graph.
+The first thing we need is a type to represent our scene graph.
 
-```js
-class SceneGraphNode {
-  constructor(name, source) {
-    this.name = name;
-    this.children = [];
-    this.localMatrix = mat4.identity();
-    this.worldMatrix = mat4.identity();
-    this.source = source;
-  }
+In JavaScript this was a `SceneGraphNode` class where each node held direct
+references to its parent and to its children. That kind of doubly-linked
+object graph is painful to express with Rust's ownership rules: two nodes
+can't both own each other. There are two common ways out. One is
+`Rc<RefCell<SceneGraphNode>>` — shared, dynamically checked references that
+read closest to the JavaScript, at the cost of `Weak` parent pointers and
+`.borrow_mut()` noise on every access. The other is an *arena*: a
+`SceneGraph` struct owns a `Vec` of all the nodes and nodes refer to each
+other **by index**. We'll use the arena. It keeps every operation a plain
+`&mut self` method, and — as we'll see when we add a GUI — a plain index is
+exactly the kind of node handle we can copy around, keep in a list of
+meshes, or receive from the page's GUI. The tradeoff is that the node
+methods move onto `SceneGraph` and take a node index: JavaScript's
+`child.setParent(parent)` becomes `scene.set_parent(child, Some(parent))`.
+One more difference: nodes removed from the graph stay in the `Vec` — there
+is no garbage collector to reclaim them — which is fine for examples like
+ours.
 
-  addChild(child) {
-    child.setParent(this);
-  }
+```rust
+// A node in the graph is identified by its index in the SceneGraph's Vec of
+// nodes. In JavaScript nodes held direct references to their parent and
+// children; in Rust we use indices into an arena instead.
+type NodeNdx = usize;
 
-  removeChild(child) {
-    child.setParent(null);
-  }
+struct SceneGraphNode {
+    #[allow(dead_code)] // shown in the page's GUI; used by find() later
+    name: String,
+    children: Vec<NodeNdx>,
+    parent: Option<NodeNdx>,
+    local_matrix: [f32; 16],
+    world_matrix: [f32; 16],
+    source: Option<TRS>,
+}
 
-  setParent(parent) {
-    // remove us from our parent
-    if (this.parent) {
-      const ndx = this.parent.children.indexOf(this);
-      if (ndx >= 0) {
-        this.parent.children.splice(ndx, 1);
-      }
+struct SceneGraph {
+    nodes: Vec<SceneGraphNode>,
+}
+
+#[allow(dead_code)]
+impl SceneGraph {
+    fn new() -> Self {
+        SceneGraph { nodes: Vec::new() }
     }
 
-    // Add us to our new parent
-    if (parent) {
-      parent.children.push(this);
-    }
-    this.parent = parent;
-  }
-
-  updateWorldMatrix() {
-    // update the local matrix from its source if it has one.
-    this.source?.getMatrix(this.localMatrix);
-
-    if (this.parent) {
-      // we have a parent do the math
-      mat4.multiply(this.parent.worldMatrix, this.localMatrix, this.worldMatrix);
-    } else {
-      // we have no parent so just copy local to world
-      mat4.copy(this.localMatrix, this.worldMatrix);
+    // the JS version's `new SceneGraphNode(name, source)`
+    fn add_node(&mut self, name: &str, source: Option<TRS>) -> NodeNdx {
+        self.nodes.push(SceneGraphNode {
+            name: name.to_string(),
+            children: Vec::new(),
+            parent: None,
+            local_matrix: m4::identity(),
+            world_matrix: m4::identity(),
+            source,
+        });
+        self.nodes.len() - 1
     }
 
-    // now process all the children
-      this.children.forEach(function(child) {
-      child.updateWorldMatrix();
-    });
-  }
+    fn add_child(&mut self, parent: NodeNdx, child: NodeNdx) {
+        self.set_parent(child, Some(parent));
+    }
+
+    fn remove_child(&mut self, _parent: NodeNdx, child: NodeNdx) {
+        self.set_parent(child, None);
+    }
+
+    fn set_parent(&mut self, node: NodeNdx, parent: Option<NodeNdx>) {
+        // remove us from our parent
+        if let Some(old_parent) = self.nodes[node].parent {
+            let children = &mut self.nodes[old_parent].children;
+            if let Some(ndx) = children.iter().position(|&c| c == node) {
+                children.remove(ndx);
+            }
+        }
+
+        // Add us to our new parent
+        if let Some(parent) = parent {
+            self.nodes[parent].children.push(node);
+        }
+        self.nodes[node].parent = parent;
+    }
+
+    fn update_world_matrix(&mut self, node: NodeNdx) {
+        // update the local matrix from its source if it has one.
+        if let Some(source) = &self.nodes[node].source {
+            self.nodes[node].local_matrix = source.get_matrix();
+        }
+
+        if let Some(parent) = self.nodes[node].parent {
+            // we have a parent so do the math
+            self.nodes[node].world_matrix =
+                m4::multiply(&self.nodes[parent].world_matrix, &self.nodes[node].local_matrix);
+        } else {
+            // we have no parent so just copy local to world
+            self.nodes[node].world_matrix = self.nodes[node].local_matrix;
+        }
+
+        // now process all the children
+        for i in 0..self.nodes[node].children.len() {
+            let child = self.nodes[node].children[i];
+            self.update_world_matrix(child);
+        }
+    }
 }
 ```
 
-The `SceneGraphNode` above is pretty straight forward. Each node has an array of
-`children`. There are functions to add and remove children as well as set a
-node's parent. Each node has a `localMatrix` which represents the position,
-orientation, and scale of this node relative to its parent. Each node has a
-`worldMatrix` that represents this node's position, orientation, and scale
-relative to "the world" or more specifically, relative to the outside of the
-scene graph. And finally there's `updateWorldMatrix` which updates the
-`worldMatrix` of a node and all of its children. Each node also has an optional
-`source` which is an object that provides a `getMatrix` function. We can use this
-to provide different ways to compute a local matrix for a particular node.
+The `SceneGraph` above is pretty straight forward. Each node has a `Vec` of
+`children` (as node indices). There are functions to add and remove children
+as well as set a node's parent. Each node has a `local_matrix` which
+represents the position, orientation, and scale of this node relative to its
+parent. Each node has a `world_matrix` that represents this node's position,
+orientation, and scale relative to "the world" or more specifically,
+relative to the outside of the scene graph. And finally there's
+`update_world_matrix` which updates the `world_matrix` of a node and all of
+its children. Each node also has an optional `source` which is something that
+provides a `get_matrix` function. We can use this to provide different ways
+to compute a local matrix for a particular node.
+
+Note the loop at the bottom of `update_world_matrix` indexes the children by
+position instead of iterating with a `for child in &self.nodes[node].children`
+loop. That's because the recursive call needs `&mut self`, which the borrow
+checker won't allow while we hold a reference into `self.nodes`.
 
 Let's provide a source.
 
-```js
-class TRS {
-  constructor({
-    translation = [0, 0, 0],
-    rotation = [0, 0, 0],
-    scale = [1, 1, 1],
-  } = {}) {
-     this.translation = new Float32Array(translation);
-     this.rotation = new Float32Array(rotation);
-     this.scale = new Float32Array(scale);
-  }
+```rust
+#[derive(Clone, Copy)]
+struct TRS {
+    translation: [f32; 3],
+    rotation: [f32; 3],
+    scale: [f32; 3],
+}
 
-  getMatrix(dst) {
-   mat4.translation(this.translation, dst);
-   mat4.rotateX(dst, this.rotation[0], dst);
-   mat4.rotateY(dst, this.rotation[1], dst);
-   mat4.rotateZ(dst, this.rotation[2], dst);
-   mat4.scale(dst, this.scale, dst);
-   return dst;
- }
+impl Default for TRS {
+    fn default() -> Self {
+        TRS {
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        }
+    }
+}
+
+impl TRS {
+    fn get_matrix(&self) -> [f32; 16] {
+        let mut dst = m4::translation(self.translation);
+        dst = m4::rotate_x(&dst, self.rotation[0]);
+        dst = m4::rotate_y(&dst, self.rotation[1]);
+        dst = m4::rotate_z(&dst, self.rotation[2]);
+        m4::scale(&dst, self.scale)
+    }
 }
 ```
 
 `TRS` is short for Translation, Rotation, Scale. This is a common way to
 compute a local matrix in a scene graph. Often, some implementations use
 "position" instead of "translation". For this tutorial, I thought it might
-be better to use "translation" since it matches what we do in `getMatrix`.
+be better to use "translation" since it matches what we do in `get_matrix`.
 
-One thing that sticks out above is setting `this.translation`, `this.rotation`
-and `this.scale` to `new Float32Array(value)`. The advantage to `Float32Array`
-is it has `set` function so we can do `someTRS.translation.set(someNewValue)`.
+The JavaScript version stored these as `Float32Array`s so it could use their
+`set` function to copy new values in. In Rust `[f32; 3]` is a plain `Copy`
+array so assignment already copies. We implement `Default` (with a scale of
+1) so a `TRS` can be created by specifying only the fields we care about,
+like the JavaScript version's default parameters:
+`TRS { translation: [1.0, 2.0, 3.0], ..Default::default() }`.
 
-You can see `getMatrix` computes a matrix by using effectively
+You can see `get_matrix` computes a matrix by using effectively
 
 ```
 translation * rotationX * rotationY * rotationZ * scale
@@ -184,145 +250,260 @@ more common to use [geometric algebra](https://www.youtube.com/watch?v=Idlv83CxP
 
 In any case, we're going to start with what's above.
 
-Now that we have a `SceneGraphNode` and `TRS` source, let's build our
+Now that we have a `SceneGraph` and `TRS` source, let's build our
 scene graph.
 
-First let's make a function that adds both a `SceneGraphNode` and a `TRS` source to some parent.
+First let's make a function that adds both a scene graph node and a `TRS`
+source to some parent.
 
-```js
-  function addTRSSceneGraphNode(
-    name,
-    parent,
-    trs,
-  ) {
-    const node = new SceneGraphNode(name, new TRS(trs));
-    if (parent) {
-      node.setParent(parent);
+```rust
+fn add_trs_scene_graph_node(
+    scene: &mut SceneGraph,
+    name: &str,
+    parent: Option<NodeNdx>,
+    trs: TRS,
+) -> NodeNdx {
+    let node = scene.add_node(name, Some(trs));
+    if let Some(parent) = parent {
+        scene.set_parent(node, Some(parent));
     }
-    return node;
-  }
+    node
+}
 ```
 
 Let's add a function that makes a "mesh". I'm not sure what to call this
 but it will be a list of things to draw. Each "thing to draw" will be a
-combination of a `SceneGraphNode`, the vertices for the thing we want to
-draw, and a color to draw it with.
+combination of a scene graph node, the vertices for the thing we want to
+draw, and a color to draw it with. In JavaScript a mesh held a direct
+reference to its vertices; we use the same trick as the nodes and refer to
+an entry in a `Vec` of `Vertices` by index.
 
-```js
-  const meshes = [];
-  function addMesh(node, vertices, color) {
-    const mesh = {
-      node,
-      vertices,
-      color,
-    };
-    meshes.push(mesh);
-    return mesh;
-  }
+```rust
+// Like the nodes, each mesh refers to its vertices by index (into a Vec of
+// Vertices) instead of holding a direct reference.
+struct Mesh {
+    node: NodeNdx,
+    vertices: usize,
+    color: [f32; 4],
+}
+
+fn add_mesh(meshes: &mut Vec<Mesh>, node: NodeNdx, vertices: usize, color: [f32; 4]) {
+    meshes.push(Mesh {
+        node,
+        vertices,
+        color,
+    });
+}
 ```
 
 Now, since we only have a cube, let's make a function that adds a cube
 to the scene graph and adds a "mesh" to render the cube.
 
-```js
-  function addCubeNode(name, parent, trs, color) {
-    const node = addTRSSceneGraphNode(name, parent, trs);
-    return addMesh(node, cubeVertices, color);
-  }
+```rust
+fn add_cube_node(
+    scene: &mut SceneGraph,
+    meshes: &mut Vec<Mesh>,
+    name: &str,
+    parent: NodeNdx,
+    trs: TRS,
+    color: [f32; 4],
+) {
+    let node = add_trs_scene_graph_node(scene, name, Some(parent), trs);
+    add_mesh(meshes, node, K_CUBE_VERTICES, color);
+}
+```
+
+`K_CUBE_VERTICES` is the index of the cube's vertices in our `Vec` of
+`Vertices`. So far there's only one entry.
+
+```rust
++const K_CUBE_VERTICES: usize = 0;
+
+-    let cube_vertices = create_vertices(&app.device, &app.queue, create_cube_vertices(), "cube");
++    let vertex_sets = vec![create_vertices(
++        &app.device,
++        &app.queue,
++        create_cube_vertices(),
++        "cube",
++    )];
 ```
 
 With those in place, lets build the graph for the filing cabinets. First let's
 make a "root" node. The root doesn't need a "source".
 
-```js
-  const root = new SceneGraphNode('root');
+```rust
+    let mut scene = SceneGraph::new();
+    let mut meshes: Vec<Mesh> = Vec::new();
+
+    let root = scene.add_node("root", None);
 ```
 
 Then let's add cabinets
 
-```js
-  const root = new SceneGraphNode('root');
-+  // Add cabinets
-+  for (let cabinetNdx = 0; cabinetNdx < kNumCabinets; ++cabinetNdx) {
-+    addCabinet(root, cabinetNdx);
-+  }
-```
-
-Let's write `addCabinet`.
-
-```js
-  function addCabinet(parent, cabinetNdx) {
-    const cabinetName = `cabinet${cabinetNdx}`;
-
-    // add a node for the entire cabinet
-    const cabinet = addTRSSceneGraphNode(
-      cabinetName, parent, {
-         translation: [cabinetNdx * kCabinetSpacing, 0, 0],
-       });
-
-    // add a node with a cube for the cabinet
-    const kCabinetSize = [
-      kDrawerSize[kWidth] + 6,
-      kDrawerSpacing * kNumDrawersPerCabinet + 6,
-      kDrawerSize[kDepth] + 4,
-    ];
-    addCubeNode(
-      `${cabinetName}-mesh`, cabinet, {
-        scale: kCabinetSize,
-      }, kCabinetColor);
-
-    // Add the drawers
-    for (let drawerNdx = 0; drawerNdx < kNumDrawersPerCabinet; ++drawerNdx) {
-      addDrawer(cabinet, drawerNdx);
-    }
-  }
-```
-
-And, let's write `addDrawer`.
-
-```js
-  function addDrawer(parent, drawerNdx) {
-    const drawerName = `drawer${drawerNdx}`;
-
-    // add a node for the entire drawer
-    const drawer = addTRSSceneGraphNode(
-      drawerName, parent, {
-        translation: [3, drawerNdx * kDrawerSpacing + 5, 1],
-      });
-    animNodes.push(drawer);
-
-    // add a node with a cube for the drawer cube.
-    addCubeNode(`${drawerName}-drawer-mesh`, drawer, {
-      scale: kDrawerSize,
-    }, kDrawerColor);
-
-    // add a node with a cube for the handle
-    addCubeNode(`${drawerName}-handle-mesh`, drawer, {
-      translation: kHandlePosition,
-      scale: kHandleSize,
-    }, kHandleColor);
-  }
-```
-
-With our scene graph in place, we need to update our render
-function.
-
-```js
--    stack.save();
--    stack.rotateY(settings.baseRotation);
--    stack.translate([(kNumCabinets - 0.5) * kCabinetSpacing * -0.5, 0, 0]);
--    objectNdx = 0;
--    const ctx = { pass, stack, viewProjectionMatrix };
--    drawCabinets(ctx, kNumCabinets);
--    stack.restore();
-+    const ctx = { pass, viewProjectionMatrix };
-+    root.updateWorldMatrix();
-+    for (const mesh of meshes) {
-+      drawMesh(ctx, mesh);
+```rust
+    let root = scene.add_node("root", None);
++    // Add cabinets
++    for cabinet_ndx in 0..K_NUM_CABINETS {
++        add_cabinet(&mut scene, &mut meshes, root, cabinet_ndx);
 +    }
 ```
 
-And let's tweak the camera code
+Let's write `add_cabinet`.
+
+```rust
+fn add_cabinet(scene: &mut SceneGraph, meshes: &mut Vec<Mesh>, parent: NodeNdx, cabinet_ndx: usize) {
+    let cabinet_name = format!("cabinet{cabinet_ndx}");
+
+    // add a node for the entire cabinet
+    let cabinet = add_trs_scene_graph_node(
+        scene,
+        &cabinet_name,
+        Some(parent),
+        TRS {
+            translation: [cabinet_ndx as f32 * K_CABINET_SPACING, 0.0, 0.0],
+            ..Default::default()
+        },
+    );
+
+    // add a node with a cube for the cabinet
+    let k_cabinet_size = [
+        K_DRAWER_SIZE[K_WIDTH] + 6.0,
+        K_DRAWER_SPACING * K_NUM_DRAWERS_PER_CABINET as f32 + 6.0,
+        K_DRAWER_SIZE[K_DEPTH] + 4.0,
+    ];
+    add_cube_node(
+        scene,
+        meshes,
+        &format!("{cabinet_name}-mesh"),
+        cabinet,
+        TRS {
+            scale: k_cabinet_size,
+            ..Default::default()
+        },
+        K_CABINET_COLOR,
+    );
+
+    // Add the drawers
+    for drawer_ndx in 0..K_NUM_DRAWERS_PER_CABINET {
+        add_drawer(scene, meshes, cabinet, drawer_ndx);
+    }
+}
+```
+
+And, let's write `add_drawer`.
+
+```rust
+fn add_drawer(scene: &mut SceneGraph, meshes: &mut Vec<Mesh>, parent: NodeNdx, drawer_ndx: usize) {
+    let drawer_name = format!("drawer{drawer_ndx}");
+
+    // add a node for the entire drawer
+    let drawer = add_trs_scene_graph_node(
+        scene,
+        &drawer_name,
+        Some(parent),
+        TRS {
+            translation: [3.0, drawer_ndx as f32 * K_DRAWER_SPACING + 5.0, 1.0],
+            ..Default::default()
+        },
+    );
+
+    // add a node with a cube for the drawer cube.
+    add_cube_node(
+        scene,
+        meshes,
+        &format!("{drawer_name}-drawer-mesh"),
+        drawer,
+        TRS {
+            scale: K_DRAWER_SIZE,
+            ..Default::default()
+        },
+        K_DRAWER_COLOR,
+    );
+
+    // add a node with a cube for the handle
+    add_cube_node(
+        scene,
+        meshes,
+        &format!("{drawer_name}-handle-mesh"),
+        drawer,
+        TRS {
+            translation: K_HANDLE_POSITION,
+            scale: K_HANDLE_SIZE,
+            ..Default::default()
+        },
+        K_HANDLE_COLOR,
+    );
+}
+```
+
+With our scene graph in place, we need to update our render function. The
+`MatrixStack` is gone, so it comes out of the `Ctx`, and `draw_object` gets
+the vertices to draw as a parameter. A small `draw_mesh` function draws one
+mesh by looking up its node's world matrix and its vertices.
+
+```rust
+struct Ctx<'a, 'b> {
+    pass: &'a mut wgpu::RenderPass<'b>,
+-    stack: &'a mut MatrixStack,
+    view_projection_matrix: [f32; 16],
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: &'a wgpu::RenderPipeline,
+    object_infos: &'a mut Vec<ObjectInfo>,
+    object_ndx: usize,
+-    num_vertices: u32,
+}
+
+-fn draw_object(ctx: &mut Ctx, matrix: [f32; 16], color: [f32; 4]) {
++fn draw_object(ctx: &mut Ctx, vertices: &Vertices, matrix: [f32; 16], color: [f32; 4]) {
++    let Vertices {
++        vertex_buffer,
++        num_vertices,
++    } = vertices;
+
+    ...
+
++    ctx.pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    ctx.pass.set_bind_group(0, &object_info.bind_group, &[]);
+-    ctx.pass.draw(0..ctx.num_vertices, 0..1);
++    ctx.pass.draw(0..*num_vertices, 0..1);
+}
+
++fn draw_mesh(ctx: &mut Ctx, mesh: &Mesh, scene: &SceneGraph, vertex_sets: &[Vertices]) {
++    let Mesh {
++        node,
++        vertices,
++        color,
++    } = mesh;
++    draw_object(
++        ctx,
++        &vertex_sets[*vertices],
++        scene.nodes[*node].world_matrix,
++        *color,
++    );
++}
+```
+
+and in the render code, instead of walking the cabinets with the matrix
+stack, we update the world matrices and draw all the meshes.
+
+```rust
+-            ctx.stack.save();
+-            ctx.stack.rotate_y(base_rotation);
+-            ctx.stack.translate([
+-                (K_NUM_CABINETS as f32 - 0.5) * K_CABINET_SPACING * -0.5,
+-                0.0,
+-                0.0,
+-            ]);
+-            draw_cabinets(&mut ctx, K_NUM_CABINETS);
+-            ctx.stack.restore();
++            scene.update_world_matrix(root);
++            for mesh in &meshes {
++                draw_mesh(&mut ctx, mesh, &scene, &vertex_sets);
++            }
+```
+
+And let's tweak the camera code. On the example page's JavaScript side
 
 ```js
   const settings = {
@@ -333,32 +514,37 @@ And let's tweak the camera code
   const radToDegOptions = { min: -180, max: 180, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
--  gui.add(settings, 'baseRotation', radToDegOptions);
-+  gui.add(settings, 'cameraRotation', radToDegOptions);
+-  gui.add(settings, 'baseRotation', radToDegOptions)
+-     .onChange(v => wasm.set_setting_num('baseRotation', v));
++  gui.add(settings, 'cameraRotation', radToDegOptions)
++     .onChange(v => wasm.set_setting_num('cameraRotation', v));
+```
 
-...
+and in the Rust render code
 
-  function render() {
-    ...
+```rust
+-            let base_rotation = wgpu_fun::setting_f64("baseRotation", 0.0) as f32;
++            let camera_rotation = wgpu_fun::setting_f64("cameraRotation", 0.0) as f32;
 
--    const eye = [0, 80, 200];
--    const target = [0, 80, 0];
--    const up = [0, 1, 0];
+  ...
+
+-            let eye = [0.0, 80.0, 200.0];
+-            let target = [0.0, 80.0, 0.0];
+-            let up = [0.0, 1.0, 0.0];
 -
--    // Compute a view matrix
--    const viewMatrix = mat4.lookAt(eye, target, up);
-+    // Compute a camera matrix
-+    const cameraMatrix = mat4.identity();
-+    mat4.translate(cameraMatrix, [120, 100, 0], cameraMatrix);
-+    mat4.rotateY(cameraMatrix, settings.cameraRotation, cameraMatrix);
-+    mat4.translate(cameraMatrix, [60, 0, 300], cameraMatrix);
+-            // Compute a view matrix
+-            let view_matrix = m4::look_at(eye, target, up);
++            // Compute a camera matrix
++            let mut camera_matrix = m4::identity();
++            camera_matrix = m4::translate(&camera_matrix, [120.0, 100.0, 0.0]);
++            camera_matrix = m4::rotate_y(&camera_matrix, camera_rotation);
++            camera_matrix = m4::translate(&camera_matrix, [0.0, 0.0, 300.0]);
 +
-+    // Compute a view matrix
-+    const viewMatrix = mat4.inverse(cameraMatrix);
++            // Compute a view matrix
++            let view_matrix = m4::inverse(&camera_matrix);
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+            // combine the view and projection matrixes
+            let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 ```
 
 And that gives us the same filing cabinets but using a scene graph.
@@ -370,48 +556,124 @@ And that gives us the same filing cabinets but using a scene graph.
 A major point of a scene graph is that, because it's just data, we can
 manipulate it. Let's add a UI to adjust and tweak the graph.
 
-First, lets add some controls for translation, rotation, and scale.
-We'll make a helper the UI will look at to adjust a `TRS` but will
-allow us to change which `TRS` is being edited.
+**A note on how the port splits this up:** in the JavaScript original the
+GUI and the scene graph live in the same script, so the GUI can hold direct
+references to `TRS` objects. In our port the scene graph lives in the Rust
+wasm module while the muigui panel is page JavaScript. So the page keeps a
+small *mirror* of the node tree — names and TRS values, created in exactly
+the same order as the Rust code creates its nodes, so the page's array
+indices match the Rust arena's `NodeNdx` values. The mirror is only for
+display; when you pick a node the page sends its index with
+`set_setting_num('nodeNdx', ndx)`, and when you drag a slider the page sends
+`set_setting_str('trsEdit', 'id axis value')` which the Rust side applies to
+the selected node's `TRS` (the `id` just makes each edit apply exactly
+once).
+
+Here's the page-side mirror. It's the same `addCabinet`/`addDrawer` logic
+you saw above, minus the meshes.
 
 ```js
-  // Presents a TRS to the UI. Letting set which TRS
-  // is being edited.
-  class TRSUIHelper {
-    #trs = new TRS();
-
-    constructor() {}
-
-    setTRS(trs) {
-      this.#trs = trs;
-    }
-
-    get translationX() { return this.#trs.translation[0]; }
-    set translationX(x) { this.#trs.translation[0] = x; }
-    get translationY() { return this.#trs.translation[1]; }
-    set translationY(x) { this.#trs.translation[1] = x; }
-    get translationZ() { return this.#trs.translation[2]; }
-    set translationZ(x) { this.#trs.translation[2] = x; }
-
-    get rotationX() { return this.#trs.rotation[0]; }
-    set rotationX(x) { this.#trs.rotation[0] = x; }
-    get rotationY() { return this.#trs.rotation[1]; }
-    set rotationY(x) { this.#trs.rotation[1] = x; }
-    get rotationZ() { return this.#trs.rotation[2]; }
-    set rotationZ(x) { this.#trs.rotation[2] = x; }
-
-    get scaleX() { return this.#trs.scale[0]; }
-    set scaleX(x) { this.#trs.scale[0] = x; }
-    get scaleY() { return this.#trs.scale[1]; }
-    set scaleY(x) { this.#trs.scale[1] = x; }
-    get scaleZ() { return this.#trs.scale[2]; }
-    set scaleZ(x) { this.#trs.scale[2] = x; }
+// The scene graph itself lives in the Rust module. The page keeps a mirror
+// of the node tree (names and TRS values, in the same order the Rust code
+// creates its nodes) so the GUI can display and edit it; edits are sent to
+// the wasm module as settings.
+const nodes = [];
+function addNode(name, parent, trs) {
+  const node = {
+    name,
+    children: [],
+    hasTRS: trs !== undefined,
+    trs: {
+      translation: [...(trs?.translation ?? [0, 0, 0])],
+      rotation: [...(trs?.rotation ?? [0, 0, 0])],
+      scale: [...(trs?.scale ?? [1, 1, 1])],
+    },
+    ndx: nodes.length,
+  };
+  nodes.push(node);
+  if (parent) {
+    parent.children.push(node);
   }
+  return node;
+}
+
+function addDrawer(parent, drawerNdx) {
+  const drawerName = `drawer${drawerNdx}`;
+  const drawer = addNode(drawerName, parent, {
+    translation: [3, drawerNdx * kDrawerSpacing + 5, 1],
+  });
+  addNode(`${drawerName}-drawer-mesh`, drawer, { scale: kDrawerSize });
+  addNode(`${drawerName}-handle-mesh`, drawer, {
+    translation: kHandlePosition,
+    scale: kHandleSize,
+  });
+}
+
+function addCabinet(parent, cabinetNdx) {
+  const cabinetName = `cabinet${cabinetNdx}`;
+  const cabinet = addNode(cabinetName, parent, {
+    translation: [cabinetNdx * kCabinetSpacing, 0, 0],
+  });
+  const kCabinetSize = [
+    kDrawerSize[kWidth] + 6,
+    kDrawerSpacing * kNumDrawersPerCabinet + 6,
+    kDrawerSize[kDepth] + 4,
+  ];
+  addNode(`${cabinetName}-mesh`, cabinet, { scale: kCabinetSize });
+  for (let drawerNdx = 0; drawerNdx < kNumDrawersPerCabinet; ++drawerNdx) {
+    addDrawer(cabinet, drawerNdx);
+  }
+}
+
+const root = addNode('root');
+// Add cabinets
+for (let cabinetNdx = 0; cabinetNdx < kNumCabinets; ++cabinetNdx) {
+  addCabinet(root, cabinetNdx);
+}
+```
+
+Now, lets add some controls for translation, rotation, and scale.
+We'll make a helper the UI will look at to adjust a `TRS` but will
+allow us to change which `TRS` is being edited. Each edit updates the
+page's mirror and is forwarded to the wasm module.
+
+```js
+let currentNode = root;
+let editId = 0;
+// TRS edits are sent to the wasm module as "id axis value"; the id makes
+// sure each edit is applied exactly once. Axis 0-2 is translation,
+// 3-5 rotation, 6-8 scale.
+function sendTRSEdit(axis, v) {
+  wasm.set_setting_str('trsEdit', `${++editId} ${axis} ${v}`);
+}
+
+// Presents the current node's TRS to the UI, forwarding edits to the
+// wasm module.
+const trsUIHelper = {
+  get translationX() { return currentNode.trs.translation[0]; },
+  set translationX(v) { currentNode.trs.translation[0] = v; sendTRSEdit(0, v); },
+  get translationY() { return currentNode.trs.translation[1]; },
+  set translationY(v) { currentNode.trs.translation[1] = v; sendTRSEdit(1, v); },
+  get translationZ() { return currentNode.trs.translation[2]; },
+  set translationZ(v) { currentNode.trs.translation[2] = v; sendTRSEdit(2, v); },
+
+  get rotationX() { return currentNode.trs.rotation[0]; },
+  set rotationX(v) { currentNode.trs.rotation[0] = v; sendTRSEdit(3, v); },
+  get rotationY() { return currentNode.trs.rotation[1]; },
+  set rotationY(v) { currentNode.trs.rotation[1] = v; sendTRSEdit(4, v); },
+  get rotationZ() { return currentNode.trs.rotation[2]; },
+  set rotationZ(v) { currentNode.trs.rotation[2] = v; sendTRSEdit(5, v); },
+
+  get scaleX() { return currentNode.trs.scale[0]; },
+  set scaleX(v) { currentNode.trs.scale[0] = v; sendTRSEdit(6, v); },
+  get scaleY() { return currentNode.trs.scale[1]; },
+  set scaleY(v) { currentNode.trs.scale[1] = v; sendTRSEdit(7, v); },
+  get scaleZ() { return currentNode.trs.scale[2]; },
+  set scaleZ(v) { currentNode.trs.scale[2] = v; sendTRSEdit(8, v); },
+};
 ```
 
 ```js
-+ const trsUIHelper = new TRSUIHelper();
-
   const settings = {
 -    cameraRotation: 0,
 +    cameraRotation: degToRad(-45),
@@ -422,9 +684,9 @@ allow us to change which `TRS` is being edited.
 +  const cameraRadToDegOptions = { min: -180, max: 180, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
--  gui.add(settings, 'cameraRotation', radToDegOptions);
-+  gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
+-  gui.add(settings, 'cameraRotation', radToDegOptions)
++  gui.add(settings, 'cameraRotation', cameraRadToDegOptions)
+     .onChange(v => wasm.set_setting_num('cameraRotation', v));
 +  const trsFolder = gui.addFolder('orientation');
 +  trsFolder.add(trsUIHelper, 'translationX', -200, 200, 1),
 +  trsFolder.add(trsUIHelper, 'translationY', -200, 200, 1),
@@ -437,8 +699,8 @@ allow us to change which `TRS` is being edited.
 +  trsFolder.add(trsUIHelper, 'scaleZ', 0.1, 100),
 ```
 
-Now we need a way to select a node so let's walk the scene graph and make a
-button for each node.
+Now we need a way to select a node so let's walk the (mirrored) scene graph
+and make a button for each node.
 
 ```js
 import GUI from '../3rdparty/muigui-0.x.module.js';
@@ -450,7 +712,8 @@ import GUI from '../3rdparty/muigui-0.x.module.js';
 +  const prefixRE = new RegExp(`^(?:${kUnelected}|${kSelected})`);
 +
 +  function setCurrentSceneGraphNode(node) {
-+    trsUIHelper.setTRS(node.source);
++    currentNode = node;
++    wasm.set_setting_num('nodeNdx', node.ndx);
 +    trsFolder.name(`orientation: ${node.name}`);
 +    trsFolder.updateDisplay();
 +
@@ -461,7 +724,7 @@ import GUI from '../3rdparty/muigui-0.x.module.js';
 +    }
 +  }
 +
-+  // \u00a0 is non-breaking space.
++  //   is non-breaking space.
 +  const threeSpaces = '\u00a0\u00a0\u00a0';
 +  const barTwoSpaces = '\u00a0|\u00a0';
 +  const plusDash = '\u00a0+-';
@@ -474,37 +737,83 @@ import GUI from '../3rdparty/muigui-0.x.module.js';
 +  // | +-child
 +  // +-child
 +  function addSceneGraphNodeToGUI(gui, node, last, prefix) {
-+    if (node.source instanceof TRS) {
++    const nodes = [];
++    if (node.hasTRS) {
 +      const label = `${prefix === undefined ? '' : `${prefix}${plusDash}`}${node.name}`;
-+      addButtonLeftJustified(
-+        gui, label, () => setCurrentSceneGraphNode(node));
++      nodes.push({
++        button: addButtonLeftJustified(
++          gui, label, () => setCurrentSceneGraphNode(node)),
++        node,
++      });
 +    }
 +    const childPrefix = prefix === undefined
 +      ? ''
 +      : `${prefix}${last ? threeSpaces : barTwoSpaces}`;
-+    node.children.forEach((child, i) => {
++    nodes.push(...node.children.map((child, i) => {
 +      const childLast = i === node.children.length - 1;
-+      addSceneGraphNodeToGUI(gui, child, childLast, childPrefix);
-+    });
++      return addSceneGraphNodeToGUI(gui, child, childLast, childPrefix);
++    }));
++    return nodes.flat();
 +  }
 
   const gui = new GUI();
   ...
 +  const nodesFolder = gui.addFolder('nodes');
-+  addSceneGraphNodeToGUI(nodesFolder, root);
++  const nodeButtons = addSceneGraphNodeToGUI(nodesFolder, root);
 +
 +  setCurrentSceneGraphNode(root.children[0]);
 ```
 
-Above we made a button for each node that has a `TRS` source. 
+Above we made a button for each node that has a `TRS`.
 When a button is clicked it calls
 `setCurrentSceneGraphNode` and passes it the node for that button.
-`setCurrentSceneGraphNode` updates the folder name and then calls
-`trsFolder.updateDisplay` to update UI with the data from the newly
-selected `TRS`.
+`setCurrentSceneGraphNode` updates the folder name, sends the node's index
+to the wasm module, and then calls `trsFolder.updateDisplay` to update the
+UI with the data from the newly selected `TRS`.
+
+On the Rust side we read the selected node and apply any pending edit
+before rendering:
+
+```rust
++    // id of the last TRS edit we applied from the page's GUI
++    let mut last_trs_edit_id = 0.0f64;
+
+    app.run(RenderMode::Once, move |frame: &Frame| {
++        // The page's GUI selects a node (`nodeNdx`) and sends TRS edits as a
++        // "id axis value" string; axis 0-2 is translation, 3-5 rotation,
++        // 6-8 scale. Apply each edit once, to the selected node's TRS.
++        let node_ndx = wgpu_fun::setting_f64("nodeNdx", 1.0) as usize;
++        let trs_edit = wgpu_fun::setting_str("trsEdit", "");
++        let parts: Vec<f64> = trs_edit
++            .split_whitespace()
++            .filter_map(|v| v.parse().ok())
++            .collect();
++        if let [id, axis, value] = parts[..] {
++            if id != last_trs_edit_id {
++                last_trs_edit_id = id;
++                if let Some(trs) = scene
++                    .nodes
++                    .get_mut(node_ndx)
++                    .and_then(|node| node.source.as_mut())
++                {
++                    let (axis, value) = (axis as usize, value as f32);
++                    match axis {
++                        0..=2 => trs.translation[axis] = value,
++                        3..=5 => trs.rotation[axis - 3] = value,
++                        _ => trs.scale[axis - 6] = value,
++                    }
++                }
++            }
++        }
+```
+
+Because the scene graph is just data, "select node 1 and set its rotation"
+is nothing more than indexing into the arena and poking a value into its
+`TRS`. Every settings change automatically triggers a re-render for
+`RenderMode::Once` examples, so there's nothing else to do.
 
 This works but I found the UI is a little cluttered for our small windows so
-here's a few more tweaks.
+here's a few more tweaks, both purely on the page's JavaScript side.
 
 1. Reduce the translate, rotation, scale controls.
 
@@ -519,8 +828,8 @@ here's a few more tweaks.
     };
 
     const gui = new GUI();
-    gui.onChange(render);
-    gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
+    gui.add(settings, 'cameraRotation', cameraRadToDegOptions)
+       .onChange(v => wasm.set_setting_num('cameraRotation', v));
    + gui.add(settings, 'showAllTRS').onChange(showTRS);
     const trsFolder = gui.addFolder('orientation');
    + const trsControls = [
@@ -555,59 +864,27 @@ here's a few more tweaks.
    to move the cabinets or the drawers so lets hide them by default.
 
    ```js
-     // \u00a0 is non-breaking space.
-     const threeSpaces = '\u00a0\u00a0\u00a0';
-     const barTwoSpaces = '\u00a0|\u00a0';
-     const plusDash = '\u00a0+-';
-     // add a scene graph node to the GUI and adds the appropriate
-     // prefix so it looks something like
-     //
-     // +-root
-     // | +-child
-     // | | +-child
-     // | +-child
-     // +-child
-     function addSceneGraphNodeToGUI(gui, node, last, prefix) {
-   +   const nodes = [];
-       if (node.source instanceof TRS) {
-         const label = `${prefix === undefined ? '' : `${prefix}${plusDash}`}${node.name}`;
-   -      addButtonLeftJustified(gui, label, () => setCurrentSceneGraphNode(node));
-   +      nodes.push(addButtonLeftJustified(
-   +        gui, label, () => setCurrentSceneGraphNode(node)));
-       const childPrefix = prefix === undefined
-         ? ''
-         : `${prefix}${last ? threeSpaces : barTwoSpaces}`;
-   -    node.children.forEach((child, i) => {
-   +    nodes.push(...node.children.map((child, i) => {
-   *      const childLast = i === node.children.length - 1;
-   -      addSceneGraphNodeToGUI(gui, child, childLast, childPrefix);
-   +      return addSceneGraphNodeToGUI(gui, child, childLast, childPrefix);
-   *    }));
-   +    return nodes.flat();
-     }
-   
      const settings = {
        cameraRotation: degToRad(-45),
    +    showMeshNodes: false,
        showAllTRS: false,
      };
-   
+
      const gui = new GUI();
-     gui.onChange(render);
-     gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
+     gui.add(settings, 'cameraRotation', cameraRadToDegOptions)
+        .onChange(v => wasm.set_setting_num('cameraRotation', v));
    +  gui.add(settings, 'showMeshNodes').onChange(showMeshNodes);
      gui.add(settings, 'showAllTRS').onChange(showTRS);
 
       ...
 
-   -  const nodesFolder = gui.addFolder('nodes');
-     addSceneGraphNodeToGUI(nodesFolder, root);
-   +  const nodeButtons = addSceneGraphNodeToGUI(nodesFolder, root);
-   
+     const nodesFolder = gui.addFolder('nodes');
+     const nodeButtons = addSceneGraphNodeToGUI(nodesFolder, root);
+
    + function showMeshNodes(show) {
-   +   for (const child of nodeButtons) {
-   +     if (child.domElement.textContent.includes('mesh')) {
-   +       child.show(show);
+   +   for (const {node, button} of nodeButtons) {
+   +     if (node.name.includes('mesh')) {
+   +       button.show(show);
    +     }
    +   }
    + }
@@ -627,93 +904,68 @@ For fun, let's animate the drawers.
 
 First lets make a list of the drawer nodes.
 
-```js
-  const animNodes = [];
-
-  function addDrawer(parent, drawerNdx) {
-    const drawerName = `drawer${drawerNdx}`;
+```rust
+fn add_drawer(
+    scene: &mut SceneGraph,
+    meshes: &mut Vec<Mesh>,
++    anim_nodes: &mut Vec<NodeNdx>,
+    parent: NodeNdx,
+    drawer_ndx: usize,
+) {
+    let drawer_name = format!("drawer{drawer_ndx}");
 
     // add a node for the entire drawer
-    const drawer = addTRSSceneGraphNode(
-      drawerName, parent, {
-        translation: [3, drawerNdx * kDrawerSpacing + 5, 1],
-      });
-+    animNodes.push(drawer);
+    let drawer = add_trs_scene_graph_node(
+        scene,
+        &drawer_name,
+        Some(parent),
+        TRS {
+            translation: [3.0, drawer_ndx as f32 * K_DRAWER_SPACING + 5.0, 1.0],
+            ..Default::default()
+        },
+    );
++    anim_nodes.push(drawer);
 
-    // add a node with a cube for the drawer cube.
-    addCubeNode(`${drawerName}-drawer-mesh`, drawer, {
-      scale: kDrawerSize,
-    }, kDrawerColor);
-
-    // add a node with a cube for the handle
-    addCubeNode(`${drawerName}-handle-mesh`, drawer, {
-      translation: kHandlePosition,
-      scale: kHandleSize,
-    }, kHandleColor);
-  }
+    ...
+}
 ```
 
 Then let's write some code to animate the drawers based on the time.
+Because the nodes are just indices, the list of nodes to animate is a
+`Vec<NodeNdx>`.
 
-```js
-  const lerp = (a, b, t) => a + (b - a) * t;
+```rust
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
 
-  function animate(time) {
-    animNodes.forEach((node, i) => {
-      const source = node.source;
-      const t = time + i * 1;
-      const l = Math.sin(t) * 0.5 + 0.5;
-      source.translation[2] = lerp(1, kDrawerSize[2] * 0.8, l);
-    });
-  }
-```
-
-Let's make a render loop. We'll make it request an animation frame only if we
-haven't already requested one and no frame has yet rendered.
-
-```js
-+  // request render if not already requested.
-+  let renderRequestId;
-+  function requestRender() {
-+    if (!renderRequestId) {
-+      renderRequestId = requestAnimationFrame(render);
-+    }
-+  }
-
-  function render() {
-+    renderRequestId = undefined;
-    ...
-
-  }
-```
-
-And we need to update the places that used to call `render` to call
-`requestRender`.
-
-```js
-  const gui = new GUI();
--  gui.onChange(render);
-+  gui.onChange(requestRender);
-  gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
-
-  ...
-
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
-      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-      // re-render
--      render();
-+      requestRender();
+fn animate(time: f64, scene: &mut SceneGraph, anim_nodes: &[NodeNdx]) {
+    for (i, &node) in anim_nodes.iter().enumerate() {
+        let source = scene.nodes[node].source.as_mut().unwrap();
+        let t = time + i as f64 * 1.0;
+        let l = (t.sin() * 0.5 + 0.5) as f32;
+        source.translation[2] = lerp(1.0, K_DRAWER_SIZE[2] * 0.8, l);
     }
-  });
-  observer.observe(canvas);
+}
 ```
 
-Finally lets setup some code to let us turn the animation on/off
+The JavaScript version made a demand-driven render loop with a
+`requestRender` function that requested an animation frame only if one
+hadn't already been requested, and every place that used to call `render`
+called `requestRender` instead. Our `wgpu_fun` helper offers two render
+modes and its `Once` mode can't restart itself from inside the frame
+callback, so we take the simpler path and switch the example to
+`RenderMode::Continuous`, which renders every frame like the browser's
+`requestAnimationFrame` loop.
+
+```rust
+-    app.run(RenderMode::Once, move |frame: &Frame| {
++    app.run(RenderMode::Continuous, move |frame: &Frame| {
+```
+
+Finally lets setup some code to let us turn the animation on/off. On the
+page's JavaScript side we add a checkbox that disables the TRS sliders
+while animating
 
 ```js
   const settings = {
@@ -724,52 +976,55 @@ Finally lets setup some code to let us turn the animation on/off
   };
 
   const gui = new GUI();
-  gui.onChange(requestRender);
-  gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
+  gui.add(settings, 'cameraRotation', cameraRadToDegOptions)
+     .onChange(v => wasm.set_setting_num('cameraRotation', v));
 +  gui.add(settings, 'animate').onChange(v => {
 +    trsFolder.enable(!v);
++    wasm.set_setting_bool('animate', v);
 +  });
   gui.add(settings, 'showMeshNodes').onChange(showMeshNodes);
   gui.add(settings, 'showAllTRS').onChange(showTRS);
+```
 
-  ...
+and in the Rust render code
 
-+  let then;
-+  let time = 0;
-+  let wasRunning = false;
-  function render() {
-    renderRequestId = undefined;
+```rust
++    // clock for the animation; it only advances while animating
++    let mut then = 0.0f64;
++    let mut time = 0.0f64;
++    let mut was_running = false;
 
-  ...
+    app.run(RenderMode::Continuous, move |frame: &Frame| {
 
-+    const isRunning = settings.animate;
-+    const now = performance.now() * 0.001;
-+    const deltaTime = wasRunning ? now - then : 0;
-+    then = now;
+    ...
+
++        // The animation clock only advances while "animate" is checked.
++        let settings_animate = wgpu_fun::setting_bool("animate", false);
++        let is_running = settings_animate;
++        let now = frame.time;
++        let delta_time = if was_running { now - then } else { 0.0 };
++        then = now;
 +
-+    if (isRunning) {
-+      time += deltaTime;
-+    }
-+    wasRunning = isRunning;
++        if is_running {
++            time += delta_time;
++        }
++        was_running = is_running;
 +
-+    if (settings.animate) {
-+      animate(time);
-+      trs.updateDisplay();
-+      requestRender();
-+    }
-  }
++        if settings_animate {
++            animate(time, &mut scene, &anim_nodes);
++        }
 ```
 
 A complication above is that we'd prefer to only run the clock if "animate" is
-checked. So we check if it `wasRunning` last frame. If not then we set
-`deltaTime` to 0. That way the clock won't jump forward the amount of time we
+checked. So we check if it `was_running` last frame. If not then we set
+`delta_time` to 0. That way the clock won't jump forward the amount of time we
 were not animating.
 
 We disable the translation, rotation, scale controls if we're animating.
-
-Finally, if `settings.animate` is set we request another animation frame. The
-gui code will already call `requestRender` on any change so it will start a
-render, see that `settings.animate` is true, and request another frame.
+One small difference from the JavaScript version: it called
+`trsFolder.updateDisplay()` every animated frame so the sliders followed
+the animation. Our sliders live on the page and can't see the values the
+Rust side is animating, so they simply stay put while the animation runs.
 
 {{{example url="../webgpu-scene-graphs-file-cabinets-w-animation.html"}}}
 
@@ -824,29 +1079,29 @@ could do this by adding more nodes in the scene graph or by applying it in each
 '-mesh' node but it would be less cluttered to just do it in the vertices
 themselves.
 
-```js
-function createCubeVertices() {
-  const positions = [
-    // left
--    0, 0,  0,
--    0, 0, -1,
--    0, 1,  0,
--    0, 1, -1,
-+   -0.5, 0,  0.5,
-+   -0.5, 0, -0.5,
-+   -0.5, 1,  0.5,
-+   -0.5, 1, -0.5,
+```rust
+fn create_cube_vertices() -> (Vec<f32>, u32) {
+    let positions: Vec<f32> = vec![
+        // left
+-        0.0, 0.0,  0.0,
+-        0.0, 0.0, -1.0,
+-        0.0, 1.0,  0.0,
+-        0.0, 1.0, -1.0,
++        -0.5, 0.0,  0.5,
++        -0.5, 0.0, -0.5,
++        -0.5, 1.0,  0.5,
++        -0.5, 1.0, -0.5,
 
-    // right
--    1, 0,  0,
--    1, 0, -1,
--    1, 1,  0,
--    1, 1, -1,
-+    0.5, 0,  0.5,
-+    0.5, 0, -0.5,
-+    0.5, 1,  0.5,
-+    0.5, 1, -0.5,
-  ];
+        // right
+-        1.0, 0.0,  0.0,
+-        1.0, 0.0, -1.0,
+-        1.0, 1.0,  0.0,
+-        1.0, 1.0, -1.0,
++         0.5, 0.0,  0.5,
++         0.5, 0.0, -0.5,
++         0.5, 1.0,  0.5,
++         0.5, 1.0, -0.5,
+    ];
 
   ...
 ```
@@ -855,51 +1110,89 @@ Now let's make the scene graph. We delete all the code
 related to creating the file cabinets scene graph and replace it
 with this.
 
-```js
-+  const kWhite = [1, 1, 1, 1];
-+  function addFinger(name, parent, segments, segmentHeight, trs) {
-+    const nodes = [];
-+    const baseName = name;
-+    for (let i = 0; i < segments; ++i) {
-+      const node = addTRSSceneGraphNode(name, parent, trs);
-+      nodes.push(node);
-+      const meshNode = addTRSSceneGraphNode(`${name}-mesh`, node, { scale: [10, segmentHeight, 10] });
-+      addMesh(meshNode, cubeVertices, kWhite);
-+      parent = node;
-+      name = `${baseName}-${i + 1}`;
-+      trs = {
-+        translation: [0, segmentHeight, 0],
-+        rotation: [degToRad(15), 0, 0],
-+      };
+```rust
++const K_WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
++
++fn add_finger(
++    scene: &mut SceneGraph,
++    meshes: &mut Vec<Mesh>,
++    name: &str,
++    parent: NodeNdx,
++    segments: usize,
++    segment_height: f32,
++    trs: TRS,
++) -> Vec<NodeNdx> {
++    let mut nodes = Vec::new();
++    let base_name = name;
++    let mut name = name.to_string();
++    let mut parent = parent;
++    let mut trs = trs;
++    for i in 0..segments {
++        let node = add_trs_scene_graph_node(scene, &name, Some(parent), trs);
++        nodes.push(node);
++        let mesh_node = add_trs_scene_graph_node(
++            scene,
++            &format!("{name}-mesh"),
++            Some(node),
++            TRS {
++                scale: [10.0, segment_height, 10.0],
++                ..Default::default()
++            },
++        );
++        add_mesh(meshes, mesh_node, K_CUBE_VERTICES, K_WHITE);
++        parent = node;
++        name = format!("{base_name}-{}", i + 1);
++        trs = TRS {
++            translation: [0.0, segment_height, 0.0],
++            rotation: [15.0f32.to_radians(), 0.0, 0.0],
++            ..Default::default()
++        };
 +    }
-+    return nodes;
-+  }
++    nodes
++}
 
-  const root = new SceneGraphNode('root');
-+  const wrist = addTRSSceneGraphNode('wrist', root);
-+  const palm = addTRSSceneGraphNode('palm', wrist, { translation: [0, 100, 0] });
-+  const palmMesh = addTRSSceneGraphNode('palm-mesh', wrist, { scale: [100, 100, 10] });
-+  addMesh(palmMesh, cubeVertices, kWhite);
-+  const rotation = [degToRad(15), 0, 0];
-+  const animNodes = [
-+    wrist,
-+    palm,
-+    ...addFinger('thumb',         palm, 2, 20, { translation: [-50, 0, 0], rotation }),
-+    ...addFinger('index finger',  palm, 3, 30, { translation: [-25, 0, 0], rotation }),
-+    ...addFinger('middle finger', palm, 3, 35, { translation: [ -0, 0, 0], rotation }),
-+    ...addFinger('ring finger',   palm, 3, 33, { translation: [ 25, 0, 0], rotation }),
-+    ...addFinger('pinky',         palm, 3, 25, { translation: [ 45, 0, 0], rotation }),
-+  ];
+    let root = scene.add_node("root", None);
++    let wrist = add_trs_scene_graph_node(&mut scene, "wrist", Some(root), TRS::default());
++    let palm = add_trs_scene_graph_node(
++        &mut scene,
++        "palm",
++        Some(wrist),
++        TRS {
++            translation: [0.0, 100.0, 0.0],
++            ..Default::default()
++        },
++    );
++    let palm_mesh = add_trs_scene_graph_node(
++        &mut scene,
++        "palm-mesh",
++        Some(wrist),
++        TRS {
++            scale: [100.0, 100.0, 10.0],
++            ..Default::default()
++        },
++    );
++    add_mesh(&mut meshes, palm_mesh, K_CUBE_VERTICES, K_WHITE);
++    let rotation = [15.0f32.to_radians(), 0.0, 0.0];
++    let mut anim_nodes: Vec<NodeNdx> = vec![
++        wrist,
++        palm,
++    ];
++    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "thumb",         palm, 2, 20.0, TRS { translation: [-50.0, 0.0, 0.0], rotation, ..Default::default() }));
++    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "index finger",  palm, 3, 30.0, TRS { translation: [-25.0, 0.0, 0.0], rotation, ..Default::default() }));
++    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "middle finger", palm, 3, 35.0, TRS { translation: [ -0.0, 0.0, 0.0], rotation, ..Default::default() }));
++    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "ring finger",   palm, 3, 33.0, TRS { translation: [ 25.0, 0.0, 0.0], rotation, ..Default::default() }));
++    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "pinky",         palm, 3, 25.0, TRS { translation: [ 45.0, 0.0, 0.0], rotation, ..Default::default() }));
 ```
 
 We create a wrist, to which we attach a palm and a palm-mesh. To the palm we attach 5 fingers
-using `addFinger`. Add finger adds the segments of a finger, each a certain length.
+using `add_finger`. Add finger adds the segments of a finger, each a certain length.
 
 > Yes, this is not even remotely correct for a human hand 😂
 
-Where as for the file cabinets we only really cared about `translation z`, the most
-important transformation for the hand is `rotation x` so let's adjust which controls
-are shown by default
+The example page's mirror of the scene graph gets the same update, and where
+as for the file cabinets we only really cared about `translation z`, the most
+important transformation for the hand is `rotation x` so let's adjust which
+controls are shown by default
 
 ```js
 -  const alwaysShow = new Set([0, 1, 2]);
@@ -914,29 +1207,29 @@ are shown by default
 
 The animation for the hand needs to rotate x instead of translate z.
 
-```js
-  function animate(time) {
-    animNodes.forEach((node, i) => {
-      const source = node.source;
--      const t = time + i * 1;
-+      const t = time + i * 0.1;
-      const l = Math.sin(t) * 0.5 + 0.5;
--      source.translation[2] = lerp(1, kDrawerSize[2] * 0.8, l);
-+      source.rotation[0] = lerp(0, Math.PI * 0.25, l);
-    });
-  }
+```rust
+fn animate(time: f64, scene: &mut SceneGraph, anim_nodes: &[NodeNdx]) {
+    for (i, &node) in anim_nodes.iter().enumerate() {
+        let source = scene.nodes[node].source.as_mut().unwrap();
+-        let t = time + i as f64 * 1.0;
++        let t = time + i as f64 * 0.1;
+        let l = (t.sin() * 0.5 + 0.5) as f32;
+-        source.translation[2] = lerp(1.0, K_DRAWER_SIZE[2] * 0.8, l);
++        source.rotation[0] = lerp(0.0, std::f32::consts::PI * 0.25, l);
+    }
+}
 ```
 
 Finally, ket's adjust the camera slightly.
 
-```js
+```rust
     // Compute a camera matrix.
-    const cameraMatrix = mat4.identity();
--    mat4.translate(cameraMatrix, [120, 100, 0], cameraMatrix);
-+    mat4.translate(cameraMatrix, [100, 100, 0], cameraMatrix);
-    mat4.rotateY(cameraMatrix, settings.cameraRotation, cameraMatrix);
--    mat4.translate(cameraMatrix, [60, 0, 300], cameraMatrix);
-+    mat4.translate(cameraMatrix, [100, 0, 300], cameraMatrix);
+    let mut camera_matrix = m4::identity();
+-    camera_matrix = m4::translate(&camera_matrix, [120.0, 100.0, 0.0]);
++    camera_matrix = m4::translate(&camera_matrix, [0.0, 100.0, 0.0]);
+    camera_matrix = m4::rotate_y(&camera_matrix, camera_rotation);
+-    camera_matrix = m4::translate(&camera_matrix, [60.0, 0.0, 300.0]);
++    camera_matrix = m4::translate(&camera_matrix, [100.0, 0.0, 300.0]);
 ```
 
 {{{example url="../webgpu-scene-graphs-hand.html"}}}
@@ -953,30 +1246,23 @@ So, to shoot a from the index finger we need to know the node for the
 tip of the finger.
 
 Many scene graph APIs have functions to find nodes by name. Let's add
-one to ours.
+one to ours. Like `update_world_matrix` it recurses down from a node.
 
-```js
-class SceneGraphNode {
-  constructor(name, source) {
-    this.name = name;
-    this.children = [];
-    this.localMatrix = mat4.identity();
-    this.worldMatrix = mat4.identity();
-    this.source = source;
-  }
+```rust
+impl SceneGraph {
+    ...
 
-+  find(name) {
-+    if (this.name === name) {
-+      return this;
++    fn find(&self, node: NodeNdx, name: &str) -> Option<NodeNdx> {
++        if self.nodes[node].name == name {
++            return Some(node);
++        }
++        for &child in &self.nodes[node].children {
++            if let Some(found) = self.find(child, name) {
++                return Some(found);
++            }
++        }
++        None
 +    }
-+    for (const child of this.children) {
-+      const found = child.find(name);
-+      if (found) {
-+        return found;
-+      }
-+    }
-+    return undefined;
-+  }
 
   ...
 }
@@ -988,62 +1274,115 @@ the point at which it rotates, not the tip. So, lets add another node
 as a child of that last index finger segment that actually does represent
 the tip.
 
-```js
-  const root = new SceneGraphNode('root');
-  const wrist = addTRSSceneGraphNode('wrist', root);
-  const palm = addTRSSceneGraphNode('palm', wrist, { translation: [0, 100, 0] });
-  const palmMesh = addTRSSceneGraphNode('palm-mesh', wrist, { scale: [100, 100, 10] });
-  addMesh(palmMesh, cubeVertices, kWhite);
-  const rotation = [degToRad(15), 0, 0];
-  const animNodes = [
-    wrist,
-    palm,
-    ...addFinger('thumb',         palm, 2, 20, { translation: [-50, 0, 0], rotation }),
-    ...addFinger('index finger',  palm, 3, 30, { translation: [-25, 0, 0], rotation }),
-    ...addFinger('middle finger', palm, 3, 35, { translation: [ -0, 0, 0], rotation }),
-    ...addFinger('ring finger',   palm, 3, 33, { translation: [ 25, 0, 0], rotation }),
-    ...addFinger('pinky',         palm, 3, 25, { translation: [ 45, 0, 0], rotation }),
-  ];
-+  const fingerTip = addTRSSceneGraphNode('finger-tip', root.find('index finger-2'), { translation: [0, 30, 0] });
+```rust
+    anim_nodes.extend(add_finger(&mut scene, &mut meshes, "pinky",         palm, 3, 25.0, TRS { translation: [ 45.0, 0.0, 0.0], rotation, ..Default::default() }));
++    let index_finger_2 = scene.find(root, "index finger-2");
++    let finger_tip = add_trs_scene_graph_node(
++        &mut scene,
++        "finger-tip",
++        index_finger_2,
++        TRS {
++            translation: [0.0, 30.0, 0.0],
++            ..Default::default()
++        },
++    );
 ```
 
 Now we need a projectile. We'll use the cone we created for ornaments
 in [the previous article](webgpu-matrix-stacks.html).
 
-```js
-  const cubeVertices = createVertices(createCubeVertices(), 'cube');
-+  const shotVertices = createVertices(createConeVertices({
-+    radius: 10,
-+    height: 20,
-+  }), 'shot');
+```rust
+    let vertex_sets = vec![
+        create_vertices(&app.device, &app.queue, create_cube_vertices(), "cube"),
++        create_vertices(
++            &app.device,
++            &app.queue,
++            create_cone_vertices(
++                10.0, // radius
++                20.0, // height
++                6,    // subdivisions
++            ),
++            "shot",
++        ),
+    ];
+
+  const K_CUBE_VERTICES: usize = 0;
++const K_SHOT_VERTICES: usize = 1;
 ```
 
-Now let's add some code to shoot projectiles. 
+Now let's add some code to shoot projectiles. Each shot keeps its node, a
+velocity, and an end time.
 
-```js
-  const kShotVelocity = 100; // units per second
-  const shots = [];
-  let shotId = 0;
-  function fireShot() {
-    const node = new SceneGraphNode(`shot-${shotId++}`);
-    node.setParent(root);
-    mat4.translate(fingerTip.worldMatrix, [0, 20, 0], node.localMatrix);
-    const mesh = addMesh(node, shotVertices, kWhite);
-    const velocity = vec3.mulScalar(
-      vec3.normalize(vec3.getAxis(fingerTip.worldMatrix, 1)),
-      kShotVelocity);
-    shots.push({
-      node,
-      mesh,
-      velocity,
-      endTime: performance.now() * 0.001 + 5,
-    });
-    requestRender();
-  }
+```rust
++const K_SHOT_VELOCITY: f32 = 100.0; // units per second
++
++struct Shot {
++    node: NodeNdx,
++    velocity: [f32; 3],
++    end_time: f64,
++}
 ```
 
-This code adds a "shot" to the `shots` array. This includes a `node`,
-a `mesh`, a `velocity`, and an `endTime`.
+On the page, the Fire! button just bumps a counter setting
+
+```js
++  let fireCount = 0;
++  gui.addButton('Fire!', () => wasm.set_setting_num('fire', ++fireCount));
+```
+
+In JavaScript `fireShot` ran when the button was clicked, between frames.
+Here we notice the counter changed inside the frame callback. We check it
+after the world matrices were updated, so the finger tip's world matrix is
+current, and we update the new node's world matrix ourselves since the
+graph-wide update already ran.
+
+```rust
++    // the shots in flight, and the value of the page's "fire" counter the
++    // last time we looked (the Fire! button bumps it)
++    let mut shots: Vec<Shot> = Vec::new();
++    let mut shot_id = 0;
++    let mut last_fire = 0.0f64;
+
+    app.run(RenderMode::Continuous, move |frame: &Frame| {
+
+    ...
+
+            scene.update_world_matrix(root);
+
++            let fire = wgpu_fun::setting_f64("fire", 0.0);
++            if fire != last_fire {
++                last_fire = fire;
++                // fireShot
++                let node = scene.add_node(&format!("shot-{shot_id}"), None);
++                shot_id += 1;
++                scene.set_parent(node, Some(root));
++                scene.nodes[node].local_matrix = m4::translate(
++                    &scene.nodes[finger_tip].world_matrix,
++                    [0.0, 20.0, 0.0],
++                );
++                add_mesh(&mut meshes, node, K_SHOT_VERTICES, K_WHITE);
++                let velocity = vec3::mul_scalar(
++                    vec3::normalize(vec3::get_axis(
++                        &scene.nodes[finger_tip].world_matrix,
++                        1,
++                    )),
++                    K_SHOT_VELOCITY,
++                );
++                shots.push(Shot {
++                    node,
++                    velocity,
++                    end_time: now + 5.0,
++                });
++                scene.update_world_matrix(node);
++            }
+
+            for mesh in &meshes {
+                draw_mesh(&mut ctx, mesh, &scene, &vertex_sets);
+            }
+```
+
+This code adds a `Shot` to the `shots` list. This includes a `node`,
+a `velocity`, and an `end_time`.
 
 The `node` is positioned 20 units out on the Y axis. This is because the
 code to make a cone vertices makes the tip 20 units out so we need to
@@ -1051,133 +1390,108 @@ compensate. We could go modify the cone vertex code instead but this was
 less work 😅.  Notice we are not adding a `TRS` source for this node.
 We will update the local matrix directly.
 
-`mesh` is the mesh vertices. We need this so we can remove the shot's
-mesh from the list of things to render when the shot is done.
-
-`velocity` is the direction and speed to move the shot. We call `vec3.getAxis`
+`velocity` is the direction and speed to move the shot. We call `vec3::get_axis`
 to get the y axis as the direction to shoot as that's the axis the fingers point. As we covered in
 [the article on 3d math](webgpu-orthographic-projection.html), the y
-axis is the 2nd row of the matrix or elements 4,5,6 so `vec3.getAxis`
+axis is the 2nd row of the matrix or elements 4,5,6 so `vec3::get_axis`
 can be implemented like this
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-+  // 0 = x, 1 = y, 2 = z;
-+  getAxis(m, axis, dst) {
-+    dst = dst || new Float32Array(3);
++    // 0 = x, 1 = y, 2 = z;
++    pub fn get_axis(m: &[f32; 16], axis: usize) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    const offset = axis * 4;
-+    dst[0] = m[offset + 0];
-+    dst[1] = m[offset + 1];
-+    dst[2] = m[offset + 2];
++        let offset = axis * 4;
++        dst[0] = m[offset + 0];
++        dst[1] = m[offset + 1];
++        dst[2] = m[offset + 2];
 +
-+    return dst;
-+  },
++        dst
++    }
   ...
-};
+}
 ```
 
 Or code gets that y axis and normalizes that direction and then uses
-`vec3.mulScalar` to get it to our desired velocity.
+`vec3::mul_scalar` to get it to our desired velocity.
 
-We need to supply `vec3.mulScalar`
+We need to supply `vec3::mul_scalar`
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-  mulScalar(a, scale, dst) {
-    dst = dst || new Float32Array(3);
-
-    dst[0] = a[0] * scale;
-    dst[1] = a[1] * scale;
-    dst[2] = a[2] * scale;
-
-    return dst;
-  },  ...
-};
++    pub fn mul_scalar(a: [f32; 3], scale: f32) -> [f32; 3] {
++        let mut dst = [0.0; 3];
++
++        dst[0] = a[0] * scale;
++        dst[1] = a[1] * scale;
++        dst[2] = a[2] * scale;
++
++        dst
++    }
+  ...
+}
 ```
 
-Finally the `endTime` is some time in the future to remove the shot.
+Finally the `end_time` is some time in the future to remove the shot.
 
-With that, let's add some code to move the projectiles.
+With that, let's add some code to move the projectiles. It goes at the very
+end of the frame callback, after submitting the commands, just like the
+JavaScript version called `processShots` at the end of `render`.
 
-```js
-  function processShots(now, deltaTime) {
-    if (shots.length > 0) {
-      requestRender();
-      while (shots.length && shots[0].endTime <= now) {
-        const shot = shots.shift();
-        shot.node.setParent(null);
-        removeMesh(shot.mesh);
-      }
-      for (const shot of shots) {
-        const v = vec3.mulScalar(shot.velocity, deltaTime);
-        mat4.multiply(mat4.translation(v), shot.node.localMatrix, shot.node.localMatrix);
-      }
-    }
-  }
+```rust
+        let command_buffer = encoder.finish();
+        frame.queue.submit([command_buffer]);
+
++        // processShots
++        if !shots.is_empty() {
++            while !shots.is_empty() && shots[0].end_time <= now {
++                let shot = shots.remove(0);
++                scene.set_parent(shot.node, None);
++                remove_mesh(&mut meshes, shot.node);
++            }
++            for shot in shots.iter() {
++                let v = vec3::mul_scalar(shot.velocity, delta_time as f32);
++                scene.nodes[shot.node].local_matrix =
++                    m4::multiply(&m4::translation(v), &scene.nodes[shot.node].local_matrix);
++            }
++        }
+    });
 ```
 
 That code checks if the shot's time has expired. If so it removes the shot's node
 from the scene graph and it removes the mesh from the list of things to render.
 
-Otherwise, for each shot in the array, it adds the velocity to the shot's matrix,
-scaling it by the `deltaTime` so it's framerate independent.
+Otherwise, for each shot in the list, it adds the velocity to the shot's matrix,
+scaling it by the `delta_time` so it's framerate independent.
 
-We need to supply `removeMesh`
+We need to supply `remove_mesh`. The JavaScript version removed a mesh by
+object identity; each of our shot nodes has exactly one mesh so we can
+remove it by its node index.
 
-```js
-  function removeMesh(mesh) {
-    meshes.splice(meshes.indexOf(mesh), 1);
-  }
+```rust
++// The JS version removed a mesh by object identity; each of our shot nodes
++// has exactly one mesh so we can remove it by its node index.
++fn remove_mesh(meshes: &mut Vec<Mesh>, node: NodeNdx) {
++    if let Some(ndx) = meshes.iter().position(|mesh| mesh.node == node) {
++        meshes.remove(ndx);
++    }
++}
 ```
 
-Now we need to add a button to shoot with as well as actually call
-this processing function.
+Lastly, we want the animation clock to keep running while there are shots
+in flight so they keep moving even when "animate" is off.
 
-```js
-  const gui = new GUI();
-  gui.onChange(requestRender);
-  gui.add(settings, 'cameraRotation', cameraRadToDegOptions);
-  gui.add(settings, 'animate').onChange(v => {
-    trsFolder.enable(!v);
-  });
-  gui.add(settings, 'showMeshNodes').onChange(showMeshNodes);
-  gui.add(settings, 'showAllTRS').onChange(showTRS);
-+  gui.addButton('Fire!', fireShot);
-
-  ...
-
-  function render() {
-    ...
-
--      const isRunning = settings.animate;
-+      const isRunning = settings.animate || shots.length;
-      const now = performance.now() * 0.001;
-      const deltaTime = wasRunning ? now - then : 0;
-      then = now;
-
-      if (isRunning) {
-        time += deltaTime;
-      }
-      wasRunning = isRunning;
-
-      if (settings.animate) {
-        animate(time);
-        updateCurrentNodeGUI();
-        requestRender();
-      }
-
-+      processShots(now, deltaTime);
-  }
+```rust
+-        let is_running = settings_animate;
++        let is_running = settings_animate || !shots.is_empty();
 ```
 
-We need to keep running if there are shots. When the 'Fire!' button is pressed
-it will add a shot. The GUI will also call `requestRender` so it will come
-through this code and call `processShots`. `processShots` calls `requestRender`
-if there are any shots and so the animation loop will continue until all shots
-are finished.
+The JavaScript version also had to `requestRender` while shots were in
+flight; since our example is `RenderMode::Continuous` that happens on its
+own.
 
 {{{example url="../webgpu-scene-graphs-hand-shoot.html"}}}
 
