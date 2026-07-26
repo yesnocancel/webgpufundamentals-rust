@@ -27,6 +27,9 @@ pub struct App {
     /// `Auto` (the default) behaves like `'opaque'`; use
     /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
     pub alpha_mode: wgpu::CompositeAlphaMode,
+    /// With `auto_resize`, divide the observed canvas size by this (the
+    /// low-res-canvas trick some lessons use, e.g. `inlineSize / 64 | 0`).
+    pub resize_divisor: u32,
     surface: wgpu::Surface<'static>,
     canvas: HtmlCanvasElement,
     max_texture_dimension: u32,
@@ -115,6 +118,7 @@ impl App {
             format,
             auto_resize: false,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            resize_divisor: 1,
             surface,
             canvas,
             max_texture_dimension,
@@ -206,8 +210,8 @@ impl App {
                         width = (rect.width() * dpr) as u32;
                         height = (rect.height() * dpr) as u32;
                     }
-                    width = width.clamp(1, app.max_texture_dimension);
-                    height = height.clamp(1, app.max_texture_dimension);
+                    width = (width / app.resize_divisor).clamp(1, app.max_texture_dimension);
+                    height = (height / app.resize_divisor).clamp(1, app.max_texture_dimension);
                     size.set((width, height));
                 }
                 // Re-render on resize; the continuous loop picks the new

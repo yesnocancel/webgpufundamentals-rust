@@ -359,7 +359,7 @@ struct VSOutput {
 
 これで、以前と同じものができましたが、すべての頂点バッファを使用し、ストレージバッファは使用していません。
 
-{{{example url="../webgpu-vertex-buffers-instanced-colors"}}}
+{{{example url="../webgpu-vertex-buffers-instanced-colors.html"}}}
 
 楽しみのために、頂点ごとに色を付ける属性を追加しましょう。まず、シェーダーを変更しましょう。
 

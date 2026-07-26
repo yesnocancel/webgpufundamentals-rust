@@ -102,7 +102,9 @@ fn generate_mips(src: Vec<u8>, src_width: u32) -> Vec<Mip> {
 }
 
 async fn run() {
-    let app = App::new("WebGPU Simple Textured Quad Mipmap").await;
+    let mut app = App::new("WebGPU Simple Textured Quad Mipmap").await;
+    app.auto_resize = true;
+    app.resize_divisor = 64;
 
     let module = app
         .device

@@ -448,7 +448,7 @@ the `buffers` array in the pipeline we created above.
 With that we have the same thing we had before, but we're using all vertex buffers
 and no storage buffers.
 
-{{{example url="../webgpu-vertex-buffers-instanced-colors"}}}
+{{{example url="../webgpu-vertex-buffers-instanced-colors.html"}}}
 
 Just for fun, let's add another attribute for a per vertex color. First let's change the shader:
 

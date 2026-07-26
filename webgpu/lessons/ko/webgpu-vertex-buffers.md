@@ -380,7 +380,7 @@ struct VSOutput {
 
 이로써 이전과 동일한 결과를, 스토리지 버퍼 없이 정점 버퍼만을 사용해서 얻을 수 있습니다.
 
-{{{example url="../webgpu-vertex-buffers-instanced-colors"}}}
+{{{example url="../webgpu-vertex-buffers-instanced-colors.html"}}}
 
 정점별 색상을 위한 또다른 어트리뷰트를 재미로 추가해 봅시다. 먼저 셰이더를 수정합니다.
 

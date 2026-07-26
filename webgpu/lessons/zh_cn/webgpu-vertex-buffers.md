@@ -356,7 +356,7 @@ struct VSOutput {
 
 这样，我们就拥有了与之前相同的功能，但我们使用的全部是顶点缓冲区，而没有使用存储缓冲区。
 
-{{{example url="../webgpu-vertex-buffers-instanced-colors"}}}
+{{{example url="../webgpu-vertex-buffers-instanced-colors.html"}}}
 
 为了增加一些乐趣，让我们为每个顶点颜色添加第二个属性。首先，让我们更改着色器
 

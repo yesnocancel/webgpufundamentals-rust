@@ -357,7 +357,7 @@ Aquí, el primer parámetro de `setVertexBuffer` corresponde a los elementos del
 
 Con eso, tenemos lo mismo que teníamos antes, pero estamos usando todos vertex buffers y ningún storage buffer.
 
-{{{example url="../webgpu-vertex-buffers-instanced-colors"}}}
+{{{example url="../webgpu-vertex-buffers-instanced-colors.html"}}}
 
 Solo por diversión, añadamos otro atributo para un color por vértice. Primero cambiemos el shader:
 

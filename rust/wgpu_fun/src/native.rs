@@ -29,6 +29,9 @@ pub struct App {
     /// `Auto` (the default) behaves like `'opaque'`; use
     /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
     pub alpha_mode: wgpu::CompositeAlphaMode,
+    /// Browser-only low-res-canvas trick; ignored natively (surfaces must
+    /// match the window size). Kept so examples compile on both platforms.
+    pub resize_divisor: u32,
     instance: wgpu::Instance,
     title: String,
     test: Option<TestConfig>,
@@ -87,6 +90,7 @@ impl App {
             format,
             auto_resize: false,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            resize_divisor: 1,
             instance,
             title: title.to_string(),
             test,

@@ -1,7 +1,9 @@
 use wgpu_fun::{App, Frame, RenderMode};
 
 async fn run() {
-    let app = App::new("WebGPU Simple Textured Quad MinFilter").await;
+    let mut app = App::new("WebGPU Simple Textured Quad MinFilter").await;
+    app.auto_resize = true;
+    app.resize_divisor = 64;
 
     let module = app
         .device

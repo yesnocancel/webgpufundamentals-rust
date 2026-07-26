@@ -126,6 +126,25 @@ frame code reads current values from wgpu_fun's settings store:
 - `Instance::default()`; `RequestAdapterOptions::default()`.
 - `pass.draw(0..3, 0..1)` == JS `pass.draw(3)`.
 - `pass.set_bind_group(0, &bind_group, &[])` — extra `&[]` is dynamic offsets.
+- `VertexState::buffers` is `&[Option<VertexBufferLayout>]` — wrap each in
+  `Some(...)`; `step_mode` is a mandatory field (JS default `'vertex'`).
+- `set_vertex_buffer`/`set_index_buffer` take `buffer.slice(..)`, not the
+  buffer.
+- JS `{ binding: 0, resource: buffer }` → `wgpu::BindGroupEntry { binding: 0,
+  resource: buffer.as_entire_binding() }`.
+- Pipeline-overridable constants: `PipelineCompilationOptions { constants:
+  &[("name", 1.0)], ..Default::default() }` — a slice of `(&str, f64)` pairs
+  (not a HashMap); `@id(123)` constants are keyed by the decimal string
+  `"123"`.
+- Per-object labels: `label: Some(&format!("thing {i}"))` works fine.
+
+## wgpu_fun App knobs (mirror of JS page behaviors)
+
+- `app.auto_resize = true` — the ResizeObserver canvas-resolution behavior.
+- `app.resize_divisor = 64` — the low-res-canvas trick
+  (`inlineSize / 64 | 0`); browser-only, ignored natively.
+- `app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied` — JS
+  `alphaMode: 'premultiplied'`.
 
 ## Verifying examples (required — "all examples work")
 
