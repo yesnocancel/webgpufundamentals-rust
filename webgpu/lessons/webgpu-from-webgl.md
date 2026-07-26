@@ -241,8 +241,8 @@ void main() {
 {{/escapehtml}}</code></pre>
 </div><div>
 <div>WGSL</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-const shaderSrc = `
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+let shader_src = r#"
 struct VSUniforms {
   worldViewProjection: mat4x4f,
   worldInverseTranspose: mat4x4f,
@@ -285,7 +285,7 @@ fn myFSMain(v: MyVSOutput) -> @location(0) vec4f {
   var l = dot(a_normal, fsUniforms.lightDirection) * 0.5 + 0.5;
   return vec4f(diffuseColor.rgb * l, diffuseColor.a);
 }
-`;
+"#;
 {{/escapehtml}}</code></pre></div></div>
 
 Notice in many ways they aren't all that different. The core parts of each
@@ -432,19 +432,30 @@ main();
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-async function main() {
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    fail('need a browser that supports WebGPU');
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+async fn run() {
+  let instance = wgpu::Instance::default();
+  let Ok(adapter) = instance
+      .request_adapter(&wgpu::RequestAdapterOptions::default())
+      .await
+  else {
+    fail("need a browser that supports WebGPU");
     return;
-  }
+  };
+  let Ok((device, queue)) = adapter
+      .request_device(&wgpu::DeviceDescriptor::default())
+      .await
+  else {
+    fail("need a browser that supports WebGPU");
+    return;
+  };
 
 ...
 }
 
-main();
+fn main() {
+  wgpu_fun::start(run());
+}
 {{/escapehtml}}</code></pre>
   </div>
 </div>
@@ -454,6 +465,13 @@ an instance of the API on that GPU.
 
 Probably the biggest difference here is that getting the API in WebGPU
 is asynchronous.
+
+In the working examples on this site this setup lives inside the small `App`
+helper covered in [the fundamentals article](webgpu-fundamentals.html):
+`App::new` requests the adapter and device and exposes them as `app.device`,
+`app.queue`, and the canvas texture format as `app.format`. To keep the
+side-by-side comparisons easy to read, the snippets below refer to them as
+plain `device`, `queue`, and `format`.
 
 ### Creating Buffers
 
@@ -481,34 +499,42 @@ const indicesBuffer = createBuffer(gl, indices, gl.ELEMENT_ARRAY_BUFFER);
   </div>
   <div>
     <div>WebGPU</div>
-<pre class="prettyprint lang-javascript"><code>{{#escapehtml}}
-function createBuffer(device, data, usage) {
-  const buffer = device.createBuffer({
-    size: data.byteLength,
-    usage,
-    mappedAtCreation: true,
+<pre class="prettyprint lang-rust"><code>{{#escapehtml}}
+fn create_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    data: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+  let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: data.len() as u64,
+    usage: usage | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
   });
-  const dst = new data.constructor(buffer.getMappedRange());
-  dst.set(data);
-  buffer.unmap();
-  return buffer;
+  queue.write_buffer(&buffer, 0, data);
+  buffer
 }
 
-const positions = new Float32Array([1, 1, -1, 1, 1, 1, 1, -1, 1, 1, -1, -1, -1, 1, 1, -1, 1, -1, -1, -1, -1, -1, -1, 1, -1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, -1, -1, -1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, 1, 1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, -1, 1, 1, -1, 1, -1, -1, -1, -1, -1]);
-const normals   = new Float32Array([1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1]);
-const texcoords = new Float32Array([1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1]);
-const indices   = new Uint16Array([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23]);
+let positions: Vec<f32> = vec![1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
+let normals: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0];
+let texcoords: Vec<f32> = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+let indices: Vec<u16> = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23];
 
-const positionBuffer = createBuffer(device, positions, GPUBufferUsage.VERTEX);
-const normalBuffer = createBuffer(device, normals, GPUBufferUsage.VERTEX);
-const texcoordBuffer = createBuffer(device, texcoords, GPUBufferUsage.VERTEX);
-const indicesBuffer = createBuffer(device, indices, GPUBufferUsage.INDEX);
+let position_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&positions), wgpu::BufferUsages::VERTEX);
+let normal_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&normals), wgpu::BufferUsages::VERTEX);
+let texcoord_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&texcoords), wgpu::BufferUsages::VERTEX);
+let indices_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX);
 {{/escapehtml}}</code></pre>
   </div>
 </div>
 
 You can see, at a glance, these are not too different. You call different
-functions, but otherwise it's pretty similar.
+functions, but otherwise it's pretty similar. One WebGPU specific detail is
+the usage flags: we have to say up front what a buffer will be used for.
+[`bytemuck::cast_slice`](https://docs.rs/bytemuck) reinterprets our `f32`/`u16`
+slices as the raw bytes WebGPU wants, the same role the typed arrays play in
+JavaScript.
 
 ### Creating a Texture
 
