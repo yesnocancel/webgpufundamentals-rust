@@ -16,7 +16,7 @@ worth understanding what it has to do. The code snippets showing browser APIs
 below are JavaScript, since they are about the browser's own APIs; wgpu_fun's
 web backend implements the final solution from this article with Rust DOM
 bindings in
-[web.rs](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/web.rs).
+[web.rs](https://github.com/yesnocancel/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/web.rs).
 
 Every canvas has 2 sizes. The size of its *drawing buffer*. 
 This is how many pixels are in the canvas itself.

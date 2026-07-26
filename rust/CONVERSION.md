@@ -192,4 +192,4 @@ WGPU_FUN_TEST=1 WGPU_FUN_TEST_OUT=test_frames/<name>.png ./target/debug/<name>
 - JS API names in prose → wgpu names (`createBuffer` → `create_buffer`,
   `GPUBufferUsage.STORAGE` → `BufferUsages::STORAGE`, etc.).
 - The site templating uses `{{...}}`; never introduce stray `{{`.
-- `REPO_OWNER` is a placeholder for the GitHub owner, replaced at publish.
+- `yesnocancel` is a placeholder for the GitHub owner, replaced at publish.

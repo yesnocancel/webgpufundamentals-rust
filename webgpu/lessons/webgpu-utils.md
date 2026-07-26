@@ -173,7 +173,7 @@ rules are exactly what those articles teach.
 ## What the examples' own helper does
 
 Every example on this site uses the tiny
-[`wgpu_fun`](https://github.com/REPO_OWNER/webgpufundamentals-rust/tree/main/rust/wgpu_fun)
+[`wgpu_fun`](https://github.com/yesnocancel/webgpufundamentals-rust/tree/main/rust/wgpu_fun)
 crate for window/canvas setup, device creation, the render loop, and the
 settings plumbing for the GUI panels — all of it explained in
 [the first article](webgpu-fundamentals.html). It's not a library to build

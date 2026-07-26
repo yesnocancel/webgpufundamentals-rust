@@ -672,7 +672,7 @@ the CPU: same 20 nested squares, each rotated, scaled 0.85x and offset from
 the previous, with the same cycling hues. Instead of canvas 2d transforms we
 keep a small affine transform of our own and rasterize each square by
 inverse-transforming pixels (see `update_2d_canvas` in
-[the example's source](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/examples/src/bin/webgpu-simple-textured-quad-import-canvas.rs)):
+[the example's source](https://github.com/yesnocancel/webgpufundamentals-rust/blob/main/rust/examples/src/bin/webgpu-simple-textured-quad-import-canvas.rs)):
 
 ```rust
 +  const SIZE: usize = 256;

@@ -256,7 +256,7 @@ a render loop (or, in the browser, attaching to a `<canvas>` and hooking up
 with WebGPU, but it's 100+ lines of code that every graphical example needs.
 
 So the examples on this site share one tiny helper crate,
-[`wgpu_fun`](https://github.com/REPO_OWNER/webgpufundamentals-rust/tree/main/rust/wgpu_fun),
+[`wgpu_fun`](https://github.com/yesnocancel/webgpufundamentals-rust/tree/main/rust/wgpu_fun),
 that does exactly four jobs and nothing else:
 
 * opens a window (native, via [winit](https://crates.io/crates/winit)) or
@@ -987,7 +987,7 @@ In the JavaScript API this is `await resultBuffer.mapAsync(GPUMapMode.READ)`.
 wgpu's raw `map_async` instead takes a callback, and on native we also have to
 tell the device to make progress with `device.poll(...)` (the browser does
 that part for us). `wgpu_fun::map_async` is a
-[12-line helper](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/lib.rs)
+[12-line helper](https://github.com/yesnocancel/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/lib.rs)
 that wraps the callback in a future so we can simply `await` it, just like the
 JavaScript version.
 
@@ -1071,7 +1071,7 @@ observer.observe(canvas);
 ```
 
 Our helper contains exactly this logic (written with Rust's DOM bindings — see
-[web.rs](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/web.rs)
+[web.rs](https://github.com/yesnocancel/webgpufundamentals-rust/blob/main/rust/wgpu_fun/src/web.rs)
 if you're curious), but it only *applies* the observed size to the canvas when
 we opt in, because sometimes — like the blocky example above — we don't want
 it to. We opt in with one line:
@@ -1127,7 +1127,7 @@ start going over actual techniques.
 
 One other thing. Every example page runs the Rust code you read in the
 article, compiled to WebAssembly. Each example links to its full Rust source,
-and you can clone [the repository]("https://github.com/REPO_OWNER/webgpufundamentals-rust")
+and you can clone [the repository]("https://github.com/yesnocancel/webgpufundamentals-rust")
 and run any of them natively with `cargo run --bin <example-name>`.
 
 <div class="webgpu_bottombar">

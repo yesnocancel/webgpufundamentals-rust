@@ -250,7 +250,7 @@ fn show_images(app: App, images: Vec<wgpu::Texture>) {
 quad at a pixel position and size, one uniform buffer and bind group per image,
 and a render pass that draws each texture one under the other. There's nothing
 new in it so we won't list it all here. You can see the whole thing in
-[the example's source](https://github.com/REPO_OWNER/webgpufundamentals-rust/blob/main/rust/examples/src/bin/webgpu-compute-shaders-histogram-javascript.rs).
+[the example's source](https://github.com/yesnocancel/webgpufundamentals-rust/blob/main/rust/examples/src/bin/webgpu-compute-shaders-histogram-javascript.rs).
 
 The JavaScript version adds some CSS so its canvases are not displayed too big
 and get a background color. `show_images` does the equivalent for us: it scales
