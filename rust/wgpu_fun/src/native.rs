@@ -38,6 +38,9 @@ pub struct App {
     /// Browser-only low-res-canvas trick; ignored natively (surfaces must
     /// match the window size). Kept so examples compile on both platforms.
     pub resize_divisor: u32,
+    /// Usage flags for the surface's textures (JS `context.configure`'s
+    /// `usage`). Defaults to RENDER_ATTACHMENT.
+    pub usage: wgpu::TextureUsages,
     instance: wgpu::Instance,
     title: String,
     test: Option<TestConfig>,
@@ -109,6 +112,7 @@ impl App {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             alpha_mode_fn: None,
             resize_divisor: 1,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             instance,
             title: title.to_string(),
             test,
@@ -152,7 +156,7 @@ impl App {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: self.usage | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
@@ -255,7 +259,7 @@ impl WinitApp {
         surface.configure(
             &self.app.device,
             &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: self.app.usage,
                 format: self.app.format,
                 color_space: wgpu::SurfaceColorSpace::Auto,
                 width: size.width,

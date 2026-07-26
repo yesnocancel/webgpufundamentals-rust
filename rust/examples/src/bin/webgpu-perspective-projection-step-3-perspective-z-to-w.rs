@@ -100,12 +100,22 @@ fn create_f_vertices() -> (Vec<f32>, u32) {
     (vertex_data, num_vertices)
 }
 
+#[rustfmt::skip]
+fn make_z_to_w_matrix(fudge_factor: f32) -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, fudge_factor,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
 mod m4 {
     #![allow(dead_code)]
 
     pub fn projection(width: f32, height: f32, depth: f32) -> [f32; 16] {
         // Note: This matrix flips the Y axis so that 0 is at the top.
-        ortho(0.0, width, height, 0.0, depth / 2.0, -depth / 2.0)
+        ortho(0.0, width, height, 0.0, depth, -depth)
     }
 
     pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [f32; 16] {
@@ -280,7 +290,7 @@ mod m4 {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Orthographic Use Ortho - Step 6").await;
+    let mut app = App::new("WebGPU Perspective - Matrix Z to W - Step 3").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -465,9 +475,9 @@ async fn run() {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
             let translation = [
-                wgpu_fun::setting_f64("translationX", 45.0) as f32,
-                wgpu_fun::setting_f64("translationY", 100.0) as f32,
-                wgpu_fun::setting_f64("translationZ", 0.0) as f32,
+                wgpu_fun::setting_f64("translationX", frame.width as f64 / 2.0 - 200.0) as f32,
+                wgpu_fun::setting_f64("translationY", frame.height as f64 / 2.0 - 75.0) as f32,
+                wgpu_fun::setting_f64("translationZ", -1000.0) as f32,
             ];
             let rotation = [
                 wgpu_fun::setting_f64("rotationX", 40.0f64.to_radians()) as f32,
@@ -475,19 +485,21 @@ async fn run() {
                 wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
             ];
             let scale = [
-                wgpu_fun::setting_f64("scaleX", 1.0) as f32,
-                wgpu_fun::setting_f64("scaleY", 1.0) as f32,
-                wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
+                wgpu_fun::setting_f64("scaleX", 3.0) as f32,
+                wgpu_fun::setting_f64("scaleY", 3.0) as f32,
+                wgpu_fun::setting_f64("scaleZ", 3.0) as f32,
             ];
+            let fudge_factor = wgpu_fun::setting_f64("fudgeFactor", 10.0) as f32;
 
-            let mut matrix_value = m4::ortho(
+            let projection = m4::ortho(
                 0.0,                   // left
                 frame.width as f32,    // right
                 frame.height as f32,   // bottom
                 0.0,                   // top
-                400.0,                 // near
-                -400.0,                // far
+                1200.0,                // near
+                -1000.0,               // far
             );
+            let mut matrix_value = m4::multiply(&make_z_to_w_matrix(fudge_factor), &projection);
             matrix_value = m4::translate(&matrix_value, translation);
             matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
             matrix_value = m4::rotate_y(&matrix_value, rotation[1]);

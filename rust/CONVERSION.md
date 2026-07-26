@@ -152,7 +152,12 @@ frame code reads current values from wgpu_fun's settings store:
 - `app.resize_divisor = 64` — the low-res-canvas trick
   (`inlineSize / 64 | 0`); browser-only, ignored natively.
 - `app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied` — JS
-  `alphaMode: 'premultiplied'`.
+  `alphaMode: 'premultiplied'` (there's also `app.alpha_mode_fn` for
+  per-frame GUI-driven changes).
+- `app.usage = TextureUsages::...` — JS `context.configure`'s `usage`.
+- `App::new_with_features(title, features)` — requests optional features if
+  the adapter supports them (JS `adapter.features.has(...)` +
+  requiredFeatures).
 
 ## Verifying examples (required — "all examples work")
 

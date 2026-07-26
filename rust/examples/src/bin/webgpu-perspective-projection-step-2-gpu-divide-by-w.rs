@@ -105,7 +105,7 @@ mod m4 {
 
     pub fn projection(width: f32, height: f32, depth: f32) -> [f32; 16] {
         // Note: This matrix flips the Y axis so that 0 is at the top.
-        ortho(0.0, width, height, 0.0, depth / 2.0, -depth / 2.0)
+        ortho(0.0, width, height, 0.0, depth, -depth)
     }
 
     pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [f32; 16] {
@@ -280,7 +280,7 @@ mod m4 {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Orthographic Use Ortho - Step 6").await;
+    let mut app = App::new("WebGPU Perspective - Fudge Factor - Step 1").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -292,6 +292,7 @@ async fn run() {
                 r#"
       struct Uniforms {
         matrix: mat4x4f,
+        fudgeFactor: f32,
       };
 
       struct Vertex {
@@ -308,7 +309,12 @@ async fn run() {
 
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
-        vsOut.position = uni.matrix * vert.position;
+        let position = uni.matrix * vert.position;
+
+        let zToDivideBy = 1.0 + position.z * uni.fudgeFactor;
+
+        vsOut.position = vec4f(position.xyz, zToDivideBy);
+
         vsOut.color = vert.color;
         return vsOut;
       }
@@ -371,8 +377,8 @@ async fn run() {
             cache: None,
         });
 
-    // matrix
-    const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
+    // matrix, fudgeFactor, padding
+    const UNIFORM_BUFFER_SIZE: u64 = (16 + 1 + 3) * 4;
     let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("uniforms"),
         size: UNIFORM_BUFFER_SIZE,
@@ -384,6 +390,7 @@ async fn run() {
 
     // offsets to the various uniform values in float32 indices
     const K_MATRIX_OFFSET: usize = 0;
+    const K_FUDGE_FACTOR_OFFSET: usize = 16;
 
     let (vertex_data, num_vertices) = create_f_vertices();
     let vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
@@ -465,9 +472,9 @@ async fn run() {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
             let translation = [
-                wgpu_fun::setting_f64("translationX", 45.0) as f32,
-                wgpu_fun::setting_f64("translationY", 100.0) as f32,
-                wgpu_fun::setting_f64("translationZ", 0.0) as f32,
+                wgpu_fun::setting_f64("translationX", frame.width as f64 / 2.0 - 200.0) as f32,
+                wgpu_fun::setting_f64("translationY", frame.height as f64 / 2.0 - 75.0) as f32,
+                wgpu_fun::setting_f64("translationZ", -1000.0) as f32,
             ];
             let rotation = [
                 wgpu_fun::setting_f64("rotationX", 40.0f64.to_radians()) as f32,
@@ -475,18 +482,19 @@ async fn run() {
                 wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
             ];
             let scale = [
-                wgpu_fun::setting_f64("scaleX", 1.0) as f32,
-                wgpu_fun::setting_f64("scaleY", 1.0) as f32,
-                wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
+                wgpu_fun::setting_f64("scaleX", 3.0) as f32,
+                wgpu_fun::setting_f64("scaleY", 3.0) as f32,
+                wgpu_fun::setting_f64("scaleZ", 3.0) as f32,
             ];
+            let fudge_factor = wgpu_fun::setting_f64("fudgeFactor", 10.0) as f32;
 
             let mut matrix_value = m4::ortho(
                 0.0,                   // left
                 frame.width as f32,    // right
                 frame.height as f32,   // bottom
                 0.0,                   // top
-                400.0,                 // near
-                -400.0,                // far
+                1200.0,                // near
+                -1000.0,               // far
             );
             matrix_value = m4::translate(&matrix_value, translation);
             matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
@@ -494,6 +502,8 @@ async fn run() {
             matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
             matrix_value = m4::scale(&matrix_value, scale);
             uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16].copy_from_slice(&matrix_value);
+
+            uniform_values[K_FUDGE_FACTOR_OFFSET] = fudge_factor;
 
             // upload the uniform values to the uniform buffer
             frame

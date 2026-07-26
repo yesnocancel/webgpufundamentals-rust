@@ -36,6 +36,9 @@ pub struct App {
     /// With `auto_resize`, divide the observed canvas size by this (the
     /// low-res-canvas trick some lessons use, e.g. `inlineSize / 64 | 0`).
     pub resize_divisor: u32,
+    /// Usage flags for the surface's textures (JS `context.configure`'s
+    /// `usage`). Defaults to RENDER_ATTACHMENT.
+    pub usage: wgpu::TextureUsages,
     surface: wgpu::Surface<'static>,
     canvas: HtmlCanvasElement,
     max_texture_dimension: u32,
@@ -137,6 +140,7 @@ impl App {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             alpha_mode_fn: None,
             resize_divisor: 1,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             surface,
             canvas,
             max_texture_dimension,
@@ -178,7 +182,7 @@ impl App {
                     app.surface.configure(
                         &app.device,
                         &wgpu::SurfaceConfiguration {
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            usage: app.usage,
                             format: app.format,
                             color_space: wgpu::SurfaceColorSpace::Auto,
                             width,

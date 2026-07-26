@@ -8,7 +8,7 @@ for us indirectly but with a storage texture we can write directly to the
 texture wherever we want.
 
 Storage textures are not a special type of texture, rather, they are just a
-texture like any other texture that you create with `createTexture`. You add the
+texture like any other texture that you create with `create_texture`. You add the
 `STORAGE_BINDING` usage flag and now you can use the texture as a storage
 texture on top of whatever other usage flags you need and then you can also use
 the texture as a storage texture.
@@ -132,16 +132,14 @@ That said, there are limits on storage textures.
 ## <a id="canvas-as-storage-texture"></a> Canvas as a Storage Texture
 
 You can use a canvas texture as a storage texture. To do so, you configure
-the context to give you a texture that can be used as a storage texture.
+the surface to give you a texture that can be used as a storage texture.
+With our helper that's the `usage` knob (it's passed through to the surface
+configuration).
 
-```js
-  const presentationFormat = navigator.gpu.getPreferredCanvasFormat()
-  context.configure({
-    device,
-    format: presentationFormat,
-+    usage: GPUTextureUsage.TEXTURE_BINDING |
-+           GPUTextureUsage.STORAGE_BINDING,
-  });
+```rust
+  let mut app = App::new("WebGPU Storage Texture").await;
++  app.usage = wgpu::TextureUsages::TEXTURE_BINDING |
++              wgpu::TextureUsages::STORAGE_BINDING;
 ```
 
 `TEXTURE_BINDING` is needed so the browser itself can render the texture
@@ -151,61 +149,59 @@ render pass, like most examples on this site, we'd also add the
 `RENDER_ATTACHMENT` usage.
 
 There's a complication here though.  As we covered in
-[the first article](webgpu-fundamentals.html), normally we call
-`navigator.gpu.getPreferredCanvasFormat` to get the preferred canvas format.
-`getPreferredCanvasFormat` will return either `rgba8unorm` or `bgra8unorm`
+[the first article](webgpu-fundamentals.html), normally we use
+the surface's preferred format (`app.format`), which
+will be either `rgba8unorm` or `bgra8unorm`
 depending on whichever format is more performant for the user's system.
 
 But, as mentioned above, by default, we can not use a `bgra8unorm`
 texture as a storage texture.
 
 Fortunately there is a [feature](webgpu-limits-and-features.html) called
-`'bgra8unorm-storage'`. Enabling that feature will allow a `bgra8unorm` texture as a storage texture.
+`bgra8unorm-storage` (`wgpu::Features::BGRA8UNORM_STORAGE`). Enabling that
+feature will allow a `bgra8unorm` texture as a storage texture.
 In general, it *should* be available on any platform that reports
 `bgra8unorm` as its preferred canvas format but, there is some possibility
-it's not available. So, we need to check if the `'bgra8unorm-storage'`
-*feature* exists. If it exists, we'll require it for our device and we'll use
-the preferred canvas format. If not, we'll choose `rgba8unorm` as our
-canvas format.
+it's not available. So, we request the feature *if the adapter supports it* —
+that's what `App::new_with_features` does, mirroring the JS
+`adapter.features.has('bgra8unorm-storage')` check — and then check the
+combination we ended up with.
 
-```js
-  const adapter = await navigator.gpu?.requestAdapter();
--  const device = await adapter?.requestDevice();
-+  const hasBGRA8unormStorage = adapter.features.has('bgra8unorm-storage');
-+  const device = await adapter?.requestDevice({
-+    requiredFeatures: hasBGRA8unormStorage
-+      ? ['bgra8unorm-storage']
-+      : [],
-+  });
-  if (!device) {
-    fail('need a browser that supports WebGPU');
-    return;
-  }
+```rust
+-  let mut app = App::new("WebGPU Storage Texture").await;
++  let mut app = App::new_with_features(
++    "WebGPU Storage Texture",
++    wgpu::Features::BGRA8UNORM_STORAGE,
++  )
++  .await;
+  app.auto_resize = true;
+  app.usage = wgpu::TextureUsages::TEXTURE_BINDING |
+              wgpu::TextureUsages::STORAGE_BINDING;
 
-  // Get a WebGPU context from the canvas and configure it
-  const canvas = document.querySelector('canvas');
-  const context = canvas.getContext('webgpu');
--  const presentationFormat = navigator.gpu.getPreferredCanvasFormat()
-+  const presentationFormat = hasBGRA8unormStorage
-+     ? navigator.gpu.getPreferredCanvasFormat()
-+     : 'rgba8unorm';
-  context.configure({
-    device,
-    format: presentationFormat,
-    usage: GPUTextureUsage.TEXTURE_BINDING |
-           GPUTextureUsage.STORAGE_BINDING,
-  });
++  if app.format == wgpu::TextureFormat::Bgra8Unorm
++      && !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE)
++  {
++    panic!("bgra8unorm-storage is not supported");
++  }
 ```
 
 Now we can use the canvas texture as a storage texture. Let's make a simple
-compute shader to draw concentric circles in the texture.
+compute shader to draw concentric circles in the texture. The storage
+texture's format has to be written in the shader itself, so we splice it in
+with `format!`, like the JS version's `${presentationFormat}` template
+literal.
 
-```js
-  const module = device.createShaderModule({
-    label: 'circles in storage texture',
-    code: /* wgsl */ `
+```rust
+  let format_name = match app.format {
+    wgpu::TextureFormat::Rgba8Unorm => "rgba8unorm",
+    wgpu::TextureFormat::Bgra8Unorm => "bgra8unorm",
+    f => panic!("unsupported canvas format {f:?}"),
+  };
+
+  let code = format!("
       @group(0) @binding(0)
-      var tex: texture_storage_2d<${presentationFormat}, write>;
+      var tex: texture_storage_2d<{format_name}, write>;
+") + &r#"
 
       @compute @workgroup_size(1) fn cs(
         @builtin(global_invocation_id) id : vec3u
@@ -228,7 +224,11 @@ compute shader to draw concentric circles in the texture.
         // Write the color to the texture
         textureStore(tex, pos, color);
       }
-    `,
+    "#;
+
+  let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: Some("circles in storage texture"),
+    source: wgpu::ShaderSource::Wgsl(code.into()),
   });
 ```
 
@@ -239,41 +239,45 @@ the specific texture format in the shader itself. Unlike `TEXTURE_BINDING`s,
 Setting it up is similar to [the compute shader we wrote in the first article](webgpu-fundamentals.html#a-run-computations-on-the-gpu).
 After making a shader module we setup a compute pipeline to use it.
 
-```js
-  const pipeline = device.createComputePipeline({
-    label: 'circles in storage texture',
-    layout: 'auto',
-    compute: {
-      module,
-    },
+```rust
+  let pipeline = app.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    label: Some("circles in storage texture"),
+    layout: None,
+    module: &module,
+    entry_point: None,
+    compilation_options: Default::default(),
+    cache: None,
   });
 ```
 
-To render we get the canvas's current texture, make a bind group so
-we can pass the texture to the shader, and then do the normal things of setting
-a pipeline, binding bind groups, and dispatching workgroups.
+To render, our frame callback gets the canvas's current texture view as
+`frame.view`; we make a bind group so we can pass the texture to the shader,
+and then do the normal things of setting a pipeline, binding bind groups,
+and dispatching workgroups.
 
-```js
-  function render() {
-    const texture = context.getCurrentTexture();
-
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: texture },
-      ],
+```rust
+  app.run(RenderMode::Once, move |frame: &Frame| {
+    let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: None,
+      layout: &pipeline.get_bind_group_layout(0),
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: wgpu::BindingResource::TextureView(frame.view),
+      }],
     });
 
-    const encoder = device.createCommandEncoder({ label: 'our encoder' });
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(texture.width, texture.height);
-    pass.end();
+    let mut encoder = frame.device.create_command_encoder(
+      &wgpu::CommandEncoderDescriptor { label: Some("our encoder") });
+    {
+      let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+      pass.set_pipeline(&pipeline);
+      pass.set_bind_group(0, &bind_group, &[]);
+      pass.dispatch_workgroups(frame.width, frame.height, 1);
+    }
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
-  }
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
+  });
 ```
 
 And here it is

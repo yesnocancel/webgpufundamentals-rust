@@ -41,26 +41,24 @@ fn create_f_vertices() -> (Vec<f32>, u32) {
     ];
 
     let indices: Vec<u32> = vec![
-        // front
-        0,  1,  2,    2,  1,  3,  // left column
-        4,  5,  6,    6,  5,  7,  // top run
-        8,  9, 10,   10,  9, 11,  // middle run
+         0,  1,  2,    2,  1,  3,  // left column
+         4,  5,  6,    6,  5,  7,  // top run
+         8,  9, 10,   10,  9, 11,  // middle run
 
-        // back
-        12,  14,  13,   14, 15, 13,  // left column back
-        16,  18,  17,   18, 19, 17,  // top run back
-        20,  22,  21,   22, 23, 21,  // middle run back
+        12, 14, 13,   14, 15, 13,  // left column back
+        16, 18, 17,   18, 19, 17,  // top run back
+        20, 22, 21,   22, 23, 21,  // middle run back
 
-        0, 12, 5,   12, 17, 5,   // top
-        5, 17, 7,   17, 19, 7,   // top rung right
-        6, 7, 18,   18, 7, 19,   // top rung bottom
-        6, 18, 8,   18, 20, 8,   // between top and middle rung
-        8, 20, 9,   20, 21, 9,   // middle rung top
-        9, 21, 11,  21, 23, 11,  // middle rung right
-        10, 11, 22, 22, 11, 23,  // middle rung bottom
-        10, 22, 3,  22, 15, 3,   // stem right
-        2, 3, 14,   14, 3, 15,   // bottom
-        0, 2, 12,   12, 2, 14,   // left
+         0, 12,  5,   12, 17,  5,   // top
+         5, 17,  7,   17, 19,  7,   // top rung right
+         6,  7, 18,   18,  7, 19,   // top rung bottom
+         6, 18,  8,   18, 20,  8,   // between top and middle rung
+         8, 20,  9,   20, 21,  9,   // middle rung top
+         9, 21, 11,   21, 23, 11,   // middle rung right
+        10, 11, 22,   22, 11, 23,   // middle rung bottom
+        10, 22,  3,   22, 15,  3,   // stem right
+         2,  3, 14,   14,  3, 15,   // bottom
+         0,  2, 12,   12,  2, 14,   // left
     ];
 
     let quad_colors: Vec<u8> = vec![
@@ -105,7 +103,7 @@ mod m4 {
 
     pub fn projection(width: f32, height: f32, depth: f32) -> [f32; 16] {
         // Note: This matrix flips the Y axis so that 0 is at the top.
-        ortho(0.0, width, height, 0.0, depth / 2.0, -depth / 2.0)
+        ortho(0.0, width, height, 0.0, depth, -depth)
     }
 
     pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [f32; 16] {
@@ -130,6 +128,40 @@ mod m4 {
         dst[13] = (top + bottom) / (bottom - top);
         dst[14] = near / (near - far);
         dst[15] = 1.0;
+
+        dst
+    }
+
+    pub fn perspective(
+        field_of_view_y_in_radians: f32,
+        aspect: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> [f32; 16] {
+        let mut dst = [0.0; 16];
+
+        let f = (std::f32::consts::PI * 0.5 - 0.5 * field_of_view_y_in_radians).tan();
+        let range_inv = 1.0 / (z_near - z_far);
+
+        dst[0] = f / aspect;
+        dst[1] = 0.0;
+        dst[2] = 0.0;
+        dst[3] = 0.0;
+
+        dst[4] = 0.0;
+        dst[5] = f;
+        dst[6] = 0.0;
+        dst[7] = 0.0;
+
+        dst[8] = 0.0;
+        dst[9] = 0.0;
+        dst[10] = z_far * range_inv;
+        dst[11] = -1.0;
+
+        dst[12] = 0.0;
+        dst[13] = 0.0;
+        dst[14] = z_near * z_far * range_inv;
+        dst[15] = 0.0;
 
         dst
     }
@@ -280,7 +312,7 @@ mod m4 {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Orthographic Use Ortho - Step 6").await;
+    let mut app = App::new("WebGPU Perspective - perspective - Step 4").await;
     app.auto_resize = true;
     app.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
 
@@ -464,13 +496,14 @@ async fn run() {
             pass.set_pipeline(&pipeline);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
+            let field_of_view = wgpu_fun::setting_f64("fieldOfView", 100.0f64.to_radians()) as f32;
             let translation = [
-                wgpu_fun::setting_f64("translationX", 45.0) as f32,
-                wgpu_fun::setting_f64("translationY", 100.0) as f32,
-                wgpu_fun::setting_f64("translationZ", 0.0) as f32,
+                wgpu_fun::setting_f64("translationX", -65.0) as f32,
+                wgpu_fun::setting_f64("translationY", 0.0) as f32,
+                wgpu_fun::setting_f64("translationZ", -120.0) as f32,
             ];
             let rotation = [
-                wgpu_fun::setting_f64("rotationX", 40.0f64.to_radians()) as f32,
+                wgpu_fun::setting_f64("rotationX", 220.0f64.to_radians()) as f32,
                 wgpu_fun::setting_f64("rotationY", 25.0f64.to_radians()) as f32,
                 wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
             ];
@@ -480,13 +513,12 @@ async fn run() {
                 wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
             ];
 
-            let mut matrix_value = m4::ortho(
-                0.0,                   // left
-                frame.width as f32,    // right
-                frame.height as f32,   // bottom
-                0.0,                   // top
-                400.0,                 // near
-                -400.0,                // far
+            let aspect = frame.width as f32 / frame.height as f32;
+            let mut matrix_value = m4::perspective(
+                field_of_view,
+                aspect,
+                1.0,    // zNear
+                2000.0, // zFar
             );
             matrix_value = m4::translate(&matrix_value, translation);
             matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
