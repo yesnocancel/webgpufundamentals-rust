@@ -7,19 +7,27 @@ and request them.
 
 When you request an adapter with
 
-```js
-const adapter = await navigator.gpu?.requestAdapter();
+```rust
+let instance = wgpu::Instance::default();
+let adapter = instance
+    .request_adapter(&wgpu::RequestAdapterOptions::default())
+    .await
+    .expect("this system does not support WebGPU");
 ```
 
-The adapter will have a list of limits on `adapter.limits` and array of feature names
-on `adapter.features`.  For example
+The adapter has a set of limits, returned by `adapter.limits()` as a plain
+`wgpu::Limits` struct, and a set of feature flags, returned by
+`adapter.features()` as a `wgpu::Features` bitflag set. For example
 
-```js
-const adapter = await navigator.gpu?.requestAdapter();
-console.log(adapter.limits.maxColorAttachments);
+```rust
+let adapter = instance
+    .request_adapter(&wgpu::RequestAdapterOptions::default())
+    .await
+    .expect("this system does not support WebGPU");
+println!("{}", adapter.limits().max_color_attachments);
 ```
 
-Might print `8` to the console meaning the adapter supports a maximum
+Might print `8` to the terminal meaning the adapter supports a maximum
 of 8 color attachments.
 
 Here is a list of all the limits, including the limits of your default adapter
@@ -33,19 +41,30 @@ to have.
 There is also a list of optional features. For example, you could view them
 like this
 
-```js
-const adapter = await navigator.gpu?.requestAdapter();
-console.log(adapter.features);
+```rust
+let adapter = instance
+    .request_adapter(&wgpu::RequestAdapterOptions::default())
+    .await
+    .expect("this system does not support WebGPU");
+println!("{}", adapter.features());
 ```
 
-which might print something like `["texture-compression-astc", "texture-compression-bc"]` telling
-you those features are available if you request them.
+which might print something like `TEXTURE_COMPRESSION_ASTC | TEXTURE_COMPRESSION_BC` telling
+you those features are available if you request them. The names are constants
+on `wgpu::Features` and match the JavaScript API's feature names — where
+JavaScript has `'texture-compression-bc'`, wgpu has
+`wgpu::Features::TEXTURE_COMPRESSION_BC`.
 
 Here is the list of features available on your default adapter.
 
 <div class="webgpu_center data-table features" data-diagram="features"></div>
 
 > Note: You can check all of your system's adapter's features and limits at [webgpureport.org](https://webgpureport.org).
+
+> Note: When running natively, wgpu also exposes *extra* features and limits
+> that go beyond the WebGPU spec (their docs mark which are which). If you use
+> those, your code will still run natively but won't be able to run in a
+> browser.
 
 ## Requesting limits and features
 
@@ -55,22 +74,35 @@ hope is, if you stay under the minimum limits, then your app will
 run on all devices that support WebGPU.
 
 But, given the available limits and features listed on the adapter,
-you can request them when you call `requestDevice` by
-passing your desired limits as `requiredLimits` and your desired features as `requiredFeatures`. For example
+you can request them when you call `request_device` by
+passing your desired limits as `required_limits` and your desired features as `required_features`. For example
 
-```js
-const k1Gig = 1024 * 1024 * 1024;
-const adapter = await navigator.gpu?.requestAdapter();
-const device = adapter?.requestDevice({
-  requiredLimits: { maxBufferSize: k1Gig },
-  requiredFeatures: [ 'float32-filterable' ],
-});
+```rust
+const K1_GIG: u64 = 1024 * 1024 * 1024;
+let adapter = instance
+    .request_adapter(&wgpu::RequestAdapterOptions::default())
+    .await
+    .expect("this system does not support WebGPU");
+let (device, queue) = adapter
+    .request_device(&wgpu::DeviceDescriptor {
+      required_limits: wgpu::Limits {
+        max_buffer_size: K1_GIG,
+        ..Default::default()
+      },
+      required_features: wgpu::Features::FLOAT32_FILTERABLE,
+      ..Default::default()
+    })
+    .await
+    .expect("could not get the required limits and features");
 ```
 
 Above we're requesting to be able to use buffers of up to 1gig and to be able to use filterable float32
-textures (for example `'rgba32float'` with minFilter set to `'linear'` which by default can only be used with `'nearest'`)
+textures (for example `Rgba32Float` with `min_filter` set to `FilterMode::Linear`, which by default can only be used with `FilterMode::Nearest`).
+Note that `wgpu::Limits::default()` is the set of minimum limits from the
+table above, so with struct update syntax we only raise the one limit we care
+about.
 
-If either of those requests can not be met `requestDevice` will fail (reject the promise).
+If either of those requests can not be met `request_device` will fail (return an `Err`).
 
 ## Don't request everything
 
@@ -78,59 +110,60 @@ It might be temping to ask for all the limits and features and then check for th
 
 Example:
 
-```js
-function objLikeToObj(src) {
-  const dst = {};
-  for (const key in src) {
-    dst[key] = src[key];
-  }
-  return dst;
-}
-
+```rust
 //
 // BAD!!! ?
 //
-async function main() {
-  const adapter = await navigator?.gpu.requestAdapter();
-  const device = await adapter?.requestDevice({
-    requiredLimits: objLikeToObj(adapter.limits),
-    requiredFeatures: adapter.features,
-  });
-  if (!device) {
-    fail('need webgpu');
+async fn main_async() {
+  let instance = wgpu::Instance::default();
+  let Ok(adapter) = instance
+      .request_adapter(&wgpu::RequestAdapterOptions::default())
+      .await
+  else {
+    fail("need webgpu");
     return;
-  }
+  };
+  let Ok((device, queue)) = adapter
+      .request_device(&wgpu::DeviceDescriptor {
+        required_limits: adapter.limits(),
+        required_features: adapter.features(),
+        ..Default::default()
+      })
+      .await
+  else {
+    fail("need webgpu");
+    return;
+  };
 
-  const canUse128KUniformsBuffers = device.limits.maxUniformBufferBindingSize >= 128 * 1024;
-  const canStoreToBGRA8Unorm = device.features.has('bgra8unorm-storage');
-  const canIndirectFirstInstance = device.features.has('indirect-first-instance');
+  let can_use_128k_uniform_buffers =
+      device.limits().max_uniform_buffer_binding_size >= 128 * 1024;
+  let can_store_to_bgra8unorm =
+      device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE);
+  let can_indirect_first_instance =
+      device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
 }
 ```
 
 This seems like a simple and clear way to check for limits and features[^objliketoobj]. The
 problem with this pattern is you might be accidentally exceeding limits and not
-know it. For example lets say you created an `'rgba32float'` texture and filtered it
-with `'linear'` filtering.
+know it. For example lets say you created an `Rgba32Float` texture and filtered it
+with `linear` filtering.
 It would magically just work on your desktop machine because you happened to have
 enabled it.
 
-[^objliketoobj]: What is this `objLikeToObj` and why do I needed
-it? It's an esoteric Web spec issue. The spec lists `requiredLimits` as
-`record<DOMString, GPUSize64>`. The Web IDL spec says, when converting
-an object from something to `record<DOMString, GPUSize64>` copy 
-only the properties that are actually the object's *own* properties.
-The `limits` object on the adapter is listed as an `interface`. The
-things that appear to be properties there are not properties, they're
-getters that exist on the object prototype, they are not actually the
-object's own properties. So, they aren't copied
-when converted to `record<DOMString, GPUSize64>` and so you have
-copy them yourself.
+[^objliketoobj]: It's even simpler in Rust than in JavaScript. In the
+JavaScript API you can't pass `adapter.limits` straight to `requiredLimits` —
+for esoteric Web-spec reasons (the limits live as getters on the object's
+prototype and are not copied when converted to a
+`record<DOMString, GPUSize64>`), so you have to copy them into a plain object
+yourself. In wgpu, `adapter.limits()` returns a plain `Limits` struct that
+you can pass directly, which makes this tempting pattern even more tempting.
 
-On the user's phone, your program fails mysteriously because the `'float32-filterable'`
+On the user's phone, your program fails mysteriously because the `FLOAT32_FILTERABLE`
 feature didn't exist and you happened to be using it without realizing that it's
 an optional feature.
 
-Or you might allocate a buffer larger the minimum `maxBufferSize` and again
+Or you might allocate a buffer larger the minimum `max_buffer_size` and again
 not be aware you went over the limit. You ship and a bunch of users can't run
 your page.
 
@@ -141,34 +174,54 @@ must have and only request those limits.
 
 For example
 
-```js
-  const adapter = await navigator?.gpu.requestAdapter();
+```rust
+  let Ok(adapter) = instance
+      .request_adapter(&wgpu::RequestAdapterOptions::default())
+      .await
+  else {
+    fail("need webgpu");
+    return;
+  };
 
-  const canUse128KUniformsBuffers = adapter?.limits.maxUniformBufferBindingSize >= 128 * 1024;
-  const canStoreToBGRA8Unorm = adapter?.features.has('bgra8unorm-storage');
-  const canIndirectFirstInstance = adapter?.features.has('indirect-first-instance');
+  let can_use_128k_uniform_buffers =
+      adapter.limits().max_uniform_buffer_binding_size >= 128 * 1024;
+  let can_store_to_bgra8unorm =
+      adapter.features().contains(wgpu::Features::BGRA8UNORM_STORAGE);
+  let can_indirect_first_instance =
+      adapter.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
 
-  // if we absolutely need these one or more of these features then fail now if they are not
-  // available
-  if (!canUse128kUniformBuffers) {
-    alert('Sorry, your device is probably too old or underpowered');
+  // if we absolutely need one or more of these features then fail now if they
+  // are not available
+  if !can_use_128k_uniform_buffers {
+    fail("Sorry, your device is probably too old or underpowered");
     return;
   }
 
   // Request the available features and limits we need
-  const device = adapter?.requestDevice({
-    requiredFeatures: [
-      ...(canStorageBGRA8Unorm ? ['bgra8unorm'] : []),
-      ...(canIndirectFirstInstance) ? ['indirect-first-instance']),
-    ],
-    requiredLimits: [
-      maxUniformBufferBindingSize: 128 * 1024,
-    ]
-  });
+  let mut required_features = wgpu::Features::empty();
+  if can_store_to_bgra8unorm {
+    required_features |= wgpu::Features::BGRA8UNORM_STORAGE;
+  }
+  if can_indirect_first_instance {
+    required_features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+  }
+  let (device, queue) = adapter
+      .request_device(&wgpu::DeviceDescriptor {
+        required_features,
+        required_limits: wgpu::Limits {
+          max_uniform_buffer_binding_size: 128 * 1024,
+          ..Default::default()
+        },
+        ..Default::default()
+      })
+      .await
+      .expect("failed to create a device");
 ```
 
 Doing it this way, if you happen to ask for a Uniform buffer larger than 128k you'll get an error.
-Similarly if you happen to try to use a feature you didn't request you'll get an error.
+Similarly if you happen to try to use a feature you didn't request you'll get an error
+(the device validates against exactly what you requested — no more, no less, regardless
+of what the adapter could have provided).
 You can then make a conscience decision if you want to increase your required limits (and therefore
 refuse to run on more devices) or if you want to keep the limits, or if you want to structure
 your code to do different things if the features or limits are or are not available.

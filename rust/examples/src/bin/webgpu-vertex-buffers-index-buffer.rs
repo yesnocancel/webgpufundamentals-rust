@@ -56,6 +56,7 @@ fn create_circle_vertices(options: CircleVerticesOptions) -> (Vec<f32>, Vec<u32>
         vertex_data[offset] = y;
         offset += 1;
         offset += 1; // skip the color
+
         // a u8 view of the same data as vertex_data
         let color_data: &mut [u8] = bytemuck::cast_slice_mut(&mut vertex_data);
         color_data[color_offset] = (r * 255.0) as u8;

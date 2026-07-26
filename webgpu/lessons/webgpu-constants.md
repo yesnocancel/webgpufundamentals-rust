@@ -43,24 +43,37 @@ Now if we use this shader as is we'll get a black triangle
 
 But, we can change those constants, or "override" them when we specify the pipeline.
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'our hardcoded triangle pipeline',
-    layout: 'auto',
-    vertex: {
-      module,
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("our hardcoded triangle pipeline"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+      compilation_options: Default::default(),
+      buffers: &[],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-+      constants: {
-+        red: 1,
-+        green: 0.5,
-+        blue: 1,
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+-      compilation_options: Default::default(),
++      compilation_options: wgpu::PipelineCompilationOptions {
++        constants: &[("red", 1.0), ("green", 0.5), ("blue", 1.0)],
++        ..Default::default()
 +      },
-    },
+      targets: &[Some(app.format.into())],
+    }),
+    primitive: Default::default(),
+    depth_stencil: None,
+    multisample: Default::default(),
+    multiview_mask: None,
+    cache: None,
   });
 ```
+
+In wgpu the constants go on the `compilation_options` of each stage, as a
+slice of name/value pairs. The value is always an `f64` (the same as a
+JavaScript number); wgpu converts it to the declared type of the constant.
 
 And now we get a pinkish color.
 
@@ -85,37 +98,41 @@ override blue = 0.0;
 }
 ```
 
+In wgpu, to refer to a constant by id you use the id, in decimal, as the
+name, so `green` above could be set with `("123", 0.5)`.
+
 You might ask, what is the point? I can just as easily do this when I
 create the WGSL. For example
 
-```js
-const red = 0.5;
-const blue = 0.7;
-const green = 1.0;
+```rust
+let red = 0.5;
+let blue = 0.7;
+let green = 1.0;
 
-const code = `
-const red = ${red};
-const green = ${green};
-const blue = ${blue};
-
+let code = format!("
+const red = {red};
+const green = {green};
+const blue = {blue};
+") + r#"
 @fragment fn fs() -> @location(0) vec4f {
   return vec4f(red, green, blue, 1.0);
 }
-`;
+"#;
 ```
 
 Or even more directly
 
-```js
-const red = 0.5;
-const blue = 0.7;
-const green = 1.0;
+```rust
+let red = 0.5;
+let blue = 0.7;
+let green = 1.0;
 
-const code = `
+let color = format!("vec4f({red}, {green}, {blue}, 1.0)");
+let code = "
 @fragment fn fs() -> @location(0) vec4f {
-  return vec4f(${red}, ${green}, ${blue}, 1.0);
+  return ".to_string() + &color + ";
 }
-`;
+";
 ```
 
 The difference is, pipeline overridable constants can be applied AFTER
@@ -135,7 +152,7 @@ It's also important to remember that entry points are evaluated in
 isolation as was partially covered in
 [the article on inter-stage variables](webgpu-inter-stage-variables.html#a-builtin-position).
 
-It's as though the code passed to `createShaderModule` was striped
+It's as though the code passed to `create_shader_module` was striped
 of everything not relevant to the current entry point. Pipeline
 override constants are applied, then, the shader for that entry point is
 created.
@@ -187,27 +204,30 @@ override blue = 0.0;
 
 Now we'll pass different constants into the each entry point
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: 'our hardcoded triangle pipeline',
-    layout: 'auto',
-    vertex: {
-      module,
-+      constants: {
-+        red: 1,
-+        green: 1,
-+        blue: 0,
+```rust
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("our hardcoded triangle pipeline"),
+    layout: None,
+    vertex: wgpu::VertexState {
+      module: &module,
+      entry_point: None,
+-      compilation_options: Default::default(),
++      compilation_options: wgpu::PipelineCompilationOptions {
++        constants: &[("red", 1.0), ("green", 1.0), ("blue", 0.0)],
++        ..Default::default()
 +      },
+      buffers: &[],
     },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-      constants: {
-        red: 1,
-        green: 0.5,
-        blue: 1,
+    fragment: Some(wgpu::FragmentState {
+      module: &module,
+      entry_point: None,
+      compilation_options: wgpu::PipelineCompilationOptions {
+        constants: &[("red", 1.0), ("green", 0.5), ("blue", 1.0)],
+        ..Default::default()
       },
-    },
+      targets: &[Some(app.format.into())],
+    }),
+    ...
   });
 ```
 
@@ -218,9 +238,10 @@ The result shows the constants were different in each stage
 Again, functionally, the fact that we used one shader module with one WGSL `code`
 is just a convenience. The code above is functionally equivalent to
 
-```js
-  const vertexModule = device.createShaderModule({
-    code: /* wgsl */ `
+```rust
+  let vertex_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct VOut {
         @builtin(position) pos: vec4f,
         @location(0) color: vec4f,
@@ -244,11 +265,12 @@ is just a convenience. The code above is functionally equivalent to
       override red = 0.0;
       override green = 0.0;
       override blue = 0.0;
-    `,
+    "#.into()),
   });
 
-  const fragmentModule = device.createShaderModule({
-    code: /* wgsl */ `
+  let fragment_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(r#"
       struct VOut {
         @builtin(position) pos: vec4f,
         @location(0) color: vec4f,
@@ -267,29 +289,31 @@ is just a convenience. The code above is functionally equivalent to
           colorFromFragmentShader,
           v.pos.x % 100.0 > 50.0);
       }
-    `,
+    "#.into()),
   });
 
-  const pipeline = device.createRenderPipeline({
-    label: 'our hardcoded triangle pipeline',
-    layout: 'auto',
-    vertex: {
-*      module: vertexModule,
-      constants: {
-        red: 1,
-        green: 1,
-        blue: 0,
+  let pipeline = app.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    label: Some("our hardcoded triangle pipeline"),
+    layout: None,
+    vertex: wgpu::VertexState {
+*      module: &vertex_module,
+      entry_point: None,
+      compilation_options: wgpu::PipelineCompilationOptions {
+        constants: &[("red", 1.0), ("green", 1.0), ("blue", 0.0)],
+        ..Default::default()
       },
+      buffers: &[],
     },
-    fragment: {
-*      module: fragmentModule,
-      targets: [{ format: presentationFormat }],
-      constants: {
-        red: 1,
-        green: 0.5,
-        blue: 1,
+    fragment: Some(wgpu::FragmentState {
+*      module: &fragment_module,
+      entry_point: None,
+      compilation_options: wgpu::PipelineCompilationOptions {
+        constants: &[("red", 1.0), ("green", 0.5), ("blue", 1.0)],
+        ..Default::default()
       },
-    },
+      targets: &[Some(app.format.into())],
+    }),
+    ...
   });
 ```
 

@@ -22,7 +22,8 @@ struct ObjectInfo {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Multiple Triangles w/split Storage Buffers (minimal changes)").await;
+    let mut app =
+        App::new("WebGPU Multiple Triangles w/split Storage Buffers (minimal changes)").await;
     app.auto_resize = true;
 
     let module = app
@@ -114,14 +115,21 @@ async fn run() {
         // These are only set once so set them now
         {
             let mut uniform_values = vec![0.0f32; static_uniform_buffer_size / 4];
-            uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4]
-                .copy_from_slice(&[rand(0.0, 1.0), rand(0.0, 1.0), rand(0.0, 1.0), 1.0]); // set the color
+            uniform_values[K_COLOR_OFFSET..K_COLOR_OFFSET + 4].copy_from_slice(&[
+                rand(0.0, 1.0),
+                rand(0.0, 1.0),
+                rand(0.0, 1.0),
+                1.0,
+            ]); // set the color
             uniform_values[K_OFFSET_OFFSET..K_OFFSET_OFFSET + 2]
                 .copy_from_slice(&[rand(-0.9, 0.9), rand(-0.9, 0.9)]); // set the offset
 
             // copy these values to the GPU
-            app.queue
-                .write_buffer(&static_uniform_buffer, 0, bytemuck::cast_slice(&uniform_values));
+            app.queue.write_buffer(
+                &static_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&uniform_values),
+            );
         }
 
         // create a Vec<f32> to hold the values for the uniforms in Rust

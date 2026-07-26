@@ -24,6 +24,11 @@ pub struct App {
     /// size. False by default, like a raw `<canvas>`. (Only observable in
     /// the browser; native surfaces always match the window.)
     pub auto_resize: bool,
+    /// How the surface's alpha channel is composited with what's behind the
+    /// window/canvas, like the JS `alphaMode` canvas configuration option.
+    /// `Auto` (the default) behaves like `'opaque'`; use
+    /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
+    pub alpha_mode: wgpu::CompositeAlphaMode,
     instance: wgpu::Instance,
     title: String,
     test: Option<TestConfig>,
@@ -37,6 +42,7 @@ struct TestConfig {
 
 impl App {
     pub async fn new(title: &str) -> App {
+        crate::settings::load_settings_from_env();
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -80,6 +86,7 @@ impl App {
             queue,
             format,
             auto_resize: false,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
             instance,
             title: title.to_string(),
             test,
@@ -223,7 +230,7 @@ impl WinitApp {
                 height: size.height,
                 present_mode: wgpu::PresentMode::default(),
                 desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: self.app.alpha_mode,
                 view_formats: vec![],
             },
         );
@@ -267,9 +274,10 @@ impl ApplicationHandler for WinitApp {
                 caps.formats
             );
         }
-        self.window = Some(window);
+        self.window = Some(window.clone());
         self.surface = Some(surface);
         self.configure_surface();
+        crate::settings::set_redraw_hook(move || window.request_redraw());
         self.window.as_ref().unwrap().request_redraw();
     }
 

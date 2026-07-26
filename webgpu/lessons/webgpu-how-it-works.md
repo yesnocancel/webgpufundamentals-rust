@@ -3,47 +3,48 @@ Description: How WebGPU works
 TOC: How It Works
 
 Let's try to explain WebGPU by implementing something similar to what the GPU does
-with vertex shaders and fragment shaders but in JavaScript. Hopefully this will give
+with vertex shaders and fragment shaders but in plain Rust. Hopefully this will give
 you an intuitive feeling about what's really going on.
 
 If you're familiar with
-[Array.map](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map),
+[`Iterator::map`](https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.map),
 if you squint real hard you can get some idea of how these 2 different kinds of
-shader functions work. With `Array.map` you provide a function to transform a value.
+shader functions work. With `map` you provide a function to transform a value.
 
 Example:
 
-```js
-const shader = v => v * 2;  // double the input
-const input = [1, 2, 3, 4];
-const output = input.map(shader);   // result [2, 4, 6, 8]
+```rust
+let shader = |v: f32| v * 2.0;  // double the input
+let input = [1.0, 2.0, 3.0, 4.0];
+let output: Vec<f32> = input.into_iter().map(shader).collect();  // result [2.0, 4.0, 6.0, 8.0]
 ```
 
-Above our "shader" for array.map is just a function that given a number, returns
-its double. That's probably the closest analogy in JavaScript to what "shader"
+Above our "shader" for `map` is just a function that given a number, returns
+its double. That's probably the closest analogy in Rust to what "shader"
 means. It's a function that returns or generates values. You don't call it
 directly. Instead, you specify it and then the system calls it for you.
 
 For a GPU vertex shader you don't map over an input array. Instead, you just
 specify a count of how many times you want the function to be called.
 
-```js
-function draw(count, vertexShaderFn) {
-  const internalBuffer = [];
-  for (let i = 0; i < count; ++i) {
-    internalBuffer[i] = vertexShaderFn(i);
+```rust
+fn draw(count: usize, vertex_shader_fn: impl Fn(usize) -> f32) {
+  let mut internal_buffer = Vec::new();
+  for i in 0..count {
+    internal_buffer.push(vertex_shader_fn(i));
   }
-  console.log(JSON.stringify(internalBuffer));
+  println!("{internal_buffer:?}");
 }
 ```
 
-One consequence is that unlike `Array.map`, we no longer need a source array to do something.
+One consequence is that unlike `map`, we no longer need a source array to do
+something. The only input our shader gets is the iteration number.
 
-```js
-const shader = v => v * 2;
-const count = 4;
+```rust
+let shader = |i: usize| (i * 2) as f32;
+let count = 4;
 draw(count, shader);
-// outputs [0, 2, 4, 6]
+// outputs [0.0, 2.0, 4.0, 6.0]
 ```
 
 The thing that makes GPU work complicated is that these functions run on a separate
@@ -61,34 +62,42 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    another way, they remain *uniform*.
 
    Let's change `draw` to pass uniforms to a shader. To do this we'll
-   make an array called `bindings` and use it to pass in the uniforms.
+   make a slice called `bindings` and use it to pass in the uniforms.
 
-   ```js
-   *function draw(count, vertexShaderFn, bindings) {
-     const internalBuffer = [];
-     for (let i = 0; i < count; ++i) {
-   *    internalBuffer[i] = vertexShaderFn(i, bindings);
+   ```rust
+   *fn draw(
+   *  count: usize,
+   *  vertex_shader_fn: impl Fn(usize, &[Uniforms]) -> f32,
+   *  bindings: &[Uniforms],
+   *) {
+     let mut internal_buffer = Vec::new();
+     for i in 0..count {
+   *    internal_buffer.push(vertex_shader_fn(i, bindings));
      }
-     console.log(JSON.stringify(internalBuffer));
+     println!("{internal_buffer:?}");
    }
    ```
 
    And then let's change our shader to use the uniforms
 
-   ```js
-   const vertexShader = (v, bindings) => {
-     const uniforms = bindings[0];
-     return v * uniforms.multiplier;
+   ```rust
+   struct Uniforms {
+     multiplier: f32,
+   }
+
+   let vertex_shader = |i: usize, bindings: &[Uniforms]| {
+     let uniforms = &bindings[0];
+     i as f32 * uniforms.multiplier
    };
-   const count = 4;
-   const uniforms1 = {multiplier: 3};
-   const uniforms2 = {multiplier: 5};
-   const bindings1 = [uniforms1];
-   const bindings2 = [uniforms2];
-   draw(count, vertexShader, bindings1);
-   // outputs [0, 3, 6, 9]
-   draw(count, vertexShader, bindings2);
-   // outputs [0, 5, 10, 15]
+   let count = 4;
+   let uniforms1 = Uniforms { multiplier: 3.0 };
+   let uniforms2 = Uniforms { multiplier: 5.0 };
+   let bindings1 = [uniforms1];
+   let bindings2 = [uniforms2];
+   draw(count, vertex_shader, &bindings1);
+   // outputs [0.0, 3.0, 6.0, 9.0]
+   draw(count, vertex_shader, &bindings2);
+   // outputs [0.0, 5.0, 10.0, 15.0]
    ```
 
    So, the concept of uniforms hopefully seems pretty straight forward. The
@@ -98,7 +107,7 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
 
 2. Attributes (vertex shaders only)
 
-   Attributes provide per shader iteration data. In `Array.map` above,
+   Attributes provide per shader iteration data. In `map` above,
    the value `v` was pulled from `input` and automatically provided
    to the function. This is very similar to an attribute in a shader.
 
@@ -108,71 +117,84 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
 
    Imagine we updated `draw` like this.
 
-   ```js
-   *function draw(count, vertexShaderFn, bindings, attribsSpec) {
-     const internalBuffer = [];
-     for (let i = 0; i < count; ++i) {
-   *    const attribs = getAttribs(attribsSpec, i);
-   *    internalBuffer[i] = vertexShaderFn(i, bindings, attribs);
+   ```rust
+   +struct Attrib<'a> {
+   +  source: &'a [f32],
+   +  offset: usize,
+   +  stride: usize,
+   +}
+
+   *fn draw(
+   *  count: usize,
+   *  vertex_shader_fn: impl Fn(usize, &[&[f32]], &[f32]) -> f32,
+   *  bindings: &[&[f32]],
+   *  attribs_spec: &[Attrib],
+   *) {
+     let mut internal_buffer = Vec::new();
+     for i in 0..count {
+   *    let attribs = get_attribs(attribs_spec, i);
+   *    internal_buffer.push(vertex_shader_fn(i, bindings, &attribs));
      }
-     console.log(JSON.stringify(internalBuffer));
+     println!("{internal_buffer:?}");
    }
 
-   +function getAttribs(attribs, ndx) {
-   +  return attribs.map(({source, offset, stride}) => source[ndx * stride + offset]);
+   +fn get_attribs(attribs: &[Attrib], ndx: usize) -> Vec<f32> {
+   +  attribs.iter().map(|a| a.source[ndx * a.stride + a.offset]).collect()
    +}
    ```
 
    Then we could call it like this.
 
-   ```js
-   const buffer1 = [0, 1, 2, 3, 4, 5, 6, 7];
-   const buffer2 = [11, 22, 33, 44];
-   const attribsSpec = [
-     { source: buffer1, offset: 0, stride: 2, },
-     { source: buffer1, offset: 1, stride: 2, },
-     { source: buffer2, offset: 0, stride: 1, },
+   ```rust
+   let buffer1 = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+   let buffer2 = [11.0, 22.0, 33.0, 44.0];
+   let attribs_spec = [
+     Attrib { source: &buffer1, offset: 0, stride: 2 },
+     Attrib { source: &buffer1, offset: 1, stride: 2 },
+     Attrib { source: &buffer2, offset: 0, stride: 1 },
    ];
-   const vertexShader = (v, bindings, attribs) => (attribs[0] + attribs[1]) * attribs[2];
-   const bindings = [];
-   const count = 4;
-   draw(count, vertexShader, bindings, attribsSpec);
-   // outputs [11, 110, 297, 572]
+   let vertex_shader = |_i: usize, _bindings: &[&[f32]], attribs: &[f32]|
+       (attribs[0] + attribs[1]) * attribs[2];
+   let bindings: &[&[f32]] = &[];
+   let count = 4;
+   draw(count, vertex_shader, bindings, &attribs_spec);
+   // outputs [11.0, 110.0, 297.0, 572.0]
    ```
 
-   As you can see above, `getAttribs` uses `offset`, and `stride` to
+   As you can see above, `get_attribs` uses `offset`, and `stride` to
    compute indices into the corresponding `source` buffer and pulls out values.
    The pulled out values are then sent to the shader. On each iteration
    `attribs` will be different.
 
    ```
     iteration |  attribs
-    ----------+-------------
-        0     | [0, 1, 11]
-        1     | [2, 3, 22]
-        2     | [4, 5, 33]
-        3     | [6, 7, 44]
+    ----------+------------------
+        0     | [0.0, 1.0, 11.0]
+        1     | [2.0, 3.0, 22.0]
+        2     | [4.0, 5.0, 33.0]
+        3     | [6.0, 7.0, 44.0]
    ```
 
 3. Raw Buffers
 
-   Buffers are effectively arrays, again for our analogy let's make version
+   Buffers are effectively arrays, again for our analogy let's make a version
    of `draw` that uses buffers. We'll pass these buffers via `bindings`
-   like we did with uniforms.
+   like we did with uniforms — which means, this time, `bindings` is a slice
+   of buffers, a `&[&[f32]]`.
 
-   ```js
-   const buffer1 = [0, 1, 2, 3, 4, 5, 6, 7];
-   const buffer2 = [11, 22, 33, 44];
-   const attribsSpec = [];
-   const bindings = [
-     buffer1,
-     buffer2,
+   ```rust
+   let buffer1 = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+   let buffer2 = [11.0, 22.0, 33.0, 44.0];
+   let attribs_spec: &[Attrib] = &[];
+   let bindings: &[&[f32]] = &[
+     &buffer1,
+     &buffer2,
    ];
-   const vertexShader = (ndx, bindings, attribs) => 
+   let vertex_shader = |ndx: usize, bindings: &[&[f32]], _attribs: &[f32]|
        (bindings[0][ndx * 2] + bindings[0][ndx * 2 + 1]) * bindings[1][ndx];
-   const count = 4;
-   draw(count, vertexShader, bindings, attribsSpec);
-   // outputs [11, 110, 297, 572]
+   let count = 4;
+   draw(count, vertex_shader, bindings, attribs_spec);
+   // outputs [11.0, 110.0, 297.0, 572.0]
    ```
 
    Here we got the same result as we did with attributes except this time,
@@ -192,18 +214,18 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    is they can be sampled. Sampling means that we can ask the GPU to compute
    a value between the values we supply. We'll cover that this means in
    [the article on textures](webgpu-textures.html). For now, let's make
-   a JavaScript analogy again.
+   a Rust analogy again.
 
-   First we'll create a function `textureSample` that *samples* an array
+   First we'll create a function `texture_sample` that *samples* an array
    between values.
 
-   ```js
-   function textureSample(texture, ndx) {
-     const startNdx = ndx | 0;  // round down to an int
-     const fraction = ndx % 1;  // get the fractional part between indices
-     const start = texture[startNdx];
-     const end = texture[startNdx + 1];
-     return start + (end - start) * fraction;  // compute value between start and end
+   ```rust
+   fn texture_sample(texture: &[f32], ndx: f32) -> f32 {
+     let start_ndx = ndx as usize;      // round down to an int
+     let fraction = ndx % 1.0;          // get the fractional part between indices
+     let start = texture[start_ndx];
+     let end = texture[start_ndx + 1];
+     start + (end - start) * fraction   // compute value between start and end
    }
    ```
 
@@ -211,25 +233,25 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
 
    Now let's use that in a shader.
 
-   ```js
-   const texture = [10, 20, 30, 40, 50, 60, 70, 80];
-   const attribsSpec = [];
-   const bindings = [
-     texture,
+   ```rust
+   let texture = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
+   let attribs_spec: &[Attrib] = &[];
+   let bindings: &[&[f32]] = &[
+     &texture,
    ];
-   const vertexShader = (ndx, bindings, attribs) =>
-       textureSample(bindings[0], ndx * 1.75);
-   const count = 4;
-   draw(count, vertexShader, bindings, attribsSpec);
-   // outputs [10, 27.5, 45, 62.5]
+   let vertex_shader = |ndx: usize, bindings: &[&[f32]], _attribs: &[f32]|
+       texture_sample(bindings[0], ndx as f32 * 1.75);
+   let count = 4;
+   draw(count, vertex_shader, bindings, attribs_spec);
+   // outputs [10.0, 27.5, 45.0, 62.5]
    ```
 
-   When `ndx` is `3` we'll pass in `3 * 1.75` or `5.25` into `textureSample`.
-   That will compute a `startNdx` of `5`. So we'll pull out indices `5` and `6`
+   When `ndx` is `3` we'll pass in `3 * 1.75` or `5.25` into `texture_sample`.
+   That will compute a `start_ndx` of `5`. So we'll pull out indices `5` and `6`
    which are `60` and `70`. `fraction` becomes `0.25`, so we'll get
    `60 + (70 - 60) * 0.25` which is `62.5`.
 
-   Looking at the code above we could write `textureSample` ourselves in our shader
+   Looking at the code above we could write `texture_sample` ourselves in our shader
    function. We could manually pull out the 2 values and interpolate between them.
    The reason the GPU has this special functionality is it can do it much faster
    and, depending on the settings, it may read as many as sixteen 4-float values
@@ -253,11 +275,11 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    values to help draw them. The second takes that info plus a pixel number
    and gives us a pixel position. Example:
 
-   ```js
-   const line = calcLine([10, 10], [13, 13]);
-   for (let i = 0; i < line.numPixels; ++i) {
-     const p = calcLinePoint(line, i);
-     console.log(p);
+   ```rust
+   let line = calc_line(&[10.0, 10.0], &[13.0, 13.0]);
+   for i in 0..line.num_pixels {
+     let p = calc_line_point(&line, i);
+     println!("{},{}", p[0], p[1]);
    }
    // prints
    // 10,10
@@ -265,40 +287,49 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    // 12,12
    ```
    
-   Note: How `calcLine` and `calcLinePoint` work are unimportant, what's
+   Note: How `calc_line` and `calc_line_point` work are unimportant, what's
    important is that they do work and let the loop above provide
    the pixel positions for a line. **Though if you're curious, see the live
    code example near the bottom of the article.**
 
-   So, let's change our vertex shader so it outputs 2 values per iteration. We could do that in many ways. Here's one.
+   So, let's change our vertex shader so it outputs 2 values per iteration. We
+   could do that in many ways. Here's one. (In Rust that also means updating
+   the vertex shader function type `draw` accepts so it returns an `[f32; 2]`
+   instead of an `f32`.)
 
-   ```js
-   const buffer1 = [5, 0, 25, 4];
-   const attribsSpec = [
-     {source: buffer1, offset: 0, stride: 2},
-     {source: buffer1, offset: 1, stride: 2},
+   ```rust
+   let buffer1 = [5.0, 0.0, 25.0, 4.0];
+   let attribs_spec = [
+     Attrib { source: &buffer1, offset: 0, stride: 2 },
+     Attrib { source: &buffer1, offset: 1, stride: 2 },
    ];
-   const bindings = [];
-   const dest = new Array(2);
-   const vertexShader = (ndx, bindings, attribs) => [attribs[0], attribs[1]];
-   const count = 2;
-   draw(count, vertexShader, bindings, attribsSpec);
-   // outputs [[5, 0], [25, 4]]
+   let bindings: &[&[f32]] = &[];
+   let vertex_shader = |_ndx: usize, _bindings: &[&[f32]], attribs: &[f32]|
+       [attribs[0], attribs[1]];
+   let count = 2;
+   draw(count, vertex_shader, bindings, &attribs_spec);
+   // outputs [[5.0, 0.0], [25.0, 4.0]]
    ```
 
    Now let's write some code that loops over points 2 at a time and 
-   calls `rasterizeLines` to rasterize a line.
+   calls `rasterize_lines` to rasterize a line.
 
-   ```js
-   function rasterizeLines(dest, destWidth, inputs, fragShaderFn, bindings) {
-     for (let ndx = 0; ndx < inputs.length - 1; ndx += 2) {
-       const p0 = inputs[ndx    ];
-       const p1 = inputs[ndx + 1];
-       const line = calcLine(p0, p1);
-       for (let i = 0; i < line.numPixels; ++i) {
-         const p = calcLinePoint(line, i);
-         const offset = p[1] * destWidth + p[0];  // y * width + x
-         dest[offset] = fragShaderFn(bindings);
+   ```rust
+   fn rasterize_lines(
+     dest: &mut [i32],
+     dest_width: usize,
+     inputs: &[[f32; 2]],
+     frag_shader_fn: impl Fn(&[&[f32]]) -> i32,
+     bindings: &[&[f32]],
+   ) {
+     for ndx in (0..inputs.len() - 1).step_by(2) {
+       let p0 = &inputs[ndx    ];
+       let p1 = &inputs[ndx + 1];
+       let line = calc_line(p0, p1);
+       for i in 0..line.num_pixels {
+         let p = calc_line_point(&line, i);
+         let offset = p[1] as usize * dest_width + p[0] as usize;  // y * width + x
+         dest[offset] = frag_shader_fn(bindings);
        }
      }
    }
@@ -306,47 +337,57 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
 
    We can update `draw` to use that code like this
 
-   ```js
-   -function draw(count, vertexShaderFn, bindings, attribsSpec) {
-   +function draw(dest, destWidth,
-   +              count, vertexShaderFn, fragmentShaderFn,
-   +              bindings, attribsSpec,
+   ```rust
+   -fn draw(
+   -  count: usize,
+   -  vertex_shader_fn: impl Fn(usize, &[&[f32]], &[f32]) -> [f32; 2],
+   -  bindings: &[&[f32]],
+   -  attribs_spec: &[Attrib],
+   -) {
+   +fn draw(
+   +  dest: &mut [i32], dest_width: usize,
+   +  count: usize,
+   +  vertex_shader_fn: impl Fn(usize, &[&[f32]], &[f32]) -> [f32; 2],
+   +  fragment_shader_fn: impl Fn(&[&[f32]]) -> i32,
+   +  bindings: &[&[f32]],
+   +  attribs_spec: &[Attrib],
    +) {
-     const internalBuffer = [];
-     for (let i = 0; i < count; ++i) {
-       const attribs = getAttribs(attribsSpec, i);
-       internalBuffer[i] = vertexShaderFn(i, bindings, attribs);
+     let mut internal_buffer = Vec::new();
+     for i in 0..count {
+       let attribs = get_attribs(attribs_spec, i);
+       internal_buffer.push(vertex_shader_fn(i, bindings, &attribs));
      }
-   -  console.log(JSON.stringify(internalBuffer));
-   +  rasterizeLines(dest, destWidth, internalBuffer,
-   +                 fragmentShaderFn, bindings);
+   -  println!("{internal_buffer:?}");
+   +  rasterize_lines(dest, dest_width, &internal_buffer,
+   +                  fragment_shader_fn, bindings);
    }
    ```
 
-   Now we're actually using `internalBuffer` 😃!
+   Now we're actually using `internal_buffer` 😃!
    
    Let's update the code that calls `draw`.
 
-   ```js
-   const buffer1 = [5, 0, 25, 4];
-   const attribsSpec = [
-     {source: buffer1, offset: 0, stride: 2},
-     {source: buffer1, offset: 1, stride: 2},
+   ```rust
+   let buffer1 = [5.0, 0.0, 25.0, 4.0];
+   let attribs_spec = [
+     Attrib { source: &buffer1, offset: 0, stride: 2 },
+     Attrib { source: &buffer1, offset: 1, stride: 2 },
    ];
-   const bindings = [];
-   const vertexShader = (ndx, bindings, attribs) => [attribs[0], attribs[1]];
-   const count = 2;
-   -draw(count, vertexShader, bindings, attribsSpec);
+   let bindings: &[&[f32]] = &[];
+   let vertex_shader = |_ndx: usize, _bindings: &[&[f32]], attribs: &[f32]|
+       [attribs[0], attribs[1]];
+   let count = 2;
+   -draw(count, vertex_shader, bindings, &attribs_spec);
 
-   +const width = 30;
-   +const height = 5;
-   +const pixels = new Array(width * height).fill(0);
-   +const fragShader = (bindings) => 6;
+   +let width = 30;
+   +let height = 5;
+   +let mut pixels = vec![0; width * height];
+   +let frag_shader = |_bindings: &[&[f32]]| 6;
 
    *draw(
-   *   pixels, width,
-   *   count, vertexShader, fragShader,
-   *   bindings, attribsSpec);
+   *   &mut pixels, width,
+   *   count, vertex_shader, frag_shader,
+   *   bindings, &attribs_spec);
    ```
 
    If we print `pixels` as a rectangle where `0` becomes `.` we'd get this
@@ -363,29 +404,30 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    there is no way to output anything different for each pixel. This is where
    inter-stage variables come in. Let's change our first shader to output an extra value.
 
-   ```js
-   const buffer1 = [5, 0, 25, 4];
-   +const buffer2 = [9, 3];
-   const attribsSpec = [
-     {source: buffer1, offset: 0, stride: 2},
-     {source: buffer1, offset: 1, stride: 2},
-   +  {source: buffer2, offset: 0, stride: 1},
+   ```rust
+   let buffer1 = [5.0, 0.0, 25.0, 4.0];
+   +let buffer2 = [9.0, 3.0];
+   let attribs_spec = [
+     Attrib { source: &buffer1, offset: 0, stride: 2 },
+     Attrib { source: &buffer1, offset: 1, stride: 2 },
+   +  Attrib { source: &buffer2, offset: 0, stride: 1 },
    ];
-   const bindings = [];
-   const dest = new Array(2);
-   const vertexShader = (ndx, bindings, attribs) => 
+   let bindings: &[&[f32]] = &[];
+   let vertex_shader = |_ndx: usize, _bindings: &[&[f32]], attribs: &[f32]|
    -    [attribs[0], attribs[1]];
-   +    [[attribs[0], attribs[1]], [attribs[2]]];
+   +    vec![vec![attribs[0], attribs[1]], vec![attribs[2]]];
 
    ...
    ```
 
-   If we changed nothing else, after the loop inside `draw`, `internalBuffer` would have these values
+   Our vertex shader now returns a *list of arrays*: the first array is the
+   position, anything after it is an extra value. If we changed nothing else,
+   after the loop inside `draw`, `internal_buffer` would have these values
 
-   ```js
-    [ 
-      [[ 5, 0], [9]],
-      [[25, 4], [3]],
+   ```rust
+    [
+      [[ 5.0, 0.0], [9.0]],
+      [[25.0, 4.0], [3.0]],
     ]
    ```
 
@@ -393,50 +435,58 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    the line we are. We can use this to interpolate the extra value we just
    added.
 
-   ```js
-   function rasterizeLines(dest, destWidth, inputs, fragShaderFn, bindings) {
-     for(let ndx = 0; ndx < inputs.length - 1; ndx += 2) {
-   -    const p0 = inputs[ndx    ];
-   -    const p1 = inputs[ndx + 1];
-   +    const p0 = inputs[ndx    ][0];
-   +    const p1 = inputs[ndx + 1][0];
-   +    const v0 = inputs[ndx    ].slice(1);  // everything but the first value
-   +    const v1 = inputs[ndx + 1].slice(1);
-       const line = calcLine(p0, p1);
-       for (let i = 0; i < line.numPixels; ++i) {
-         const p = calcLinePoint(line, i);
-   +      const t = i / line.numPixels;
-   +      const interStageVariables = interpolateArrays(v0, v1, t);
-         const offset = p[1] * destWidth + p[0];  // y * width + x
-   -      dest[offset] = fragShaderFn(bindings);
-   +      dest[offset] = fragShaderFn(bindings, interStageVariables);
+   ```rust
+   fn rasterize_lines(
+     dest: &mut [i32],
+     dest_width: usize,
+   -  inputs: &[[f32; 2]],
+   -  frag_shader_fn: impl Fn(&[&[f32]]) -> i32,
+   +  inputs: &[Vec<Vec<f32>>],
+   +  frag_shader_fn: impl Fn(&[&[f32]], &[Vec<f32>]) -> i32,
+     bindings: &[&[f32]],
+   ) {
+     for ndx in (0..inputs.len() - 1).step_by(2) {
+   -    let p0 = &inputs[ndx    ];
+   -    let p1 = &inputs[ndx + 1];
+   +    let p0 = &inputs[ndx    ][0];
+   +    let p1 = &inputs[ndx + 1][0];
+   +    let v0 = &inputs[ndx    ][1..];  // everything but the first value
+   +    let v1 = &inputs[ndx + 1][1..];
+       let line = calc_line(p0, p1);
+       for i in 0..line.num_pixels {
+         let p = calc_line_point(&line, i);
+   +      let t = i as f32 / line.num_pixels as f32;
+   +      let inter_stage_variables = interpolate_arrays(v0, v1, t);
+         let offset = p[1] as usize * dest_width + p[0] as usize;  // y * width + x
+   -      dest[offset] = frag_shader_fn(bindings);
+   +      dest[offset] = frag_shader_fn(bindings, &inter_stage_variables);
        }
      }
    }
 
-   +// interpolateArrays([[1,2]], [[3,4]], 0.25) => [[1.5, 2.5]]
-   +function interpolateArrays(v0, v1, t) {
-   +  return v0.map((array0, ndx) => {
-   +    const array1 = v1[ndx];
-   +    return interpolateValues(array0, array1, t);
-   +  });
+   +// interpolate_arrays(&[vec![1.0, 2.0]], &[vec![3.0, 4.0]], 0.25) => [[1.5, 2.5]]
+   +fn interpolate_arrays(v0: &[Vec<f32>], v1: &[Vec<f32>], t: f32) -> Vec<Vec<f32>> {
+   +  v0.iter().enumerate().map(|(ndx, array0)| {
+   +    let array1 = &v1[ndx];
+   +    interpolate_values(array0, array1, t)
+   +  }).collect()
    +}
 
-   +// interpolateValues([1,2], [3,4], 0.25) => [1.5, 2.5]
-   +function interpolateValues(array0, array1, t) {
-   +  return array0.map((a, ndx) => {
-   +    const b = array1[ndx];
-   +    return a + (b - a) * t;
-   +  });
+   +// interpolate_values(&[1.0, 2.0], &[3.0, 4.0], 0.25) => [1.5, 2.5]
+   +fn interpolate_values(array0: &[f32], array1: &[f32], t: f32) -> Vec<f32> {
+   +  array0.iter().enumerate().map(|(ndx, a)| {
+   +    let b = array1[ndx];
+   +    a + (b - a) * t
+   +  }).collect()
    +}
    ```
 
    Now we can use those inter-stage variables in our fragment shader
 
-   ```js
-   -const fragShader = (bindings) => 6;
-   +const fragShader = (bindings, interStageVariables) => 
-   +    interStageVariables[0] | 0; // convert to int
+   ```rust
+   -let frag_shader = |_bindings: &[&[f32]]| 6;
+   +let frag_shader = |_bindings: &[&[f32]], inter_stage_variables: &[Vec<f32>]|
+   +    inter_stage_variables[0][0] as i32;  // convert to int
    ```
 
    If we ran it now we'd see results like this
@@ -449,12 +499,12 @@ Vertex And Fragment shaders can take data in 6 ways. Uniforms, Attributes, Buffe
    .......................33.....
    ```
 
-   The first iteration of the vertex shader output `[[5,0], [9]]` and
-   the 2nd iteration output `[[25,4], [3]]` and you can see, 
+   The first iteration of the vertex shader output `[[5.0, 0.0], [9.0]]` and
+   the 2nd iteration output `[[25.0, 4.0], [3.0]]` and you can see, 
    as the fragment shader was called, the 2nd value of each of those
    was interpolated between the two values.
 
-   We could make another function `mapTriangle` that given 3 points
+   We could make another function `map_triangle` that given 3 points
    rasterized a triangle calling the fragment shader function for each
    point inside the triangle. It would interpolate the inter-stage variables
    from 3 points instead of 2.
@@ -464,14 +514,14 @@ useful to play around with them to understand them.
 
 {{{example url="../webgpu-javascript-analogies.html"}}}
 
-What happens in the JavaScript above is an analogy. The details
+What happens in the Rust above is an analogy. The details
 of how inter-stage variables are actually interpolated, how lines are drawn, how
 buffers are accessed, how textures are sampled, uniforms, attributes specified,
 etc... are different in WebGPU, but the concepts are very similar so
-I hope this JavaScript analogy provided some help in getting a mental
+I hope this Rust analogy provided some help in getting a mental
 model of what's happening.
 
-Why is it this way? Well, if you look at `draw` and `rasterizeLines`
+Why is it this way? Well, if you look at `draw` and `rasterize_lines`
 you might notice that each iteration is entirely independent of
 the other iterations. Another way to say this, you could process
 each iteration in any order. Instead of 0, 1, 2, 3, 4 you could
@@ -493,7 +543,7 @@ The biggest limitations are:
 3. A shader has to be careful if it references things it writes to, the thing it's
    generating values for.
 
-   When you think about it this makes sense. Imagine `fragShader`
+   When you think about it this makes sense. Imagine `frag_shader`
    above tried to reference `dest` directly. That would mean when
    trying to parallelize things it would be impossible to coordinate.
    Which iteration would go first? If the 3rd iteration referenced `dest[0]`

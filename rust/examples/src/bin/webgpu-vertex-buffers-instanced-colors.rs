@@ -42,34 +42,17 @@ fn create_circle_vertices(options: CircleVerticesOptions) -> (Vec<f32>, u32) {
         start_angle,
         end_angle,
     } = options;
-    // 2 triangles per subdivision, 3 verts per tri
+    // 2 triangles per subdivision, 3 verts per tri, 2 values (xy) each.
     let num_vertices = num_subdivisions * 3 * 2;
-    // 2 32-bit values for position (xy) and 1 32-bit value for color (rgb_)
-    // The 32-bit color value will be written/read as 4 8-bit values
-    let mut vertex_data = vec![0.0f32; (num_vertices * (2 + 1)) as usize];
+    let mut vertex_data = vec![0.0f32; (num_subdivisions * 2 * 3 * 2) as usize];
 
     let mut offset = 0;
-    let mut color_offset = 8;
-    let mut add_vertex = |x: f32, y: f32, [r, g, b]: [f32; 3]| {
+    let mut add_vertex = |x: f32, y: f32| {
         vertex_data[offset] = x;
         offset += 1;
         vertex_data[offset] = y;
         offset += 1;
-        offset += 1; // skip the color
-
-        // a u8 view of the same data as vertex_data
-        let color_data: &mut [u8] = bytemuck::cast_slice_mut(&mut vertex_data);
-        color_data[color_offset] = (r * 255.0) as u8;
-        color_offset += 1;
-        color_data[color_offset] = (g * 255.0) as u8;
-        color_offset += 1;
-        color_data[color_offset] = (b * 255.0) as u8;
-        color_offset += 1;
-        color_offset += 9; // skip extra byte and the position
     };
-
-    let inner_color = [1.0, 1.0, 1.0];
-    let outer_color = [0.1, 0.1, 0.1];
 
     // 2 vertices per subdivision
     //
@@ -89,14 +72,14 @@ fn create_circle_vertices(options: CircleVerticesOptions) -> (Vec<f32>, u32) {
         let s2 = angle2.sin();
 
         // first triangle
-        add_vertex(c1 * radius, s1 * radius, outer_color);
-        add_vertex(c2 * radius, s2 * radius, outer_color);
-        add_vertex(c1 * inner_radius, s1 * inner_radius, inner_color);
+        add_vertex(c1 * radius, s1 * radius);
+        add_vertex(c2 * radius, s2 * radius);
+        add_vertex(c1 * inner_radius, s1 * inner_radius);
 
         // second triangle
-        add_vertex(c1 * inner_radius, s1 * inner_radius, inner_color);
-        add_vertex(c2 * radius, s2 * radius, outer_color);
-        add_vertex(c2 * inner_radius, s2 * inner_radius, inner_color);
+        add_vertex(c1 * inner_radius, s1 * inner_radius);
+        add_vertex(c2 * radius, s2 * radius);
+        add_vertex(c2 * inner_radius, s2 * inner_radius);
     }
 
     (vertex_data, num_vertices)
@@ -107,7 +90,7 @@ struct ObjectInfo {
 }
 
 async fn run() {
-    let mut app = App::new("WebGPU Vertex Buffer vertices - 2 attributes 8bit colors").await;
+    let mut app = App::new("WebGPU Vertex Buffers with instanced colors").await;
     app.auto_resize = true;
 
     let module = app
@@ -121,7 +104,6 @@ async fn run() {
         @location(1) color: vec4f,
         @location(2) offset: vec2f,
         @location(3) scale: vec2f,
-        @location(4) perVertexColor: vec3f,
       };
 
       struct VSOutput {
@@ -135,7 +117,7 @@ async fn run() {
         var vsOut: VSOutput;
         vsOut.position = vec4f(
             vert.position * vert.scale + vert.offset, 0.0, 1.0);
-        vsOut.color = vert.color * vec4f(vert.perVertexColor, 1);
+        vsOut.color = vert.color;
         return vsOut;
       }
 
@@ -150,7 +132,7 @@ async fn run() {
     let pipeline = app
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("per vertex color"),
+            label: Some("flat colors"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &module,
@@ -158,7 +140,7 @@ async fn run() {
                 compilation_options: Default::default(),
                 buffers: &[
                     Some(wgpu::VertexBufferLayout {
-                        array_stride: 2 * 4 + 4, // 2 floats, 4 bytes each + 4 bytes
+                        array_stride: 2 * 4, // 2 floats, 4 bytes each
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &[
                             // position
@@ -167,28 +149,22 @@ async fn run() {
                                 offset: 0,
                                 format: wgpu::VertexFormat::Float32x2,
                             },
-                            // perVertexColor
-                            wgpu::VertexAttribute {
-                                shader_location: 4,
-                                offset: 8,
-                                format: wgpu::VertexFormat::Unorm8x4,
-                            },
                         ],
                     }),
                     Some(wgpu::VertexBufferLayout {
-                        array_stride: 4 + 2 * 4, // 4 bytes + 2 floats, 4 bytes each
+                        array_stride: 6 * 4, // 6 floats, 4 bytes each
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
                             // color
                             wgpu::VertexAttribute {
                                 shader_location: 1,
                                 offset: 0,
-                                format: wgpu::VertexFormat::Unorm8x4,
+                                format: wgpu::VertexFormat::Float32x4,
                             },
                             // offset
                             wgpu::VertexAttribute {
                                 shader_location: 2,
-                                offset: 4,
+                                offset: 16,
                                 format: wgpu::VertexFormat::Float32x2,
                             },
                         ],
@@ -224,7 +200,7 @@ async fn run() {
     let mut object_infos: Vec<ObjectInfo> = Vec::new();
 
     // create 2 vertex buffers
-    let static_unit_size = 4 + // color is 4 bytes
+    let static_unit_size = 4 * 4 + // color is 4 32bit floats (4bytes each)
         2 * 4; // offset is 2 32bit floats (4bytes each)
     let changing_unit_size = 2 * 4; // scale is 2 32bit floats (4bytes each)
     let static_vertex_buffer_size = static_unit_size * k_num_objects;
@@ -238,7 +214,7 @@ async fn run() {
     });
 
     let changing_vertex_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("changing storage for objects"),
+        label: Some("changing vertex for objects"),
         size: changing_vertex_buffer_size as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -246,28 +222,23 @@ async fn run() {
 
     // offsets to the various uniform values in float32 indices
     let k_color_offset = 0;
-    let k_offset_offset = 1;
+    let k_offset_offset = 4;
 
     let k_scale_offset = 0;
 
     {
-        let mut static_vertex_values_f32 = vec![0.0f32; static_vertex_buffer_size / 4];
+        let mut static_vertex_values = vec![0.0f32; static_vertex_buffer_size / 4];
         for i in 0..k_num_objects {
-            let static_offset_u8 = i * static_unit_size;
-            let static_offset_f32 = static_offset_u8 / 4;
+            let static_offset = i * (static_unit_size / 4);
 
             // These are only set once so set them now
-            // a u8 view of the same data as static_vertex_values_f32
-            let static_vertex_values_u8: &mut [u8] =
-                bytemuck::cast_slice_mut(&mut static_vertex_values_f32);
-            static_vertex_values_u8[static_offset_u8 + k_color_offset..][..4].copy_from_slice(&[
-                (rand(0.0, 1.0) * 255.0) as u8,
-                (rand(0.0, 1.0) * 255.0) as u8,
-                (rand(0.0, 1.0) * 255.0) as u8,
-                255,
+            static_vertex_values[static_offset + k_color_offset..][..4].copy_from_slice(&[
+                rand(0.0, 1.0),
+                rand(0.0, 1.0),
+                rand(0.0, 1.0),
+                1.0,
             ]); // set the color
-
-            static_vertex_values_f32[static_offset_f32 + k_offset_offset..][..2]
+            static_vertex_values[static_offset + k_offset_offset..][..2]
                 .copy_from_slice(&[rand(-0.9, 0.9), rand(-0.9, 0.9)]); // set the offset
 
             object_infos.push(ObjectInfo {
@@ -277,7 +248,7 @@ async fn run() {
         app.queue.write_buffer(
             &static_vertex_buffer,
             0,
-            bytemuck::cast_slice(&static_vertex_values_f32),
+            bytemuck::cast_slice(&static_vertex_values),
         );
     }
 

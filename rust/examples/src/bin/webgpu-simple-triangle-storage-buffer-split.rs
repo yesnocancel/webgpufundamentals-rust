@@ -145,8 +145,11 @@ async fn run() {
             scale: rand(0.2, 0.5),
         });
     }
-    app.queue
-        .write_buffer(&static_storage_buffer, 0, bytemuck::cast_slice(&static_storage_values));
+    app.queue.write_buffer(
+        &static_storage_buffer,
+        0,
+        bytemuck::cast_slice(&static_storage_values),
+    );
 
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bind group for objects"),

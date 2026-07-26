@@ -9,6 +9,7 @@ description = "Small helper used by the WebGPU Fundamentals in Rust examples: wi
 wgpu = { workspace = true }
 log = { workspace = true }
 futures-channel = { workspace = true }
+image = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 winit = { workspace = true }
@@ -32,4 +33,5 @@ web-sys = { workspace = true, features = [
     "ResizeObserverSize",
     "DomRectReadOnly",
     "console",
+    "Response",
 ] }

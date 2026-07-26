@@ -41,6 +41,36 @@ fn main() { wgpu_fun::start(run()); }
 - `wgpu_fun::print(&msg)` = `console.log` / `println!`.
 - `wgpu_fun::fail(&msg)` (wasm only) shows the red failure banner.
 
+## Examples with a settings GUI (muigui in the originals)
+
+The original pages import muigui from `../3rdparty/muigui-0.x.module.js` and
+bind a `settings` object. Converted pages KEEP the muigui panel in page JS;
+its onChange handlers call the wasm module's exported setters, and the Rust
+frame code reads current values from wgpu_fun's settings store:
+
+- Page HTML (hand-written, gen script won't handle these):
+
+  ```html
+  <script type="module">
+  import GUI from './3rdparty/muigui-0.x.module.js';
+  import init, * as wasm from './wasm/<name>/<name>.js';
+  await init();
+  const settings = { scale: 1 };
+  const gui = new GUI();
+  gui.add(settings, 'scale', 0.1, 4).onChange(v => wasm.set_setting_num('scale', v));
+  </script>
+  ```
+
+  (`set_setting_num`, `set_setting_str`, `set_setting_bool` are exported from
+  every example's wasm module via wgpu_fun.)
+
+- Rust side reads `wgpu_fun::setting_f64("scale", 1.0)` (or `setting_str`,
+  `setting_bool`) inside the frame callback; defaults must match the page's
+  initial `settings` object. A change automatically triggers a re-render for
+  `RenderMode::Once` examples.
+- Native test mode can override via `WGPU_FUN_SETTING_<name>=<value>` env
+  vars — use this to verify GUI-dependent rendering paths.
+
 ## Porting rules for examples
 
 - WGSL shader code is kept **character-for-character identical** to the

@@ -13,8 +13,8 @@ shader programs.
 
 ## WGSL is strictly typed
 
-Unlike JavaScript, WGSL requires knowing the types of every variable, struct field,
-function parameter and function return type. If you've used typescript, rust, C++, C#,
+Like Rust, WGSL requires knowing the types of every variable, struct field,
+function parameter and function return type. If you've used Rust, TypeScript, C++, C#,
 Java, Swift, Kotlin, etc then you're used to this.
 
 ### plain types
@@ -29,12 +29,12 @@ The *plain* types in WGSL are:
 
 ### variable declaration
 
-In JavaScript you can declare variables and functions like this.
+In Rust you can declare variables and functions like this.
 
-```js
-var a = 1;
-let c = 3;
-function d(e) { return e * 2; }
+```rust
+let mut a = 1.0;
+let c = 3.0;
+fn d(e: f32) -> f32 { return e * 2.0; }
 ```
 
 In WGSL the full form of those would be
@@ -46,11 +46,12 @@ fn d(e: f32) -> f32 { return e * 2; }
 ```
 
 The important thing to note from above is having to add `: <type>` like `: f32`
-for the variable declarations and `-> <type>` to function declarations.
+for the variable declarations and `-> <type>` to function declarations, just
+like Rust's fully annotated form `let c: f32 = 3.0;`.
 
 ### auto types
 
-WGSL has a *shortcut* for variables. Similar to typescript, if you don't
+WGSL has a *shortcut* for variables. Like Rust, if you don't
 declare the type of the variable then it automatically becomes the type of
 the expression on the right.
 
@@ -105,15 +106,15 @@ let d = 1 + 2.0;      // d is a f32
 7.0  // AbstractFloat
 ```
 
-## `let` `var` and `const` mean different things in WGSL vs JavaScript
+## `let` `var` and `const` mean slightly different things in WGSL vs Rust
 
-In JavaScript `var` is a variable with function scope. `let` is a variable with block scope. `const` is a constant variable (can't be changed) [^references] with block scope.
+In Rust `let` is an immutable binding with block scope, `let mut` is a mutable variable, and `const` is a compile time constant. [^shadowing]
 
-[^references]: Variables in JavaScript hold base types of `undefined`, `null`, `boolean`, `number`, `string`, `reference-to-object`.
-It can be confusing for people new to programming that `const o = {name: 'foo'}; o.name = 'bar';` works because `o` was declared as `const`.
-The thing is, `o` is const. It is a constant reference to the object. You can not change which object `o` references. You can change object itself.
+[^shadowing]: One Rust habit to leave behind: shadowing. In Rust it's idiomatic to
+re-declare a name, as in `let a = 1; let a = a + 1;`. WGSL does not allow declaring
+a new variable with the same name in the same scope.
 
-In WGSL all variables have block scope. `var` is a variable that has storage and so is mutable. `let` is a constant value.
+In WGSL all variables have block scope. `var` is a variable that has storage and so is mutable (like Rust's `let mut`). `let` is a constant value (like Rust's plain `let`).
 
 ```wgsl
 fn foo() {
@@ -124,8 +125,8 @@ fn foo() {
 }
 ```
 
-`const` is not a variable, it's a compile time constant. You can
-not use `const` for something that happens at runtime.
+`const` is not a variable, it's a compile time constant, much like Rust's
+`const`. You can not use `const` for something that happens at runtime.
 
 ```wgsl
 const one = 1;              // ok
@@ -601,27 +602,19 @@ Above `blap.vNdx` gets its value from the builtin `vertex_index` and `blap.iNdx`
 </div>
 
 It's important to note here, there isn't one builtin called `position`. There are 2 builtins, an output called `position` used
-in vertex shaders, and an input called `position` used in fragment shaders. This is no different than having 2 functions in JavaScript
+in vertex shaders, and an input called `position` used in fragment shaders. This is no different than having 2 functions in Rust
 
-```js
-/**
- * function that has position as an output
- * @param \{{array: number[], index: number, position: Float32Array}} params
- */
-function getVertex(params) {
-  const { array, index, position } = params;
+```rust
+// function that has position as an output
+fn get_vertex(array: &[f32], index: usize, position: &mut [f32; 3]) {
   position[0] = array[index];
   position[1] = array[index + 1];
   position[2] = array[index + 2];
 }
 
-/**
- * function that has position as an input
- * @param \{{position: Float32Array}} params
- */
-function printValue(params) {
-  const { position } = params;
-  return [...position].map(v => v.toString()).join(', ');
+// function that has position as an input
+fn print_value(position: &[f32; 3]) -> String {
+  position.map(|v| v.to_string()).join(", ")
 }
 ```
 
@@ -915,8 +908,9 @@ if a < 5 {
 
 ### no ternary operator
 
-Many languages have a ternary operator `condition ? trueExpression : falseExpression`
-WGSL does not. WGSL does have `select`.
+Many languages have a ternary operator `condition ? trueExpression : falseExpression`.
+WGSL does not. Neither does Rust, but where Rust lets you use `if` as an
+expression, WGSL's `if` is a statement. WGSL does have `select`.
 
 ```wgsl
   let a = select(falseExpression, trueExpression, condition);
@@ -924,7 +918,8 @@ WGSL does not. WGSL does have `select`.
 
 ### `++` and `--` are statements, not expressions.
 
-Many languages have *pre-increment* and *post-increment* operators.
+Many languages, like JavaScript and C++, have *pre-increment* and
+*post-increment* operators.
 
 ```js
 // JavaScript
@@ -933,7 +928,8 @@ let b = a++;  // b = 5, a = 6  (post-increment)
 let c = ++a;  // c = 7, a = 7  (pre-increment)
 ```
 
-WGSL has neither. It just has the increment and decrement statements.
+WGSL has neither (nor does Rust). WGSL does have increment and decrement
+statements, which Rust does not.
 
 ```wgsl
 // WGSL
@@ -945,12 +941,20 @@ a++;          // is now 6
 
 ## `+=`, `-=` are not expressions, they're assignment statements
 
+In some languages, like JavaScript, compound assignment is an expression that
+yields a value.
+
 ```js
 // JavaScript
 let a = 5;
 a += 2;          // a = 7
 let b = a += 2;  // a = 9, b = 9
 ```
+
+In WGSL, as in Rust[^unit-assign], it is not.
+
+[^unit-assign]: In Rust `a += 2` is technically an expression but it evaluates
+to `()`, so you can't use it as a value in any meaningful way.
 
 ```wgsl
 // WGSL

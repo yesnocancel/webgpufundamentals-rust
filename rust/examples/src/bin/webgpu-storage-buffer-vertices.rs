@@ -40,8 +40,10 @@ fn create_circle_vertices(
     // |/ / |
     // 2 3--5
     for i in 0..num_subdivisions {
-        let angle1 = start_angle + (i + 0) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
-        let angle2 = start_angle + (i + 1) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
+        let angle1 =
+            start_angle + (i + 0) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
+        let angle2 =
+            start_angle + (i + 1) as f32 * (end_angle - start_angle) / num_subdivisions as f32;
 
         let c1 = angle1.cos();
         let s1 = angle1.sin();
@@ -216,8 +218,11 @@ async fn run() {
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    app.queue
-        .write_buffer(&vertex_storage_buffer, 0, bytemuck::cast_slice(&vertex_data));
+    app.queue.write_buffer(
+        &vertex_storage_buffer,
+        0,
+        bytemuck::cast_slice(&vertex_data),
+    );
 
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bind group for objects"),

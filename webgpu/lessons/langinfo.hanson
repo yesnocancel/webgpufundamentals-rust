@@ -2,8 +2,8 @@
   language: 'English',
   langCode: 'en',   // if not specified will use folder
   defaultExampleCaption: "click here to open in a separate window",
-  title: 'webgpufundamentals',
-  description: 'Learn webgpu',
+  title: 'WebGPU Fundamentals in Rust',
+  description: 'Learn WebGPU with Rust and wgpu',
   link: 'http://webgpufundamentals.org/',
   commentSectionHeader: `
 <div>Questions? <a href="http://stackoverflow.com/questions/tagged/webgpu">Ask on stackoverflow</a>.</div>

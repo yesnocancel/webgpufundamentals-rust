@@ -22,6 +22,11 @@ pub struct App {
     /// by default: the canvas keeps its own resolution and CSS just
     /// stretches it, like a raw `<canvas>`.
     pub auto_resize: bool,
+    /// How the surface's alpha channel is composited with what's behind the
+    /// window/canvas, like the JS `alphaMode` canvas configuration option.
+    /// `Auto` (the default) behaves like `'opaque'`; use
+    /// `wgpu::CompositeAlphaMode::PreMultiplied` for `'premultiplied'`.
+    pub alpha_mode: wgpu::CompositeAlphaMode,
     surface: wgpu::Surface<'static>,
     canvas: HtmlCanvasElement,
     max_texture_dimension: u32,
@@ -37,6 +42,23 @@ fn canvas() -> HtmlCanvasElement {
         .expect("no <canvas> element on the page")
         .dyn_into()
         .unwrap()
+}
+
+// Exports the example pages' GUI code calls to change a setting from JS
+// (muigui onChange handlers). See settings.rs.
+#[wasm_bindgen]
+pub fn set_setting_num(name: &str, value: f64) {
+    crate::settings::set_setting(name, crate::SettingValue::Number(value));
+}
+
+#[wasm_bindgen]
+pub fn set_setting_str(name: &str, value: String) {
+    crate::settings::set_setting(name, crate::SettingValue::Text(value));
+}
+
+#[wasm_bindgen]
+pub fn set_setting_bool(name: &str, value: bool) {
+    crate::settings::set_setting(name, crate::SettingValue::Bool(value));
 }
 
 /// Show a message on the page, like the JS examples' fail().
@@ -92,6 +114,7 @@ impl App {
             queue,
             format,
             auto_resize: false,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
             surface,
             canvas,
             max_texture_dimension,
@@ -135,7 +158,7 @@ impl App {
                             height,
                             present_mode: wgpu::PresentMode::default(),
                             desired_maximum_frame_latency: 2,
-                            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                            alpha_mode: app.alpha_mode,
                             view_formats: vec![],
                         },
                     );
@@ -197,6 +220,16 @@ impl App {
                 web_sys::ResizeObserver::new(observer_cb.as_ref().unchecked_ref()).unwrap();
             observer.observe(&app.canvas);
             observer_cb.forget();
+        }
+
+        {
+            // Settings changes re-render Once-mode examples immediately.
+            let render = render.clone();
+            crate::settings::set_redraw_hook(move || {
+                if mode == RenderMode::Once {
+                    render();
+                }
+            });
         }
 
         if mode == RenderMode::Continuous {
