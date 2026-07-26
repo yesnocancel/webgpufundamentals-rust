@@ -17,7 +17,7 @@ them easiest to understand by reading them in order.
 9. [Scene Graphs](webgpu-scene-graphs.html)
 
 In the last post we had to move the F in front of the frustum because the
-`mat4.perspective` function puts the eye at at the origin (0, 0, 0) and
+`m4::perspective` function puts the eye at at the origin (0, 0, 0) and
 that objects in the frustum are between `-zNear` to `-zFar` in front of it.
 This means, anything we want to appear, needs to be placed this this space.
 
@@ -66,79 +66,79 @@ and 150 pixels down. "Pixels" probably make no sense as a unit in 3D and the
 perspective projection matrix we made uses positive Y up so, let's flip our F so
 positive Y is up and let's center it around the origin.
 
-```js
-  const positions = [
--    // left column
--    0, 0, 0,
--    30, 0, 0,
--    0, 150, 0,
--    30, 150, 0,
+```rust
+    let positions: Vec<f32> = vec![
+-        // left column
+-        0.0, 0.0, 0.0,
+-        30.0, 0.0, 0.0,
+-        0.0, 150.0, 0.0,
+-        30.0, 150.0, 0.0,
 -
--    // top rung
--    30, 0, 0,
--    100, 0, 0,
--    30, 30, 0,
--    100, 30, 0,
+-        // top rung
+-        30.0, 0.0, 0.0,
+-        100.0, 0.0, 0.0,
+-        30.0, 30.0, 0.0,
+-        100.0, 30.0, 0.0,
 -
--    // middle rung
--    30, 60, 0,
--    70, 60, 0,
--    30, 90, 0,
--    70, 90, 0,
+-        // middle rung
+-        30.0, 60.0, 0.0,
+-        70.0, 60.0, 0.0,
+-        30.0, 90.0, 0.0,
+-        70.0, 90.0, 0.0,
 -
--    // left column back
--    0, 0, 30,
--    30, 0, 30,
--    0, 150, 30,
--    30, 150, 30,
+-        // left column back
+-        0.0, 0.0, 30.0,
+-        30.0, 0.0, 30.0,
+-        0.0, 150.0, 30.0,
+-        30.0, 150.0, 30.0,
 -
--    // top rung back
--    30, 0, 30,
--    100, 0, 30,
--    30, 30, 30,
--    100, 30, 30,
+-        // top rung back
+-        30.0, 0.0, 30.0,
+-        100.0, 0.0, 30.0,
+-        30.0, 30.0, 30.0,
+-        100.0, 30.0, 30.0,
 -
--    // middle rung back
--    30, 60, 30,
--    70, 60, 30,
--    30, 90, 30,
--    70, 90, 30,
-+    // left column
-+     -50,  75,  15,
-+     -20,  75,  15,
-+     -50, -75,  15,
-+     -20, -75,  15,
+-        // middle rung back
+-        30.0, 60.0, 30.0,
+-        70.0, 60.0, 30.0,
+-        30.0, 90.0, 30.0,
+-        70.0, 90.0, 30.0,
++        // left column
++        -50.0,  75.0,  15.0,
++        -20.0,  75.0,  15.0,
++        -50.0, -75.0,  15.0,
++        -20.0, -75.0,  15.0,
 +
-+    // top rung
-+     -20,  75,  15,
-+      50,  75,  15,
-+     -20,  45,  15,
-+      50,  45,  15,
++        // top rung
++        -20.0,  75.0,  15.0,
++         50.0,  75.0,  15.0,
++        -20.0,  45.0,  15.0,
++         50.0,  45.0,  15.0,
 +
-+    // middle rung
-+     -20,  15,  15,
-+      20,  15,  15,
-+     -20, -15,  15,
-+      20, -15,  15,
++        // middle rung
++        -20.0,  15.0,  15.0,
++         20.0,  15.0,  15.0,
++        -20.0, -15.0,  15.0,
++         20.0, -15.0,  15.0,
 +
-+    // left column back
-+     -50,  75, -15,
-+     -20,  75, -15,
-+     -50, -75, -15,
-+     -20, -75, -15,
++        // left column back
++        -50.0,  75.0, -15.0,
++        -20.0,  75.0, -15.0,
++        -50.0, -75.0, -15.0,
++        -20.0, -75.0, -15.0,
 +
-+    // top rung back
-+     -20,  75, -15,
-+      50,  75, -15,
-+     -20,  45, -15,
-+      50,  45, -15,
++        // top rung back
++        -20.0,  75.0, -15.0,
++         50.0,  75.0, -15.0,
++        -20.0,  45.0, -15.0,
++         50.0,  45.0, -15.0,
 +
-+    // middle rung back
-+     -20,  15, -15,
-+      20,  15, -15,
-+     -20, -15, -15,
-+      20, -15, -15,
-  ];
++        // middle rung back
++        -20.0,  15.0, -15.0,
++         20.0,  15.0, -15.0,
++        -20.0, -15.0, -15.0,
++         20.0, -15.0, -15.0,
+    ];
 ```
 
 Further, as we went over in
@@ -150,219 +150,232 @@ were scaling Y by negative 1. Now that we're doing *normal* 3D with positive Y =
 up, let's flip the order of the vertices so that clockwise triangles are facing
 out.
 
-```js
-  const indices = [
--     0,  1,  2,    2,  1,  3,  // left column
--     4,  5,  6,    6,  5,  7,  // top run
--     8,  9, 10,   10,  9, 11,  // middle run
+```rust
+    let indices: Vec<u32> = vec![
+-         0,  1,  2,    2,  1,  3,  // left column
+-         4,  5,  6,    6,  5,  7,  // top run
+-         8,  9, 10,   10,  9, 11,  // middle run
 -
--    12, 14, 13,   14, 15, 13,  // left column back
--    16, 18, 17,   18, 19, 17,  // top run back
--    20, 22, 21,   22, 23, 21,  // middle run back
+-        12, 14, 13,   14, 15, 13,  // left column back
+-        16, 18, 17,   18, 19, 17,  // top run back
+-        20, 22, 21,   22, 23, 21,  // middle run back
 -
--     0, 12,  5,   12, 17,  5,   // top
--     5, 17,  7,   17, 19,  7,   // top rung right
--     6,  7, 18,   18,  7, 19,   // top rung bottom
--     6, 18,  8,   18, 20,  8,   // between top and middle rung
--     8, 20,  9,   20, 21,  9,   // middle rung top
--     9, 21, 11,   21, 23, 11,   // middle rung right
--    10, 11, 22,   22, 11, 23,   // middle rung bottom
--    10, 22,  3,   22, 15,  3,   // stem right
--     2,  3, 14,   14,  3, 15,   // bottom
--     0,  2, 12,   12,  2, 14,   // left
-+     0,  2,  1,    2,  3,  1,   // left column
-+     4,  6,  5,    6,  7,  5,   // top run
-+     8, 10,  9,   10, 11,  9,   // middle run
+-         0, 12,  5,   12, 17,  5,   // top
+-         5, 17,  7,   17, 19,  7,   // top rung right
+-         6,  7, 18,   18,  7, 19,   // top rung bottom
+-         6, 18,  8,   18, 20,  8,   // between top and middle rung
+-         8, 20,  9,   20, 21,  9,   // middle rung top
+-         9, 21, 11,   21, 23, 11,   // middle rung right
+-        10, 11, 22,   22, 11, 23,   // middle rung bottom
+-        10, 22,  3,   22, 15,  3,   // stem right
+-         2,  3, 14,   14,  3, 15,   // bottom
+-         0,  2, 12,   12,  2, 14,   // left
++         0,  2,  1,    2,  3,  1,   // left column
++         4,  6,  5,    6,  7,  5,   // top run
++         8, 10,  9,   10, 11,  9,   // middle run
 +
-+    12, 13, 14,   14, 13, 15,   // left column back
-+    16, 17, 18,   18, 17, 19,   // top run back
-+    20, 21, 22,   22, 21, 23,   // middle run back
++        12, 13, 14,   14, 13, 15,   // left column back
++        16, 17, 18,   18, 17, 19,   // top run back
++        20, 21, 22,   22, 21, 23,   // middle run back
 +
-+     0,  5, 12,   12,  5, 17,   // top
-+     5,  7, 17,   17,  7, 19,   // top rung right
-+     6, 18,  7,   18, 19,  7,   // top rung bottom
-+     6,  8, 18,   18,  8, 20,   // between top and middle rung
-+     8,  9, 20,   20,  9, 21,   // middle rung top
-+     9, 11, 21,   21, 11, 23,   // middle rung right
-+    10, 22, 11,   22, 23, 11,   // middle rung bottom
-+    10,  3, 22,   22,  3, 15,   // stem right
-+     2, 14,  3,   14, 15,  3,   // bottom
-+     0, 12,  2,   12, 14,  2,   // left
-  ];
++         0,  5, 12,   12,  5, 17,   // top
++         5,  7, 17,   17,  7, 19,   // top rung right
++         6, 18,  7,   18, 19,  7,   // top rung bottom
++         6,  8, 18,   18,  8, 20,   // between top and middle rung
++         8,  9, 20,   20,  9, 21,   // middle rung top
++         9, 11, 21,   21, 11, 23,   // middle rung right
++        10, 22, 11,   22, 23, 11,   // middle rung bottom
++        10,  3, 22,   22,  3, 15,   // stem right
++         2, 14,  3,   14, 15,  3,   // bottom
++         0, 12,  2,   12, 14,  2,   // left
+    ];
 ```
 
-Finally let's set the `cullMode` to cull *back facing* triangles.
+Finally let's set the `cull_mode` to cull *back facing* triangles.
 
-```js
-  const pipeline = device.createRenderPipeline({
-    label: '2 attributes',
-    layout: 'auto',
-    vertex: {
-      module,
-      buffers: [
-        {
-          arrayStride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
-          attributes: [
-            {shaderLocation: 0, offset: 0, format: 'float32x3'},  // position
-            {shaderLocation: 1, offset: 12, format: 'unorm8x4'},  // color
-          ],
-        },
-      ],
-    },
-    fragment: {
-      module,
-      targets: [{ format: presentationFormat }],
-    },
-    primitive: {
--      cullMode: 'front',  // note: uncommon setting. See article
-+      cullMode: 'back',
-    },
-    depthStencil: {
-      depthWriteEnabled: true,
-      depthCompare: 'less',
-      format: 'depth24plus',
-    },
-  });
+```rust
+    let pipeline = app
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("2 attributes"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: None,
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: (4) * 4, // (3) floats 4 bytes each + one 4 byte color
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        // position
+                        wgpu::VertexAttribute {
+                            shader_location: 0,
+                            offset: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        // color
+                        wgpu::VertexAttribute {
+                            shader_location: 1,
+                            offset: 12,
+                            format: wgpu::VertexFormat::Unorm8x4,
+                        },
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: None,
+                compilation_options: Default::default(),
+                targets: &[Some(app.format.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+-                cull_mode: Some(wgpu::Face::Front), // note: uncommon setting. See article
++                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                format: wgpu::TextureFormat::Depth24Plus,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 ```
 
 Here's a function that given a matrix will compute its inverse matrix.
 
-```js
-const mat4 = {
+```rust
+mod m4 {
   ...
 
-+  inverse(m, dst) {
-+    dst = dst || new Float32Array(16);
++    pub fn inverse(m: &[f32; 16]) -> [f32; 16] {
++        let mut dst = [0.0; 16];
 +
-+    const m00 = m[0 * 4 + 0];
-+    const m01 = m[0 * 4 + 1];
-+    const m02 = m[0 * 4 + 2];
-+    const m03 = m[0 * 4 + 3];
-+    const m10 = m[1 * 4 + 0];
-+    const m11 = m[1 * 4 + 1];
-+    const m12 = m[1 * 4 + 2];
-+    const m13 = m[1 * 4 + 3];
-+    const m20 = m[2 * 4 + 0];
-+    const m21 = m[2 * 4 + 1];
-+    const m22 = m[2 * 4 + 2];
-+    const m23 = m[2 * 4 + 3];
-+    const m30 = m[3 * 4 + 0];
-+    const m31 = m[3 * 4 + 1];
-+    const m32 = m[3 * 4 + 2];
-+    const m33 = m[3 * 4 + 3];
++        let m00 = m[0 * 4 + 0];
++        let m01 = m[0 * 4 + 1];
++        let m02 = m[0 * 4 + 2];
++        let m03 = m[0 * 4 + 3];
++        let m10 = m[1 * 4 + 0];
++        let m11 = m[1 * 4 + 1];
++        let m12 = m[1 * 4 + 2];
++        let m13 = m[1 * 4 + 3];
++        let m20 = m[2 * 4 + 0];
++        let m21 = m[2 * 4 + 1];
++        let m22 = m[2 * 4 + 2];
++        let m23 = m[2 * 4 + 3];
++        let m30 = m[3 * 4 + 0];
++        let m31 = m[3 * 4 + 1];
++        let m32 = m[3 * 4 + 2];
++        let m33 = m[3 * 4 + 3];
 +
-+    const tmp0 = m22 * m33;
-+    const tmp1 = m32 * m23;
-+    const tmp2 = m12 * m33;
-+    const tmp3 = m32 * m13;
-+    const tmp4 = m12 * m23;
-+    const tmp5 = m22 * m13;
-+    const tmp6 = m02 * m33;
-+    const tmp7 = m32 * m03;
-+    const tmp8 = m02 * m23;
-+    const tmp9 = m22 * m03;
-+    const tmp10 = m02 * m13;
-+    const tmp11 = m12 * m03;
-+    const tmp12 = m20 * m31;
-+    const tmp13 = m30 * m21;
-+    const tmp14 = m10 * m31;
-+    const tmp15 = m30 * m11;
-+    const tmp16 = m10 * m21;
-+    const tmp17 = m20 * m11;
-+    const tmp18 = m00 * m31;
-+    const tmp19 = m30 * m01;
-+    const tmp20 = m00 * m21;
-+    const tmp21 = m20 * m01;
-+    const tmp22 = m00 * m11;
-+    const tmp23 = m10 * m01;
++        let tmp0 = m22 * m33;
++        let tmp1 = m32 * m23;
++        let tmp2 = m12 * m33;
++        let tmp3 = m32 * m13;
++        let tmp4 = m12 * m23;
++        let tmp5 = m22 * m13;
++        let tmp6 = m02 * m33;
++        let tmp7 = m32 * m03;
++        let tmp8 = m02 * m23;
++        let tmp9 = m22 * m03;
++        let tmp10 = m02 * m13;
++        let tmp11 = m12 * m03;
++        let tmp12 = m20 * m31;
++        let tmp13 = m30 * m21;
++        let tmp14 = m10 * m31;
++        let tmp15 = m30 * m11;
++        let tmp16 = m10 * m21;
++        let tmp17 = m20 * m11;
++        let tmp18 = m00 * m31;
++        let tmp19 = m30 * m01;
++        let tmp20 = m00 * m21;
++        let tmp21 = m20 * m01;
++        let tmp22 = m00 * m11;
++        let tmp23 = m10 * m01;
 +
-+    const t0 = (tmp0 * m11 + tmp3 * m21 + tmp4 * m31) -
-+               (tmp1 * m11 + tmp2 * m21 + tmp5 * m31);
-+    const t1 = (tmp1 * m01 + tmp6 * m21 + tmp9 * m31) -
-+               (tmp0 * m01 + tmp7 * m21 + tmp8 * m31);
-+    const t2 = (tmp2 * m01 + tmp7 * m11 + tmp10 * m31) -
-+               (tmp3 * m01 + tmp6 * m11 + tmp11 * m31);
-+    const t3 = (tmp5 * m01 + tmp8 * m11 + tmp11 * m21) -
-+               (tmp4 * m01 + tmp9 * m11 + tmp10 * m21);
++        let t0 = (tmp0 * m11 + tmp3 * m21 + tmp4 * m31) - (tmp1 * m11 + tmp2 * m21 + tmp5 * m31);
++        let t1 = (tmp1 * m01 + tmp6 * m21 + tmp9 * m31) - (tmp0 * m01 + tmp7 * m21 + tmp8 * m31);
++        let t2 = (tmp2 * m01 + tmp7 * m11 + tmp10 * m31) - (tmp3 * m01 + tmp6 * m11 + tmp11 * m31);
++        let t3 = (tmp5 * m01 + tmp8 * m11 + tmp11 * m21) - (tmp4 * m01 + tmp9 * m11 + tmp10 * m21);
 +
-+    const d = 1 / (m00 * t0 + m10 * t1 + m20 * t2 + m30 * t3);
++        let d = 1.0 / (m00 * t0 + m10 * t1 + m20 * t2 + m30 * t3);
 +
-+    dst[0] = d * t0;
-+    dst[1] = d * t1;
-+    dst[2] = d * t2;
-+    dst[3] = d * t3;
++        dst[0] = d * t0;
++        dst[1] = d * t1;
++        dst[2] = d * t2;
++        dst[3] = d * t3;
 +
-+    dst[4] = d * ((tmp1 * m10 + tmp2 * m20 + tmp5 * m30) -
-+                  (tmp0 * m10 + tmp3 * m20 + tmp4 * m30));
-+    dst[5] = d * ((tmp0 * m00 + tmp7 * m20 + tmp8 * m30) -
-+                  (tmp1 * m00 + tmp6 * m20 + tmp9 * m30));
-+    dst[6] = d * ((tmp3 * m00 + tmp6 * m10 + tmp11 * m30) -
-+                  (tmp2 * m00 + tmp7 * m10 + tmp10 * m30));
-+    dst[7] = d * ((tmp4 * m00 + tmp9 * m10 + tmp10 * m20) -
-+                  (tmp5 * m00 + tmp8 * m10 + tmp11 * m20));
++        dst[4] = d * ((tmp1 * m10 + tmp2 * m20 + tmp5 * m30) - (tmp0 * m10 + tmp3 * m20 + tmp4 * m30));
++        dst[5] = d * ((tmp0 * m00 + tmp7 * m20 + tmp8 * m30) - (tmp1 * m00 + tmp6 * m20 + tmp9 * m30));
++        dst[6] = d * ((tmp3 * m00 + tmp6 * m10 + tmp11 * m30) - (tmp2 * m00 + tmp7 * m10 + tmp10 * m30));
++        dst[7] = d * ((tmp4 * m00 + tmp9 * m10 + tmp10 * m20) - (tmp5 * m00 + tmp8 * m10 + tmp11 * m20));
 +
-+    dst[8] = d * ((tmp12 * m13 + tmp15 * m23 + tmp16 * m33) -
-+                  (tmp13 * m13 + tmp14 * m23 + tmp17 * m33));
-+    dst[9] = d * ((tmp13 * m03 + tmp18 * m23 + tmp21 * m33) -
-+                  (tmp12 * m03 + tmp19 * m23 + tmp20 * m33));
-+    dst[10] = d * ((tmp14 * m03 + tmp19 * m13 + tmp22 * m33) -
-+                   (tmp15 * m03 + tmp18 * m13 + tmp23 * m33));
-+    dst[11] = d * ((tmp17 * m03 + tmp20 * m13 + tmp23 * m23) -
-+                   (tmp16 * m03 + tmp21 * m13 + tmp22 * m23));
++        dst[8] = d * ((tmp12 * m13 + tmp15 * m23 + tmp16 * m33) - (tmp13 * m13 + tmp14 * m23 + tmp17 * m33));
++        dst[9] = d * ((tmp13 * m03 + tmp18 * m23 + tmp21 * m33) - (tmp12 * m03 + tmp19 * m23 + tmp20 * m33));
++        dst[10] = d * ((tmp14 * m03 + tmp19 * m13 + tmp22 * m33) - (tmp15 * m03 + tmp18 * m13 + tmp23 * m33));
++        dst[11] = d * ((tmp17 * m03 + tmp20 * m13 + tmp23 * m23) - (tmp16 * m03 + tmp21 * m13 + tmp22 * m23));
 +
-+    dst[12] = d * ((tmp14 * m22 + tmp17 * m32 + tmp13 * m12) -
-+                   (tmp16 * m32 + tmp12 * m12 + tmp15 * m22));
-+    dst[13] = d * ((tmp20 * m32 + tmp12 * m02 + tmp19 * m22) -
-+                   (tmp18 * m22 + tmp21 * m32 + tmp13 * m02));
-+    dst[14] = d * ((tmp18 * m12 + tmp23 * m32 + tmp15 * m02) -
-+                   (tmp22 * m32 + tmp14 * m02 + tmp19 * m12));
-+    dst[15] = d * ((tmp22 * m22 + tmp16 * m02 + tmp21 * m12) -
-+                   (tmp20 * m12 + tmp23 * m22 + tmp17 * m02));
-+    return dst;
-+  },
++        dst[12] = d * ((tmp14 * m22 + tmp17 * m32 + tmp13 * m12) - (tmp16 * m32 + tmp12 * m12 + tmp15 * m22));
++        dst[13] = d * ((tmp20 * m32 + tmp12 * m02 + tmp19 * m22) - (tmp18 * m22 + tmp21 * m32 + tmp13 * m02));
++        dst[14] = d * ((tmp18 * m12 + tmp23 * m32 + tmp15 * m02) - (tmp22 * m32 + tmp14 * m02 + tmp19 * m12));
++        dst[15] = d * ((tmp22 * m22 + tmp16 * m02 + tmp21 * m12) - (tmp20 * m12 + tmp23 * m22 + tmp17 * m02));
++
++        dst
++    }
 ...
 ```
 
 Like we've done in previous examples, to draw 5 things we need 5
 uniform buffers and 5 bind groups.
 
-```js
-+  const numFs = 5;
-+  const objectInfos = [];
-+  for (let i = 0; i < numFs; ++i) {
+```rust
     // matrix
-    const uniformBufferSize = (16) * 4;
-    const uniformBuffer = device.createBuffer({
-      label: 'uniforms',
-      size: uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const uniformValues = new Float32Array(uniformBufferSize / 4);
+    const UNIFORM_BUFFER_SIZE: u64 = (16) * 4;
 
     // offsets to the various uniform values in float32 indices
-    const kMatrixOffset = 0;
+    const K_MATRIX_OFFSET: usize = 0;
 
-    const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
++    struct ObjectInfo {
++        uniform_buffer: wgpu::Buffer,
++        uniform_values: [f32; UNIFORM_BUFFER_SIZE as usize / 4],
++        bind_group: wgpu::BindGroup,
++    }
++
++    const NUM_FS: usize = 5;
++    let mut object_infos: Vec<ObjectInfo> = Vec::new();
++    for _i in 0..NUM_FS {
+        let uniform_buffer = app.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("uniforms"),
+            size: UNIFORM_BUFFER_SIZE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-    const bindGroup = device.createBindGroup({
-      label: 'bind group for object',
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: uniformBuffer },
-      ],
-    });
+        let uniform_values = [0.0f32; UNIFORM_BUFFER_SIZE as usize / 4];
 
-+    objectInfos.push({
-+      uniformBuffer,
-+      uniformValues,
-+      matrixValue,
-+      bindGroup,
-+    });
-+  }
+        let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bind group for object"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
++        object_infos.push(ObjectInfo {
++            uniform_buffer,
++            uniform_values,
++            bind_group,
++        });
++    }
 ```
 
-Let's get rid of some of the settings to unclutter our example
+Let's get rid of some of the settings to unclutter our example. On the
+example page's JavaScript side
 
 ```js
   const settings = {
@@ -371,32 +384,52 @@ Let's get rid of some of the settings to unclutter our example
 -    rotation: [degToRad(220), degToRad(25), degToRad(325)],
 -    scale: [1, 1, 1],
   };
+```
+
+and in the Rust render code
+
+```rust
+    let field_of_view = wgpu_fun::setting_f64("fieldOfView", 100.0f64.to_radians()) as f32;
+-    let translation = [
+-        wgpu_fun::setting_f64("translationX", -65.0) as f32,
+-        wgpu_fun::setting_f64("translationY", 0.0) as f32,
+-        wgpu_fun::setting_f64("translationZ", -120.0) as f32,
+-    ];
+-    let rotation = [
+-        wgpu_fun::setting_f64("rotationX", 220.0f64.to_radians()) as f32,
+-        wgpu_fun::setting_f64("rotationY", 25.0f64.to_radians()) as f32,
+-        wgpu_fun::setting_f64("rotationZ", 325.0f64.to_radians()) as f32,
+-    ];
+-    let scale = [
+-        wgpu_fun::setting_f64("scaleX", 1.0) as f32,
+-        wgpu_fun::setting_f64("scaleY", 1.0) as f32,
+-        wgpu_fun::setting_f64("scaleZ", 1.0) as f32,
+-    ];
 
   ...
 
--      mat4.translate(matrixValue, settings.translation, matrixValue);
--      mat4.rotateX(matrixValue, settings.rotation[0], matrixValue);
--      mat4.rotateY(matrixValue, settings.rotation[1], matrixValue);
--      mat4.rotateZ(matrixValue, settings.rotation[2], matrixValue);
--      mat4.scale(matrixValue, settings.scale, matrixValue);
+-    matrix_value = m4::translate(&matrix_value, translation);
+-    matrix_value = m4::rotate_x(&matrix_value, rotation[0]);
+-    matrix_value = m4::rotate_y(&matrix_value, rotation[1]);
+-    matrix_value = m4::rotate_z(&matrix_value, rotation[2]);
+-    matrix_value = m4::scale(&matrix_value, scale);
 ```
 
 Because we are drawing 5 things and they will all use the same
 projection matrix we'll calculate it before the loop of drawing the Fs
 
-```js
-  function render() {
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    const aspect = canvas.clientWidth / canvas.clientHeight;
--    mat4.perspective(
-+    const projection = mat4.perspective(
-        settings.fieldOfView,
-        aspect,
-        1,      // zNear
-        2000,   // zFar
--        matrixValue,
-    );
+        let aspect = frame.width as f32 / frame.height as f32;
+-        let mut matrix_value = m4::perspective(
++        let projection = m4::perspective(
+            field_of_view,
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
 ```
 
 Next we'll compute a camera matrix. This matrix represents the
@@ -409,23 +442,31 @@ radius * 1.5 distance out and looking at the origin.
    <div class="caption">camera movement</div>
 </div>
 
+```rust
++    let radius = 200.0f32;
+```
+
+and on the example page's JavaScript side
+
 ```js
-+  const radius = 200;
   const settings = {
     fieldOfView: degToRad(100),
 +    cameraAngle: 0,
   };
+```
 
-  ...
+then in the render code
 
-  function render() {
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
 
      ...
- 
 
-+    // compute a matrix for the camera.
-+    const cameraMatrix = mat4.rotationY(settings.cameraAngle);
-+    mat4.translate(cameraMatrix, [0, 0, radius * 1.5], cameraMatrix);
++        let camera_angle = wgpu_fun::setting_f64("cameraAngle", 0.0) as f32;
+
++        // compute a matrix for the camera.
++        let camera_matrix = m4::rotation_y(camera_angle);
++        let camera_matrix = m4::translate(&camera_matrix, [0.0, 0.0, radius * 1.5]);
 ```
 
 We then compute a "view matrix" from the camera matrix.  A "view matrix"
@@ -437,62 +478,63 @@ In this case the supplied matrix would move the camera to some position
 and orientation relative to the origin. The inverse of that is a matrix
 that will move everything else such that the camera is at the origin.
 
-```js
-    // Make a view matrix from the camera matrix.
-    const viewMatrix = mat4.inverse(cameraMatrix);
+```rust
+        // Make a view matrix from the camera matrix.
+        let view_matrix = m4::inverse(&camera_matrix);
 ```
 
 Now we combine the view and projection matrix into a view projection matrix.
 
-```js
-+    // combine the view and projection matrixes
-+    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+```rust
++        // combine the view and projection matrixes
++        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 ```
 
 Finally we draw a circle of Fs. For each F we start with the
 view projection matrix, then compute a position on a circle and
 translate to that position.
 
-```js
-  function render() {
+```rust
+    app.run(RenderMode::Once, move |frame: &Frame| {
     ...
 
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(
-        settings.fieldOfView,
-        aspect,
-        1,      // zNear
-        2000,   // zFar
-    );
+        let aspect = frame.width as f32 / frame.height as f32;
+        let projection = m4::perspective(
+            field_of_view,
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
 
-    // compute a matrix for the camera.
-    const cameraMatrix = mat4.rotationY(settings.cameraAngle);
-    mat4.translate(cameraMatrix, [0, 0, radius * 1.5], cameraMatrix);
+        // compute a matrix for the camera.
+        let camera_matrix = m4::rotation_y(camera_angle);
+        let camera_matrix = m4::translate(&camera_matrix, [0.0, 0.0, radius * 1.5]);
 
-    // Make a view matrix from the camera matrix.
-    const viewMatrix = mat4.inverse(cameraMatrix);
+        // Make a view matrix from the camera matrix.
+        let view_matrix = m4::inverse(&camera_matrix);
 
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
+        // combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
 
-+    objectInfos.forEach(({
-+      matrixValue,
-+      uniformBuffer,
-+      uniformValues,
-+      bindGroup,
-+    }, i) => {
-+      const angle = i / numFs * Math.PI * 2;
-+      const x = Math.cos(angle) * radius;
-+      const z = Math.sin(angle) * radius;
++        for (i, object_info) in object_infos.iter_mut().enumerate() {
++            let angle = i as f32 / NUM_FS as f32 * std::f32::consts::PI * 2.0;
++            let x = angle.cos() * radius;
++            let z = angle.sin() * radius;
++
++            let matrix_value = m4::translate(&view_projection_matrix, [x, 0.0, z]);
++            object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
++                .copy_from_slice(&matrix_value);
 
-+      mat4.translate(viewProjectionMatrix, [x, 0, z], matrixValue);
+            // upload the uniform values to the uniform buffer
+            frame.queue.write_buffer(
+                &object_info.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&object_info.uniform_values),
+            );
 
-      // upload the uniform values to the uniform buffer
-      device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
-
-      pass.setBindGroup(0, bindGroup);
-      pass.draw(numVertices);
-+    });
+            pass.set_bind_group(0, &object_info.bind_group, &[]);
+            pass.draw(0..num_vertices, 0..1);
++        }
 ```
 
 And voila!  A camera that goes around the circle of 'F's.  Drag the
@@ -641,114 +683,115 @@ matrix that will orient something that points at the `target` from the
 </div>
 
 Here's the code to compute the cross product of 2 vectors.
-Like our matrix code we'll make it take an optional destination array.
+Like our matrix code, it returns a new array.
 
-```js
-+const vec3 = {
-+  cross(a, b, dst) {
-+    dst = dst || new Float32Array(3);
+```rust
++mod vec3 {
++    pub fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    const t0 = a[1] * b[2] - a[2] * b[1];
-+    const t1 = a[2] * b[0] - a[0] * b[2];
-+    const t2 = a[0] * b[1] - a[1] * b[0];
++        let t0 = a[1] * b[2] - a[2] * b[1];
++        let t1 = a[2] * b[0] - a[0] * b[2];
++        let t2 = a[0] * b[1] - a[1] * b[0];
 +
-+    dst[0] = t0;
-+    dst[1] = t1;
-+    dst[2] = t2;
++        dst[0] = t0;
++        dst[1] = t1;
++        dst[2] = t2;
 +
-+    return dst;
-+  },
-+};
++        dst
++    }
++}
 ```
 
 Here's the code to subtract two vectors.
 
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-+  subtract(a, b, dst) {
-+    dst = dst || new Float32Array(3);
++    pub fn subtract(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    dst[0] = a[0] - b[0];
-+    dst[1] = a[1] - b[1];
-+    dst[2] = a[2] - b[2];
++        dst[0] = a[0] - b[0];
++        dst[1] = a[1] - b[1];
++        dst[2] = a[2] - b[2];
 +
-+    return dst;
-+  },
++        dst
++    }
 ```
 
 Here's the code to normalize a vector (make it into a unit vector).
 
-```js
-const vec3 = {
+```rust
+mod vec3 {
   ...
-+  normalize(v, dst) {
-+    dst = dst || new Float32Array(3);
++    pub fn normalize(v: [f32; 3]) -> [f32; 3] {
++        let mut dst = [0.0; 3];
 +
-+    const length = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-+    // make sure we don't divide by 0.
-+    if (length > 0.00001) {
-+      dst[0] = v[0] / length;
-+      dst[1] = v[1] / length;
-+      dst[2] = v[2] / length;
-+    } else {
-+      dst[0] = 0;
-+      dst[1] = 0;
-+      dst[2] = 0;
++        let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
++        // make sure we don't divide by 0.
++        if length > 0.00001 {
++            dst[0] = v[0] / length;
++            dst[1] = v[1] / length;
++            dst[2] = v[2] / length;
++        } else {
++            dst[0] = 0.0;
++            dst[1] = 0.0;
++            dst[2] = 0.0;
++        }
++
++        dst
 +    }
-+
-+    return dst;
-+  },
 ```
 
 Here's the code to compute a *camera* matrix. It follows the steps described above.
 
-```js
-const mat4 = {
+```rust
+mod m4 {
   ...
-  cameraAim(eye, target, up, dst) {
-    dst = dst || new Float32Array(16);
+    #[rustfmt::skip]
+    pub fn camera_aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
 
-    const zAxis = vec3.normalize(vec3.subtract(eye, target));
-    const xAxis = vec3.normalize(vec3.cross(up, zAxis));
-    const yAxis = vec3.normalize(vec3.cross(zAxis, xAxis));
+        let z_axis = vec3::normalize(vec3::subtract(eye, target));
+        let x_axis = vec3::normalize(vec3::cross(up, z_axis));
+        let y_axis = vec3::normalize(vec3::cross(z_axis, x_axis));
 
-    dst[ 0] = xAxis[0];  dst[ 1] = xAxis[1];  dst[ 2] = xAxis[2];  dst[ 3] = 0;
-    dst[ 4] = yAxis[0];  dst[ 5] = yAxis[1];  dst[ 6] = yAxis[2];  dst[ 7] = 0;
-    dst[ 8] = zAxis[0];  dst[ 9] = zAxis[1];  dst[10] = zAxis[2];  dst[11] = 0;
-    dst[12] = eye[0];    dst[13] = eye[1];    dst[14] = eye[2];    dst[15] = 1;
+        dst[ 0] = x_axis[0];  dst[ 1] = x_axis[1];  dst[ 2] = x_axis[2];  dst[ 3] = 0.0;
+        dst[ 4] = y_axis[0];  dst[ 5] = y_axis[1];  dst[ 6] = y_axis[2];  dst[ 7] = 0.0;
+        dst[ 8] = z_axis[0];  dst[ 9] = z_axis[1];  dst[10] = z_axis[2];  dst[11] = 0.0;
+        dst[12] = eye[0];     dst[13] = eye[1];     dst[14] = eye[2];     dst[15] = 1.0;
 
-    return dst;
-  },
+        dst
+    }
   ...
 ```
 
 And here is how we might use it to make the camera point at a specific 'F'
 as we move it.
 
-```js
--    // compute a matrix for the camera.
--    const cameraMatrix = mat4.rotationY(settings.cameraAngle);
--    mat4.translate(cameraMatrix, [0, 0, radius * 1.5], cameraMatrix);
-+    // Compute the position of the first F
-+    const fPosition = [radius, 0, 0];
+```rust
+-        // compute a matrix for the camera.
+-        let camera_matrix = m4::rotation_y(camera_angle);
+-        let camera_matrix = m4::translate(&camera_matrix, [0.0, 0.0, radius * 1.5]);
++        // Compute the position of the first F
++        let f_position = [radius, 0.0, 0.0];
 +
-+    // Use matrix math to compute a position on a circle where
-+    // the camera is
-+    const tempMatrix = mat4.rotationY(settings.cameraAngle);
-+    mat4.translate(tempMatrix, [0, 0, radius * 1.5], tempMatrix);
++        // Use matrix math to compute a position on a circle where
++        // the camera is
++        let temp_matrix = m4::rotation_y(camera_angle);
++        let temp_matrix = m4::translate(&temp_matrix, [0.0, 0.0, radius * 1.5]);
 +
-+    // Get the camera's position from the matrix we computed
-+    const eye = tempMatrix.slice(12, 15);
++        // Get the camera's position from the matrix we computed
++        let eye = [temp_matrix[12], temp_matrix[13], temp_matrix[14]];
 +
-+    const up = [0, 1, 0];
++        let up = [0.0, 1.0, 0.0];
 +
-+    // Compute the camera's matrix using cameraAim
-+    const cameraMatrix = mat4.cameraAim(eye, fPosition, up);
++        // Compute the camera's matrix using cameraAim
++        let camera_matrix = m4::camera_aim(eye, f_position, up);
 
-    // Make a view matrix from the camera matrix.
-    const viewMatrix = mat4.inverse(cameraMatrix);
+        // Make a view matrix from the camera matrix.
+        let view_matrix = m4::inverse(&camera_matrix);
 ```
 
 And here's the result.
@@ -759,28 +802,28 @@ Drag the slider and notice how the camera tracks a single 'F'.
 
 Most math libraries don't have a `cameraAim` function. Instead they have a `lookAt` function
 which computes exactly what our `cameraAim` function does but ALSO converts it to a view matrix.
-Functionally `lookAt` could be implemented like this
+Functionally `look_at` could be implemented like this
 
-```js
-const mat4 = {
+```rust
+mod m4 {
   ...
-+  lookAt(eye, target, up, dst) {
-+    return mat4.inverse(mat4.cameraAim(eye, target, up, dst), dst);
-+  },
++    pub fn look_at(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
++        inverse(&camera_aim(eye, target, up))
++    }
   ...
-};
+}
 ```
 
-Using this `lookAt` function our code would change to this
+Using this `look_at` function our code would change to this
 
-```js
--    // Compute the camera's matrix using look at.
--    const cameraMatrix = mat4.cameraAim(eye, fPosition, up);
+```rust
+-        // Compute the camera's matrix using look at.
+-        let camera_matrix = m4::camera_aim(eye, f_position, up);
 -
--    // Make a view matrix from the camera matrix.
--    const viewMatrix = mat4.inverse(cameraMatrix);
-+    // Compute a view matrix
-+    const viewMatrix = mat4.lookAt(eye, fPosition, up);
+-        // Make a view matrix from the camera matrix.
+-        let view_matrix = m4::inverse(&camera_matrix);
++        // Compute a view matrix
++        let view_matrix = m4::look_at(eye, f_position, up);
 ```
 
 {{{example url="../webgpu-cameras-step-3-look-at.html" }}}
@@ -797,51 +840,55 @@ Usually to "aim" something you want it to point down the positive Z axis instead
 of the negative Z axis as our function above did. So, we need to 
 subtract `target` from `eye` instead of `eye` from `target`
 
-```js
-const mat4 = {
+```rust
+mod m4 {
   ...
-+  aim(eye, target, up, dst) {
-+    dst = dst || new Float32Array(16);
++    #[rustfmt::skip]
++    pub fn aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
++        let mut dst = [0.0; 16];
 +
-+    const zAxis = vec3.normalize(vec3.subtract(target, eye));
-+    const xAxis = vec3.normalize(vec3.cross(up, zAxis));
-+    const yAxis = vec3.normalize(vec3.cross(zAxis, xAxis));
++        let z_axis = vec3::normalize(vec3::subtract(target, eye));
++        let x_axis = vec3::normalize(vec3::cross(up, z_axis));
++        let y_axis = vec3::normalize(vec3::cross(z_axis, x_axis));
 +
-+    dst[ 0] = xAxis[0];  dst[ 1] = xAxis[1];  dst[ 2] = xAxis[2];  dst[ 3] = 0;
-+    dst[ 4] = yAxis[0];  dst[ 5] = yAxis[1];  dst[ 6] = yAxis[2];  dst[ 7] = 0;
-+    dst[ 8] = zAxis[0];  dst[ 9] = zAxis[1];  dst[10] = zAxis[2];  dst[11] = 0;
-+    dst[12] = eye[0];    dst[13] = eye[1];    dst[14] = eye[2];    dst[15] = 1;
++        dst[ 0] = x_axis[0];  dst[ 1] = x_axis[1];  dst[ 2] = x_axis[2];  dst[ 3] = 0.0;
++        dst[ 4] = y_axis[0];  dst[ 5] = y_axis[1];  dst[ 6] = y_axis[2];  dst[ 7] = 0.0;
++        dst[ 8] = z_axis[0];  dst[ 9] = z_axis[1];  dst[10] = z_axis[2];  dst[11] = 0.0;
++        dst[12] = eye[0];     dst[13] = eye[1];     dst[14] = eye[2];     dst[15] = 1.0;
 +
-+    return dst;
-+  },
++        dst
++    }
 
-  cameraAim(eye, target, up, dst) {
-    dst = dst || new Float32Array(16);
+    #[rustfmt::skip]
+    pub fn camera_aim(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
+        let mut dst = [0.0; 16];
 
-    const zAxis = vec3.normalize(vec3.subtract(eye, target));
-    const xAxis = vec3.normalize(vec3.cross(up, zAxis));
-    const yAxis = vec3.normalize(vec3.cross(zAxis, xAxis));
+        let z_axis = vec3::normalize(vec3::subtract(eye, target));
+        let x_axis = vec3::normalize(vec3::cross(up, z_axis));
+        let y_axis = vec3::normalize(vec3::cross(z_axis, x_axis));
 
-    dst[ 0] = xAxis[0];  dst[ 1] = xAxis[1];  dst[ 2] = xAxis[2];  dst[ 3] = 0;
-    dst[ 4] = yAxis[0];  dst[ 5] = yAxis[1];  dst[ 6] = yAxis[2];  dst[ 7] = 0;
-    dst[ 8] = zAxis[0];  dst[ 9] = zAxis[1];  dst[10] = zAxis[2];  dst[11] = 0;
-    dst[12] = eye[0];    dst[13] = eye[1];    dst[14] = eye[2];    dst[15] = 1;
+        dst[ 0] = x_axis[0];  dst[ 1] = x_axis[1];  dst[ 2] = x_axis[2];  dst[ 3] = 0.0;
+        dst[ 4] = y_axis[0];  dst[ 5] = y_axis[1];  dst[ 6] = y_axis[2];  dst[ 7] = 0.0;
+        dst[ 8] = z_axis[0];  dst[ 9] = z_axis[1];  dst[10] = z_axis[2];  dst[11] = 0.0;
+        dst[12] = eye[0];     dst[13] = eye[1];     dst[14] = eye[2];     dst[15] = 1.0;
 
-    return dst;
-  },
-...
+        dst
+    }
+  ...
+```
 
 <a id="a-aim-fs"></a> Let's make a bunch of Fs point at another F (yea, too many Fs but I don't want to clutter
 the example with more data). We'll make a grid of 5x5 Fs + 1 more
 for them to "aim" at
 
-```js
--  const numFs = 5;
-+  const numFs = 5 * 5 + 1;
+```rust
+-    const NUM_FS: usize = 5;
++    const NUM_FS: usize = 5 * 5 + 1;
 ```
 
 Then we'll hard code a camera target and change the
-settings so we can move one of the Fs
+settings so we can move one of the Fs. On the example page's
+JavaScript side
 
 ```js
   const settings = {
@@ -854,87 +901,97 @@ settings so we can move one of the Fs
   const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
   const gui = new GUI();
-  gui.onChange(render);
--  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg});
--  gui.add(settings, 'cameraAngle', radToDegOptions);
-+  gui.add(settings.target, '1', -100, 300).name('target height');
-+  gui.add(settings, 'targetAngle', radToDegOptions).name('target angle');
+-  gui.add(settings, 'fieldOfView', {min: 1, max: 179, converters: GUI.converters.radToDeg})
+-     .onChange(v => wasm.set_setting_num('fieldOfView', v));
+-  gui.add(settings, 'cameraAngle', radToDegOptions)
+-     .onChange(v => wasm.set_setting_num('cameraAngle', v));
++  gui.add(settings.target, '1', -100, 300).name('target height')
++     .onChange(v => wasm.set_setting_num('targetHeight', v));
++  gui.add(settings, 'targetAngle', radToDegOptions).name('target angle')
++     .onChange(v => wasm.set_setting_num('targetAngle', v));
 ```
 
 And finally for the first 25 Fs we'll orient them in
 a grid using `aim` and *aim* them at the 26th F
 
-```js
-+    // update target X,Z based on angle
-+    settings.target[0] = Math.cos(settings.targetAngle) * radius;
-+    settings.target[2] = Math.sin(settings.targetAngle) * radius;
-
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const projection = mat4.perspective(
--        settings.fieldOfView,
-+        degToRad(60), // fieldOfView,
-        aspect,
-        1,      // zNear
-        2000,   // zFar
-    );
-
--    // Compute the position of the first F
--    const fPosition = [radius, 0, 0];
--
--    // Use matrix math to compute a position on a circle where
--    // the camera is
--    const tempMatrix = mat4.rotationY(settings.cameraAngle);
--    mat4.translate(tempMatrix, [0, 0, radius * 1.5], tempMatrix);
--
--    // Get the camera's position from the matrix we computed
--    const eye = tempMatrix.slice(12, 15);
-+    const eye = [-500, 300, -500];
-+    const target = [0, -100, 0];
-    const up = [0, 1, 0];
-
-    // Compute a view matrix
--    const viewMatrix = mat4.lookAt(eye, fPosition, up);
-+    const viewMatrix = mat4.lookAt(eye, target, up);
-
-    // combine the view and projection matrixes
-    const viewProjectionMatrix = mat4.multiply(projection, viewMatrix);
-
-    objectInfos.forEach(({
-      matrixValue,
-      uniformBuffer,
-      uniformValues,
-      bindGroup,
-    }, i) => {
--      const angle = i / numFs * Math.PI * 2;
--      const x = Math.cos(angle) * radius;
--      const z = Math.sin(angle) * radius;
--
--      mat4.translate(viewProjectionMatrix, [x, 0, z], matrixValue);
-
-+      const deep = 5;
-+      const across = 5;
-+      if (i < 25) {
-+        // compute grid positions
-+        const gridX = i % across;
-+        const gridZ = i / across | 0;
+```rust
++        let mut settings_target = [
++            0.0,
++            wgpu_fun::setting_f64("targetHeight", 200.0) as f32,
++            300.0,
++        ];
++        let target_angle = wgpu_fun::setting_f64("targetAngle", 0.0) as f32;
 +
-+        // compute 0 to 1 positions
-+        const u = gridX / (across - 1);
-+        const v = gridZ / (deep - 1);
-+
-+        // center and spread out
-+        const x = (u - 0.5) * across * 150;
-+        const z = (v - 0.5) * deep * 150;
-+
-+        // aim this F from it's position toward the target F
-+        const aimMatrix = mat4.aim([x, 0, z], settings.target, up);
-+        mat4.multiply(viewProjectionMatrix, aimMatrix, matrixValue);
-+      } else {
-+        mat4.translate(viewProjectionMatrix, settings.target, matrixValue);
-+      }
++        // update target X,Z based on angle
++        settings_target[0] = target_angle.cos() * radius;
++        settings_target[2] = target_angle.sin() * radius;
 
-      // upload the uniform values to the uniform buffer
-      device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+        let aspect = frame.width as f32 / frame.height as f32;
+        let projection = m4::perspective(
+-            field_of_view,
++            60.0f32.to_radians(), // fieldOfView,
+            aspect,
+            1.0,    // zNear
+            2000.0, // zFar
+        );
+
+-        // Compute the position of the first F
+-        let f_position = [radius, 0.0, 0.0];
+-
+-        // Use matrix math to compute a position on a circle where
+-        // the camera is
+-        let temp_matrix = m4::rotation_y(camera_angle);
+-        let temp_matrix = m4::translate(&temp_matrix, [0.0, 0.0, radius * 1.5]);
+-
+-        // Get the camera's position from the matrix we computed
+-        let eye = [temp_matrix[12], temp_matrix[13], temp_matrix[14]];
++        let eye = [-500.0, 300.0, -500.0];
++        let target = [0.0, -100.0, 0.0];
+        let up = [0.0, 1.0, 0.0];
+
+        // Compute a view matrix
+-        let view_matrix = m4::look_at(eye, f_position, up);
++        let view_matrix = m4::look_at(eye, target, up);
+
+        // combine the view and projection matrixes
+        let view_projection_matrix = m4::multiply(&projection, &view_matrix);
+
+        for (i, object_info) in object_infos.iter_mut().enumerate() {
+-            let angle = i as f32 / NUM_FS as f32 * std::f32::consts::PI * 2.0;
+-            let x = angle.cos() * radius;
+-            let z = angle.sin() * radius;
+-
+-            let matrix_value = m4::translate(&view_projection_matrix, [x, 0.0, z]);
++            let deep = 5;
++            let across = 5;
++            let matrix_value = if i < 25 {
++                // compute grid positions
++                let grid_x = i % across;
++                let grid_z = i / across;
++
++                // compute 0 to 1 positions
++                let u = grid_x as f32 / (across - 1) as f32;
++                let v = grid_z as f32 / (deep - 1) as f32;
++
++                // center and spread out
++                let x = (u - 0.5) * across as f32 * 150.0;
++                let z = (v - 0.5) * deep as f32 * 150.0;
++
++                // aim this F from it's position toward the target F
++                let aim_matrix = m4::aim([x, 0.0, z], settings_target, up);
++                m4::multiply(&view_projection_matrix, &aim_matrix)
++            } else {
++                m4::translate(&view_projection_matrix, settings_target)
++            };
+            object_info.uniform_values[K_MATRIX_OFFSET..K_MATRIX_OFFSET + 16]
+                .copy_from_slice(&matrix_value);
+
+            // upload the uniform values to the uniform buffer
+            frame.queue.write_buffer(
+                &object_info.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&object_info.uniform_values),
+            );
 ```
 
 And now 25 Fs are facing (their front is positive Z), the 26th F

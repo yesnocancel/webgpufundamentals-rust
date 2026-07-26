@@ -1108,6 +1108,14 @@ if depth_texture
   </div>
 </div>
 
+The render time code above runs inside `app.run`'s per frame callback, which
+hands us a `Frame` holding this frame's canvas texture view (`frame.view`),
+the current size (`frame.width`, `frame.height`), and `frame.device`,
+`frame.queue`, `frame.format` — the same device, queue, and format from init
+time. It's the Rust analog of the `requestAnimationFrame` loop in the
+JavaScript version, and we'll see the full loop in the multiple-things
+example below.
+
 You can see above there's a bunch of work to do. Our `App` helper watches the
 canvas/window size and re-configures the surface (that's the `auto_resize`
 part, clamped to `device.limits().max_texture_dimension_2d`), but the color
