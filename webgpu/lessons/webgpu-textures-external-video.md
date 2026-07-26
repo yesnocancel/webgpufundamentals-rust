@@ -6,6 +6,20 @@ In the [previous article](webgpu-importing-textures.html), we covered
 how to load images, canvases, and video into a texture.
 This article will cover a more efficient way to use video in WebGPU.
 
+<div class="warn">
+This article is about a browser-only API. <code>importExternalTexture</code>
+and the <code>GPUExternalTexture</code> type it returns exist only in the
+browser's WebGPU — they're tied to the browser's video pipeline — and wgpu
+does not currently expose them, so there is no Rust version of these
+examples; they run the original JavaScript. If you need video frames in a
+Rust/wasm app today, use the copy approach from
+<a href="webgpu-importing-textures.html">the previous article</a> via wgpu's
+web-only <code>copy_external_image_to_texture</code>, or do the
+<code>importExternalTexture</code> call in a bit of JavaScript interop. The
+concepts below still matter: they explain what the browser can do zero-copy
+and why the restrictions exist.
+</div>
+
 In the previous article we loaded video data into a webgpu texture
 by calling `copyExternalImageToTexture`. This function copies
 the current frame of video from the video itself into a pre-existing
