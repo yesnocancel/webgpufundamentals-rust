@@ -344,7 +344,7 @@ function.
 ```rust
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("our hardcoded red triangle shaders"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       @vertex fn vs(
         @builtin(vertex_index) vertexIndex : u32
       ) -> @builtin(position) vec4f {
@@ -377,6 +377,10 @@ lives in a Rust *string* (here a
 `r#"..."#`, so we don't have to escape anything). Yes, its function
 declarations look confusingly close to Rust's — `fn`, `let`, arrow return
 types — but it is its own language with its own rules.
+
+> Note: throughout this site, strings that store WGSL have `/* wgsl */` as a
+> comment in front of them. This is a convention to help text editors try to
+> syntax highlight and/or provide intellisense for WGSL.
 
 Above we see a function called `vs` is declared with the `@vertex` attribute.
 This designates it as a vertex shader function.
@@ -702,7 +706,7 @@ Then we create a shader module.
 ```rust
   let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("doubling compute module"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       @group(0) @binding(0) var<storage, read_write> data: array<f32>;
 
       @compute @workgroup_size(1) fn computeSomething(

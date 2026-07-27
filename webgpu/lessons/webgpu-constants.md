@@ -241,7 +241,7 @@ is just a convenience. The code above is functionally equivalent to
 ```rust
   let vertex_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct VOut {
         @builtin(position) pos: vec4f,
         @location(0) color: vec4f,
@@ -270,7 +270,7 @@ is just a convenience. The code above is functionally equivalent to
 
   let fragment_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct VOut {
         @builtin(position) pos: vec4f,
         @location(0) color: vec4f,

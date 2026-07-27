@@ -84,7 +84,7 @@ Then let's make a shader module.
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
     source: wgpu::ShaderSource::Wgsl(
-      r#"
+      /* wgsl */ r#"
       struct Uniforms {
         normalMatrix: mat3x3f,
         viewProjection: mat4x4f,
@@ -1184,7 +1184,7 @@ Here's the new shader
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
     source: wgpu::ShaderSource::Wgsl(
-      r#"
+      /* wgsl */ r#"
 -      struct Uniforms {
 -        normalMatrix: mat3x3f,
 -        viewProjection: mat4x4f,
@@ -1481,7 +1481,7 @@ First let's change the shaders to use another uniform buffer.
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
     source: wgpu::ShaderSource::Wgsl(
-      r#"
+      /* wgsl */ r#"
       struct GlobalUniforms {
         viewProjection: mat4x4f,
         lightWorldPosition: vec3f,

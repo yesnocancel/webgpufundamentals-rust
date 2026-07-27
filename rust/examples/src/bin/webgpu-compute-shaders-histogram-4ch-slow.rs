@@ -275,7 +275,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("histogram shader"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       @group(0) @binding(0) var<storage, read_write> bins: array<vec4u>;
       @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 

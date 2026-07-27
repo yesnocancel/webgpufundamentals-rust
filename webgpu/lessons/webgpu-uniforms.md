@@ -15,7 +15,7 @@ We'll start again with the triangle example from [the first article](webgpu-fund
 ```rust
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("triangle shaders with uniforms"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
 +      struct OurStruct {
 +        color: vec4f,
 +        scale: vec2f,
@@ -434,7 +434,7 @@ that are updated each time we draw.
 
 ```rust
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct OurStruct {
         color: vec4f,
 -        scale: vec2f,

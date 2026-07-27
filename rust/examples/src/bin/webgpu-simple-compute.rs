@@ -20,7 +20,7 @@ async fn main_async() {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("doubling compute module"),
         source: wgpu::ShaderSource::Wgsl(
-            r#"
+            /* wgsl */ r#"
       @group(0) @binding(0) var<storage, read_write> data: array<f32>;
 
       @compute @workgroup_size(1) fn computeSomething(

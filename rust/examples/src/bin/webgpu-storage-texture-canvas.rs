@@ -28,7 +28,7 @@ async fn run() {
 
     // The storage texture's format must be in the shader itself, so we
     // splice it in, like the JS version's template literal.
-    let code = format!(
+    let code = /* wgsl */ format!(
         "
       @group(0) @binding(0)
       var tex: texture_storage_2d<{format_name}, write>;

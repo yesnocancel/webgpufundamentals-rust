@@ -522,7 +522,7 @@ and create pipelines for each one.
 ```rust
   let scale_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("histogram scale shader"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       @group(0) @binding(0) var<storage, read> bins: array<vec4u>;
       @group(0) @binding(1) var<storage, read_write> scale: vec4f;
       @group(0) @binding(2) var ourTexture: texture_2d<f32>;
@@ -543,7 +543,7 @@ and create pipelines for each one.
 
   let draw_histogram_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("draw histogram shader"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,

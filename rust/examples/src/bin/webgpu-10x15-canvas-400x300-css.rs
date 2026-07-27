@@ -10,7 +10,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("our hardcoded red line shaders"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       @group(0) @binding(0) var<uniform> time: f32;
 
       @vertex fn vs(

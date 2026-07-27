@@ -231,7 +231,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("histogram chunk shader"),
             source: wgpu::ShaderSource::Wgsl(
-                (shared_constants.clone()
+                /* wgsl */ (shared_constants.clone()
                     + r#"
       const chunkSize = chunkWidth * chunkHeight;
       var<workgroup> bins: array<array<atomic<u32>, 4>, chunkSize>;
@@ -286,7 +286,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chunk sum shader"),
             source: wgpu::ShaderSource::Wgsl(
-                (shared_constants
+                /* wgsl */ (shared_constants
                     + r#"
       const chunkSize = chunkWidth * chunkHeight;
 
@@ -340,7 +340,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("histogram scale shader"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       @group(0) @binding(0) var<storage, read> bins: array<vec4u>;
       @group(0) @binding(1) var<storage, read_write> scale: vec4f;
       @group(0) @binding(2) var ourTexture: texture_2d<f32>;
@@ -366,7 +366,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("draw histogram shader"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,

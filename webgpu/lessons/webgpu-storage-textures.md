@@ -198,7 +198,7 @@ literal.
     f => panic!("unsupported canvas format {f:?}"),
   };
 
-  let code = format!("
+  let code = /* wgsl */ format!("
       @group(0) @binding(0)
       var tex: texture_storage_2d<{format_name}, write>;
 ") + &r#"

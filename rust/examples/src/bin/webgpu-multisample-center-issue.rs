@@ -10,7 +10,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("our hardcoded red triangle shaders"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct VOut {
         @builtin(position) position: vec4f,
         @location(0) baryCoord: vec3f,

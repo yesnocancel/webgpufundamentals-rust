@@ -225,7 +225,7 @@ Here's the code
       let (module, sampler) = cache.get_or_insert_with(|| {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
           label: Some("textured quad shaders for mip level generation"),
-          source: wgpu::ShaderSource::Wgsl(r#"
+          source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
             struct VSOutput {
               @builtin(position) position: vec4f,
               @location(0) texcoord: vec2f,

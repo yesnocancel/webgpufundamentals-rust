@@ -125,7 +125,7 @@ impl MultiApp {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas composite shaders"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       // x, y, w, h of the canvas in normalized (0..1, y-down) window coords
       @group(0) @binding(0) var<uniform> rect: vec4f;
       @group(0) @binding(1) var t: texture_2d<f32>;

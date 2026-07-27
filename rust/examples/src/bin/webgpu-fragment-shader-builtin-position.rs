@@ -9,7 +9,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("hardcoded checkerboard triangle shaders"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
       };

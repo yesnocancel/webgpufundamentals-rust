@@ -142,7 +142,7 @@ fn generate_mips(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Tex
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("textured quad shaders for mip level generation"),
                 source: wgpu::ShaderSource::Wgsl(
-                    r#"
+                    /* wgsl */ r#"
             const faceMat = array(
               mat3x3f( 0,  0,  -2,  0, -2,   0,  1,  1,   1),   // pos-x
               mat3x3f( 0,  0,   2,  0, -2,   0, -1,  1,  -1),   // neg-x
@@ -319,7 +319,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct Uniforms {
         matrix: mat4x4f,
       };

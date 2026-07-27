@@ -27,7 +27,7 @@ async fn run() {
     let mut app = App::new("WebGPU Cube").await;
     app.auto_resize = true;
 
-    let shader_src = r#"
+    let shader_src = /* wgsl */ r#"
   struct VSUniforms {
     worldViewProjection: mat4x4f,
     worldInverseTranspose: mat4x4f,

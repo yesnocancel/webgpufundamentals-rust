@@ -9,7 +9,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("hardcoded triangle"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
       };
@@ -37,7 +37,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("checkerboard"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       @fragment fn fs(@builtin(position) pixelPosition: vec4f) -> @location(0) vec4f {
         let red = vec4f(1, 0, 0, 1);
         let cyan = vec4f(0, 1, 1, 1);

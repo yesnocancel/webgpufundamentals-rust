@@ -115,7 +115,7 @@ fn generate_mips(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Tex
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("textured quad shaders for mip level generation"),
                 source: wgpu::ShaderSource::Wgsl(
-                    r#"
+                    /* wgsl */ r#"
             struct VSOutput {
               @builtin(position) position: vec4f,
               @location(0) texcoord: vec2f,
@@ -258,7 +258,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("our hardcoded textured quad shaders"),
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,

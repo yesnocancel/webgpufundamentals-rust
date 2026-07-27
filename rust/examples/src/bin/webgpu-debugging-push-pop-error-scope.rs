@@ -29,7 +29,7 @@ async fn main_async() {
     let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(
-            r#"
+            /* wgsl */ r#"
       this shader won't compile
     "#
             .into(),
@@ -43,7 +43,7 @@ async fn main_async() {
     let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(
-            r#"
+            /* wgsl */ r#"
       also, this shader won't compile
     "#
             .into(),

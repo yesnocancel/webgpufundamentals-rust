@@ -27,7 +27,7 @@ that fits in clip space.
 ```rust
   let post_process_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -319,7 +319,7 @@ Let's add that to the code. First let's edit the shader to apply this sine wave.
 ```rust
   let post_process_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -459,7 +459,7 @@ First let's change the shader
 ```rust
   let post_process_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
@@ -626,8 +626,8 @@ its `${presentationFormat}` template literal.
 +
 -  let post_process_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 -    label: None,
--    source: wgpu::ShaderSource::Wgsl(r#"
-+  let post_process_code = format!("
+-    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
++  let post_process_code = /* wgsl */ format!("
 +      @group(1) @binding(0) var outTexture: texture_storage_2d<{format_name}, write>;
 +") + &r#"
 -      struct VSOutput {
@@ -795,7 +795,7 @@ WGSL `const`s with `format!` and reference those.
 ```rust
 +  let workgroup_size = [16u32, 16u32];
 +  let [wx, wy] = workgroup_size;
-  let post_process_code = format!("
+  let post_process_code = /* wgsl */ format!("
       @group(1) @binding(0) var outTexture: texture_storage_2d<{format_name}, write>;
 +      const workgroupSizeX = {wx};
 +      const workgroupSizeY = {wy};

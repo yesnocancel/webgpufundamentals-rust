@@ -500,7 +500,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct Uniforms {
         normalMatrix: mat3x3f,
         worldViewProjection: mat4x4f,

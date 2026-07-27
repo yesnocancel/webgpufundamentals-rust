@@ -1027,7 +1027,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct Uniforms {
         matrix: mat4x4f,
         color: vec4f,
@@ -1115,7 +1115,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,

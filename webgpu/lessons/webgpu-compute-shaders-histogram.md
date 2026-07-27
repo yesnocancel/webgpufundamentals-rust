@@ -431,7 +431,7 @@ then we create our shader
 ```rust
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("histogram shader"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       @group(0) @binding(0) var<storage, read_write> bins: array<u32>;
       @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 
@@ -1075,7 +1075,7 @@ we'll use it again for a second shader below.
   let histogram_chunk_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("histogram chunk shader"),
     source: wgpu::ShaderSource::Wgsl(
-+      (shared_constants.clone() + r#"
++      /* wgsl */ (shared_constants.clone() + r#"
 -      const chunkWidth = 256;
 -      const chunkHeight = 1;
       const chunkSize = chunkWidth * chunkHeight;
@@ -1132,7 +1132,7 @@ And, like before, we can inject the `chunkWidth` and `chunkHeight`.
 let chunk_sum_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
   label: Some("chunk sum shader"),
   source: wgpu::ShaderSource::Wgsl(
-*    (shared_constants + r#"
+*    /* wgsl */ (shared_constants + r#"
     const chunkSize = chunkWidth * chunkHeight;
     @group(0) @binding(0) var<storage, read_write> chunks: array<array<u32, chunkSize>>;
 
@@ -1328,7 +1328,7 @@ Here are the changes to our shader
 let chunk_sum_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
   label: Some("chunk sum shader"),
   source: wgpu::ShaderSource::Wgsl(
-    (shared_constants + r#"
+    /* wgsl */ (shared_constants + r#"
     const chunkSize = chunkWidth * chunkHeight;
 
 +    struct Uniforms {

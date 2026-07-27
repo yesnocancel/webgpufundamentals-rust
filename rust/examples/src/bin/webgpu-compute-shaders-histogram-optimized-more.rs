@@ -250,7 +250,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("histogram chunk shader"),
             source: wgpu::ShaderSource::Wgsl(
-                (shared_constants.clone()
+                /* wgsl */ (shared_constants.clone()
                     + r#"
       const chunkSize = chunkWidth * chunkHeight;
       var<workgroup> bins: array<atomic<u32>, chunkSize>;
@@ -297,7 +297,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chunk sum shader"),
             source: wgpu::ShaderSource::Wgsl(
-                (shared_constants
+                /* wgsl */ (shared_constants
                     + r#"
       const chunkSize = chunkWidth * chunkHeight;
 

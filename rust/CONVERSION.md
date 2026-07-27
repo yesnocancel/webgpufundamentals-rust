@@ -75,6 +75,12 @@ frame code reads current values from wgpu_fun's settings store:
 
 - WGSL shader code is kept **character-for-character identical** to the
   original (including its comments and camelCase names).
+- Strings that store WGSL get a `/* wgsl */` comment in front of them
+  (`Wgsl(/* wgsl */ r#"..."#)`, `let shader_src = /* wgsl */ r#"..."#`),
+  mirroring the JS originals' `code: /* wgsl */ \`...\`` editor-hint
+  convention (explained in the fundamentals article). Articles mirror
+  their original's usage: where the original article shows the marker,
+  the converted article does too.
 - Keep every `label:` string identical. Keep JS comments, translated to the
   matching Rust line.
 - JS `camelCase` variables → Rust `snake_case`.

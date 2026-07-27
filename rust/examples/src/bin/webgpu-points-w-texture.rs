@@ -23,7 +23,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct Vertex {
         @location(0) position: vec2f,
         @location(1) size: f32,

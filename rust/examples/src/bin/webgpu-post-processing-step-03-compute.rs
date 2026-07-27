@@ -133,7 +133,7 @@ async fn run() {
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(
-                r#"
+                /* wgsl */ r#"
       struct Vertex {
         @location(0) position: vec2f,
         @location(1) color: vec4f,
@@ -238,7 +238,7 @@ async fn run() {
             cache: None,
         });
 
-    let post_process_code = format!(
+    let post_process_code = /* wgsl */ format!(
         "
       @group(1) @binding(0) var outTexture: texture_storage_2d<{format_name}, write>;
 "

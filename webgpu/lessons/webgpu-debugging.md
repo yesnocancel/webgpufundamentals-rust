@@ -95,7 +95,7 @@ async fn main() {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(
-            r#"
+            /* wgsl */ r#"
       this shader won't compile
     "#
             .into(),
@@ -126,7 +126,7 @@ errors until you call certain functions. One such function is
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(
-            r#"
+            /* wgsl */ r#"
       this shader won't compile
     "#
             .into(),
@@ -173,7 +173,7 @@ Example:
   device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
     source: wgpu::ShaderSource::Wgsl(
-      r#"
+      /* wgsl */ r#"
       this shader won't compile
     "#
       .into(),
@@ -187,7 +187,7 @@ Example:
 +  device.create_shader_module(wgpu::ShaderModuleDescriptor {
 +    label: None,
 +    source: wgpu::ShaderSource::Wgsl(
-+      r#"
++      /* wgsl */ r#"
 +      also, this shader won't compile
 +    "#
 +      .into(),
@@ -228,7 +228,7 @@ hold on to the future and await it later:
   device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: None,
     source: wgpu::ShaderSource::Wgsl(
-      r#"
+      /* wgsl */ r#"
       this shader won't compile
     "#
       .into(),

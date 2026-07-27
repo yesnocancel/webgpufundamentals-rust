@@ -20,7 +20,7 @@ previous article. All we're going to do is change the shaders.
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 -    label: Some("our hardcoded red triangle shaders"),
 +    label: Some("our hardcoded rgb triangle shaders"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
 +      struct OurVertexShaderOutput {
 +        @builtin(position) position: vec4f,
 +        @location(0) color: vec4f,
@@ -199,7 +199,7 @@ checkerboard.
 ```rust
   let module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("hardcoded checkerboard triangle shaders"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
 -        @location(0) color: vec4f,
@@ -276,7 +276,7 @@ We could also split them into separate modules:
 -    label: Some("hardcoded checkerboard triangle shaders"),
 +  let vs_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 +    label: Some("hardcoded triangle"),
-    source: wgpu::ShaderSource::Wgsl(r#"
+    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
       struct OurVertexShaderOutput {
         @builtin(position) position: vec4f,
       };
@@ -299,7 +299,7 @@ We could also split them into separate modules:
 +
 +  let fs_module = app.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 +    label: Some("checkerboard"),
-+    source: wgpu::ShaderSource::Wgsl(r#"
++    source: wgpu::ShaderSource::Wgsl(/* wgsl */ r#"
 -      @fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
 +      @fragment fn fs(@builtin(position) pixelPosition: vec4f) -> @location(0) vec4f {
         let red = vec4f(1, 0, 0, 1);
