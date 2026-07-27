@@ -163,6 +163,34 @@ frame code reads current values from wgpu_fun's settings store:
   JS originals' pointerdown/pointermove/wheel listeners map to this. Events
   trigger a re-render in `RenderMode::Once`.
 
+## Multiple canvases (`MultiApp`, the multiple-canvases lesson)
+
+For examples that render to several canvases at once:
+
+```rust
+use wgpu_fun::{Canvas, MultiApp, MultiFrame, RenderMode};
+
+let mut app = MultiApp::new("title").await;   // device/queue/format, no surface
+app.auto_resize = true;                       // optional, before canvases()
+let canvases: Vec<Canvas> = app.canvases(&[(300, 150); 3]);
+app.run(RenderMode::Once /* or Continuous */, move |frame: &MultiFrame| {
+    // frame.device / frame.queue / frame.format / frame.time — no view;
+    for canvas in &canvases {
+        let view = canvas.current_view();  // JS context.getCurrentTexture().createView()
+        // canvas.width()/height(), canvas.is_visible() (IntersectionObserver)
+    }
+});
+```
+
+- Browser: `canvases()` wraps every `<canvas>` on the page in document
+  order (the arg is ignored); surfaces are configured lazily and presented
+  automatically after the frame callback. Pages that create canvases
+  dynamically do the DOM work in page JS *before* `init()`.
+- Native: there's no multi-surface window, so each entry of the arg
+  creates an offscreen texture of that size; the helper composites them
+  into one window as a wrapping grid (mouse-wheel scroll) or into the test
+  PNG, and `is_visible()` means "grid cell intersects the window".
+
 ## Verifying examples (required — "all examples work")
 
 Native, headless, renders offscreen and writes a PNG:

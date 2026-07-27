@@ -44,6 +44,17 @@ pub struct Frame<'a> {
     pub time: f64,
 }
 
+/// Everything a [`MultiApp`] frame callback needs to draw one frame. The
+/// per-canvas texture views come from [`Canvas::current_view`] instead of a
+/// single `view` field, since there are many canvases.
+pub struct MultiFrame<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub format: wgpu::TextureFormat,
+    /// Seconds since the example started.
+    pub time: f64,
+}
+
 /// How the frame callback is driven.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {
@@ -225,8 +236,16 @@ pub use events::{drain_pointer_events, PointerEvent};
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{start, App};
+#[cfg(not(target_arch = "wasm32"))]
+mod multi_native;
+#[cfg(not(target_arch = "wasm32"))]
+pub use multi_native::{Canvas, MultiApp};
 
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
 pub use web::{fail, start, App};
+#[cfg(target_arch = "wasm32")]
+mod multi_web;
+#[cfg(target_arch = "wasm32")]
+pub use multi_web::{Canvas, MultiApp};

@@ -181,60 +181,72 @@ impl App {
         }
 
         // Read the last frame back and write it as a PNG.
-        let bytes_per_row = (width * 4 + 255) & !255;
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("test readback"),
-            size: (bytes_per_row * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        );
-        self.queue.submit([encoder.finish()]);
-
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |r| r.expect("readback map failed"));
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll failed");
-
-        let data = slice.get_mapped_range().expect("failed to map readback");
-        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        for row in 0..height {
-            let start = (row * bytes_per_row) as usize;
-            pixels.extend_from_slice(&data[start..start + (width * 4) as usize]);
-        }
-        drop(data);
-
-        if let Some(dir) = test.out_path.parent() {
-            std::fs::create_dir_all(dir).ok();
-        }
-        let file = std::fs::File::create(&test.out_path).expect("failed to create test PNG");
-        let mut png_encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
-        png_encoder.set_color(png::ColorType::Rgba);
-        png_encoder.set_depth(png::BitDepth::Eight);
-        png_encoder
-            .write_header()
-            .and_then(|mut w| w.write_image_data(&pixels))
-            .expect("failed to write test PNG");
+        write_texture_png(&self.device, &self.queue, &texture, width, height, &test.out_path);
         println!("TEST-OK {}", test.out_path.display());
     }
+}
+
+/// Read an Rgba8 texture back and write it as a PNG (test mode).
+pub(crate) fn write_texture_png(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    out_path: &std::path::Path,
+) {
+    let bytes_per_row = (width * 4 + 255) & !255;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("test readback"),
+        size: (bytes_per_row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
+    queue.submit([encoder.finish()]);
+
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |r| r.expect("readback map failed"));
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("device poll failed");
+
+    let data = slice.get_mapped_range().expect("failed to map readback");
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        let start = (row * bytes_per_row) as usize;
+        pixels.extend_from_slice(&data[start..start + (width * 4) as usize]);
+    }
+    drop(data);
+
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    let file = std::fs::File::create(out_path).expect("failed to create test PNG");
+    let mut png_encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    png_encoder.set_color(png::ColorType::Rgba);
+    png_encoder.set_depth(png::BitDepth::Eight);
+    png_encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(&pixels))
+        .expect("failed to write test PNG");
 }
 
 struct WinitApp {
