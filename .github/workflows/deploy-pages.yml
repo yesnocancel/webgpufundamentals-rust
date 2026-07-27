@@ -1,0 +1,83 @@
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # Must match the wasm-bindgen version in rust/Cargo.lock.
+      - name: Install wasm-bindgen-cli
+        run: |
+          VERSION=$(grep -A1 'name = "wasm-bindgen"' rust/Cargo.lock | grep version | head -1 | cut -d'"' -f2)
+          echo "wasm-bindgen $VERSION"
+          curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          echo "$PWD/wasm-bindgen-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
+      - name: Build wasm examples
+        run: cd rust && ./build-wasm.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install site dependencies
+        run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+
+      - name: Build site
+        run: npm run build-ci
+
+      # Until a custom domain is configured (repo variable CUSTOM_DOMAIN),
+      # the site is served under /<repo-name>/ on github.io, but its links
+      # are root-absolute — rewrite them for the subpath. With a custom
+      # domain the site serves at the root and needs no rewriting.
+      - name: Rewrite absolute paths for project-pages subpath
+        if: vars.CUSTOM_DOMAIN == ''
+        run: |
+          find out -name '*.html' -exec sed -i \
+            -e 's#href="/\([^/"]\)#href="/webgpufundamentals-rust/\1#g' \
+            -e 's#src="/\([^/"]\)#src="/webgpufundamentals-rust/\1#g' {} +
+
+      - name: Add CNAME for custom domain
+        if: vars.CUSTOM_DOMAIN != ''
+        run: echo "${{ vars.CUSTOM_DOMAIN }}" > out/CNAME
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
