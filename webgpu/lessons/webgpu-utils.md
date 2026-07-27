@@ -29,7 +29,7 @@ TOC: Utility Crates and Math
 >
 > At some point though, it becomes harder
 > to understand the code dealing with these details instead of just saying
-> "set the uniform" and you, having learned previously that "set the uniforms" means
+> "set the uniforms" and you, having learned previously that "set the uniforms" means
 > "compute the offset to the various pieces of data, write the values there, and,
 > before rendering, upload the values to the GPU".
 >
