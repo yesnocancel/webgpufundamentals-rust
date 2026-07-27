@@ -28,7 +28,7 @@ async fn main_async() {
     // Build the WGSL with the workgroup size hard coded into the shader,
     // like the JS version's template literal.
     let [wx, wy, wz] = workgroup_size;
-    let code = format!(
+    let code = /* wgsl */ format!(
         "
   // NOTE!: vec3u is padded to by 4 bytes
   @group(0) @binding(0) var<storage, read_write> workgroupResult: array<vec3u>;

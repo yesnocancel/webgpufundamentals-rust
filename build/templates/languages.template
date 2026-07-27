@@ -1,6 +1,3 @@
-<select class="language">
-  {{#each langs}}
-    <option value="{{url}}" {{{selected key="url" value="relUrl" re="index\.html" sub="" }}}>{{language}}</a>
-  {{/each}}
-</select>
-
+{{!-- Language picker hidden for now: the translations are still the
+      original JavaScript lessons, not the Rust conversion. Restore the
+      picker by reverting this file (see git history). --}}

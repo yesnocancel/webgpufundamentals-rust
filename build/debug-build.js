@@ -1,6 +1,7 @@
 // Debug: run lesson-builder directly to see errors grunt swallows.
 'use strict';
 const fixLinks = require('./fix-links.js');
+require('./register-toc-steps.js');
 const buildStuff = require('@gfxfundamentals/lesson-builder');
 
 const buildSettings = {

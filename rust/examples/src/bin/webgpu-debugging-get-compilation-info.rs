@@ -18,7 +18,7 @@ async fn main_async() {
     };
 
     let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let code = r#"
+    let code = /* wgsl */ r#"
       // This function
       // calls a function
       // that does not
