@@ -678,22 +678,23 @@ pipeline descriptor.
 
 ### <a id="multiple-updates"></a> Remembering that command buffers don't execute until you submit them
 
-It's common to run into a version of this problem
+It's common to run into a version of this problem (this gotcha is the same
+in wgpu)
 
-```js
-  const encoder = device.createCommandEncoder();
-  const pass = encoder.beginRenderPass(renderPassDesc);
-  pass.setPipeline(somePipeline);
-  pass.setBindGroup(0, someBindGroupThatUsesSomeBuffer);
-  device.queue.writeBuffer(someBuffer, 0, data0ForBuffer);
-  pass.draw(numVertices);
-  device.queue.writeBuffer(someBuffer, 0, data1ForBuffer); // ERROR!?
-  pass.draw(numVertices);
-  pass.end();
-  device.queue.submit([encoder.finish()]);
+```rust
+  let mut encoder = device.create_command_encoder(&Default::default());
+  let mut pass = encoder.begin_render_pass(&render_pass_desc);
+  pass.set_pipeline(&some_pipeline);
+  pass.set_bind_group(0, &some_bind_group_that_uses_some_buffer, &[]);
+  queue.write_buffer(&some_buffer, 0, data0_for_buffer);
+  pass.draw(0..num_vertices, 0..1);
+  queue.write_buffer(&some_buffer, 0, data1_for_buffer); // ERROR!?
+  pass.draw(0..num_vertices, 0..1);
+  drop(pass);
+  queue.submit([encoder.finish()]);
 ```
 
-The code above is updating `someBuffer` by calling `queue.writeBuffer`. That function
+The code above is updating `some_buffer` by calling `queue.write_buffer`. That function
 executes immediately where as the `draw` function does not execute, it just adds
 a command to a command buffer. That command buffer gets executed later.
 

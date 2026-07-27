@@ -32,7 +32,7 @@ async fn run() {
         @builtin(position) position: vec4f,
       };
 
-      @vertex fn vs(vert: Vertex,) -> VSOutput {
+      @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
         vsOut.position = vec4f(vert.position, 0, 1);
         return vsOut;

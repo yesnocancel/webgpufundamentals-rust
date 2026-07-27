@@ -54,7 +54,7 @@ WebGPU Utilsは、さまざまな記事で記述した他の便利な関数の�
 * `createTextureFromSources`
 * `generateMips`
 
-[キューブマップに関する記事](webgpu-cubemaps.html)から。その記事では、複数のレイヤーを処理するように`generateMips`を更新しました。
+[キューブマップに関する記事](webgpu-cube-maps.html)から。その記事では、複数のレイヤーを処理するように`generateMips`を更新しました。
 
 そして、[透明度とブレンディングに関する記事](webgpu-transparency.html)で`premultipliedAlpha`のサポートを追加した方法が含まれています。
 
@@ -68,7 +68,7 @@ WebGPU Utilsは、さまざまな記事で記述した他の便利な関数の�
 
 これらの2つの関数は、[メモリレイアウトに関する記事](webgpu-memory-layout.html)で簡単に触れました。
 
-[基本的な記事](webgpu-fundamentals.html)のすべて、および[行列演算に関する記事](webgpu-matrix-math.html)と[ライティングに関する記事](webgpu-lighting-direction.html)で見たように、WGSLで構造体を作成する場合、通常、ユニフォームバッファまたはストレージバッファを作成し、何らかの方法でデータを入力する必要があります。
+[基本的な記事](webgpu-fundamentals.html)のすべて、および[行列演算に関する記事](webgpu-matrix-math.html)と[ライティングに関する記事](webgpu-lighting-directional.html)で見たように、WGSLで構造体を作成する場合、通常、ユニフォームバッファまたはストレージバッファを作成し、何らかの方法でデータを入力する必要があります。
 
 特に、ライティングに関する記事でこれを見ることができます。この構造体がありました。
 

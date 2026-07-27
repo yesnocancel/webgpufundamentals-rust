@@ -428,7 +428,7 @@ async fn run() {
         .write_buffer(&index_buffer, 0, bytemuck::cast_slice(&index_data));
 
     let bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
+        label: Some("bind group for object"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry {

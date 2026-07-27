@@ -22,9 +22,9 @@ async fn run() {
         @builtin(vertex_index) vertexIndex : u32
       ) -> OurVertexShaderOutput {
         let pos = array(
-          vec2f( 0.0,  0.5),  // top center
-          vec2f(-0.5, -0.5),  // bottom left
-          vec2f( 0.5, -0.5)   // bottom right
+          vec2f(-1.0,  3.0),
+          vec2f( 3.0, -1.0),
+          vec2f(-1.0, -1.0),
         );
 
         var vsOutput: OurVertexShaderOutput;

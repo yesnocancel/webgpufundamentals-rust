@@ -188,10 +188,11 @@ to end a pass. In wgpu, a pass ends when the pass encoder is *dropped*, so
 you'll usually see passes inside a `{ }` block (or an explicit `drop(pass)`)
 so the borrow of the encoder ends and the pass is recorded.
 
-Once you create a command buffer, you can *submit* it to be executed:
+Once you create a command buffer, you can *submit* it to the queue (in wgpu
+the queue is its own object, returned alongside the device) to be executed:
 
 ```rust
-device.queue.submit([command_buffer]);
+queue.submit([command_buffer]);
 ```
 
 The 'simplified diagram of WebGPU setup' shown previously represents the state at a *single* `draw` command in the command
@@ -1132,7 +1133,7 @@ start going over actual techniques.
 
 One other thing. Every example page runs the Rust code you read in the
 article, compiled to WebAssembly. Each example links to its full Rust source,
-and you can clone [the repository]("https://github.com/yesnocancel/webgpufundamentals-rust")
+and you can clone [the repository](https://github.com/yesnocancel/webgpufundamentals-rust)
 and run any of them natively with `cargo run --bin <example-name>`.
 
 <div class="webgpu_bottombar">

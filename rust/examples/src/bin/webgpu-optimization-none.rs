@@ -527,7 +527,7 @@ async fn run() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        // Because vsOut.normal is an inter-stage variable
+        // Because vsOut.normal is an inter-stage variable 
         // it's interpolated so it will not be a unit vector.
         // Normalizing it will make it a unit vector again
         let normal = normalize(vsOut.normal);

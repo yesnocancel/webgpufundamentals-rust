@@ -73,7 +73,7 @@ async fn run() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        return vec4f(1, 0.5, 0.2, 1);  // orange
+        return vec4f(1, 0.5, 0.2, 1);
       }
     "#
                 .into(),

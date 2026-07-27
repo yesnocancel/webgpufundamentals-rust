@@ -77,6 +77,15 @@ async fn run() {
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
 
+        // code
+        // c s
+        //-s c
+        //
+
+        // math
+        // c -s    x * c + y * -s
+        // s  c    x * s + y * c
+
         // Rotate the position
         let rotatedPosition = vec2f(
           vert.position.x * uni.rotation.x - vert.position.y * uni.rotation.y,

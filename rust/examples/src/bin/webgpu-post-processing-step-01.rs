@@ -213,7 +213,7 @@ async fn run() {
                 module: &module,
                 entry_point: None,
                 compilation_options: Default::default(),
-                targets: &[Some(app.format.into())],
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
             }),
             primitive: Default::default(),
             depth_stencil: None,

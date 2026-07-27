@@ -245,7 +245,6 @@ async fn run() {
       @group(0) @binding(0) var<storage, read_write> bins: array<atomic<u32>>;
       @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 
-      // from: https://www.w3.org/WAI/GL/wiki/Relative_luminance
       const kSRGBLuminanceFactors = vec3f(0.2126, 0.7152, 0.0722);
       fn srgbLuminance(color: vec3f) -> f32 {
         return saturate(dot(color, kSRGBLuminanceFactors));

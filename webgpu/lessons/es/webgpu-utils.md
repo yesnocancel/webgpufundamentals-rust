@@ -75,7 +75,7 @@ También incluye:
 * `createTextureFromSources`
 * `generateMips`
 
-De [el artículo sobre mapas de cubos (cubemaps)](webgpu-cubemaps.html).
+De [el artículo sobre mapas de cubos (cubemaps)](webgpu-cube-maps.html).
 En ese artículo actualizamos `generateMips` para manejar
 múltiples capas.
 

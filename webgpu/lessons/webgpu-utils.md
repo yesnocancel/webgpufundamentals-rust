@@ -103,7 +103,7 @@ were all created in [the article on importing textures](webgpu-importing-texture
 and their multi-layer versions
 
 * `copy_sources_to_texture`
-* `create_textures_from_sources`
+* `create_texture_from_sources`
 
 in [the article on cubemaps](webgpu-cube-maps.html). The examples on this
 site keep them inline so each example is self-contained, but in your own
@@ -185,10 +185,10 @@ usual foundation.
 
 Other articles build more helpers you can reuse the same way: premultiplied
 alpha support in [the article on transparency and blending](webgpu-transparency.html),
-loading 6 images for [cubemaps](webgpu-cubemaps.html) and
+loading 6 images for [cubemaps](webgpu-cube-maps.html) and
 [environment maps](webgpu-environment-maps.html), normalized 8-bit vertex
 data in [the article on vertex buffers](webgpu-vertex-buffers.html#a-normalized-attributes),
 lighting math in the articles from
-[directional lighting](webgpu-lighting-direction.html) through
+[directional lighting](webgpu-lighting-directional.html) through
 [spot lights](webgpu-lighting-spot.html), and the textured cube used in
 examples like [this one](../webgpu-cube.html).

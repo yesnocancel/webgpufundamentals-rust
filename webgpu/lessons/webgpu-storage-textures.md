@@ -170,8 +170,9 @@ In general, it *should* be available on any platform that reports
 `bgra8unorm` as its preferred canvas format but, there is some possibility
 it's not available. So, we request the feature *if the adapter supports it* —
 that's what `App::new_with_features` does, mirroring the JS
-`adapter.features.has('bgra8unorm-storage')` check — and then check the
-combination we ended up with.
+`adapter.features.has('bgra8unorm-storage')` check — and if we didn't get
+it, we fall back to configuring the canvas as `rgba8unorm`, which is always
+usable as a storage texture.
 
 ```rust
 -  let mut app = App::new("WebGPU Storage Texture").await;
@@ -184,10 +185,10 @@ combination we ended up with.
   app.usage = wgpu::TextureUsages::TEXTURE_BINDING |
               wgpu::TextureUsages::STORAGE_BINDING;
 
-+  if app.format == wgpu::TextureFormat::Bgra8Unorm
-+      && !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE)
-+  {
-+    panic!("bgra8unorm-storage is not supported");
++  // Like the JS version: if bgra8unorm-storage is unavailable, fall back
++  // to configuring the canvas as rgba8unorm (always storage-capable).
++  if !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE) {
++    app.format = wgpu::TextureFormat::Rgba8Unorm;
 +  }
 ```
 

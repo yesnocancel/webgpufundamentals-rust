@@ -75,6 +75,15 @@ frame code reads current values from wgpu_fun's settings store:
 
 - WGSL shader code is kept **character-for-character identical** to the
   original (including its comments and camelCase names).
+- **Canonicity**: where upstream's example page and article disagree
+  character-wise (it happens — extra comments, whitespace, trailing
+  commas), the **example page** is canonical for the `.rs` bin; the
+  converted article mirrors the upstream *article*. This reproduces
+  upstream's own page/article inconsistencies instead of silently
+  resolving them.
+- The image-adjustments examples deliberately drop the originals'
+  drag-and-drop/paste-your-own-image interaction (browser File APIs; the
+  article notes it). Sliders and rendering are fully ported.
 - Strings that store WGSL get a `/* wgsl */` comment in front of them
   (`Wgsl(/* wgsl */ r#"..."#)`, `let shader_src = /* wgsl */ r#"..."#`),
   mirroring the JS originals' `code: /* wgsl */ \`...\`` editor-hint

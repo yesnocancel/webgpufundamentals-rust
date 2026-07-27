@@ -258,12 +258,12 @@ fn srgbLuminance(color: vec3f) -> f32 {
 
 @compute @workgroup_size(chunkWidth, chunkHeight, 1)
 fn cs(
-  @builtin(global_invocation_id) global_invocation_id: vec3u,
   @builtin(workgroup_id) workgroup_id: vec3u,
   @builtin(local_invocation_id) local_invocation_id: vec3u,
 ) {
   let size = textureDimensions(ourTexture, 0);
-  let position = global_invocation_id.xy;
+  let position = workgroup_id.xy * vec2u(chunkWidth, chunkHeight) + 
+                 local_invocation_id.xy;
   if (all(position < size)) {
     let numBins = f32(chunkSize);
     let lastBinIndex = u32(numBins - 1);

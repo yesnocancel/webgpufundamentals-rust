@@ -121,8 +121,14 @@ impl App {
             TestConfig { width: w, height: h, out_path }
         });
 
+        // Test mode renders Rgba8Unorm by default; WGPU_FUN_TEST_FORMAT=bgra8
+        // switches to Bgra8Unorm (the typical browser/native surface format)
+        // to catch pipelines that hardcode a format their target doesn't have.
         let format = if test.is_some() {
-            wgpu::TextureFormat::Rgba8Unorm
+            match std::env::var("WGPU_FUN_TEST_FORMAT").as_deref() {
+                Ok("bgra8") => wgpu::TextureFormat::Bgra8Unorm,
+                _ => wgpu::TextureFormat::Rgba8Unorm,
+            }
         } else {
             wgpu::TextureFormat::Bgra8Unorm
         };
@@ -258,6 +264,11 @@ pub(crate) fn write_texture_png(
         pixels.extend_from_slice(&data[start..start + (width * 4) as usize]);
     }
     drop(data);
+    if texture.format() == wgpu::TextureFormat::Bgra8Unorm {
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
 
     if let Some(dir) = out_path.parent() {
         std::fs::create_dir_all(dir).ok();

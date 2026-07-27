@@ -178,7 +178,6 @@ async fn run() {
         var vsOut: VSOutput;
 
         let clipSpace = (uni.matrix * vec3f(vert.position, 1)).xy;
-
         vsOut.position = vec4f(clipSpace, 0.0, 1.0);
         return vsOut;
       }

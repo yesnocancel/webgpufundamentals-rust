@@ -5,10 +5,11 @@ use wgpu_fun::{App, Frame, ImageData, RenderMode};
 // WebGPU canvas, so we draw both into it: the image on top and the
 // histogram below it, each as a textured quad in pixel space.
 
+#[allow(unused_variables)] // num_entries: only used by the commented-out scale floor
 fn histogram_to_image(histogram: &[u32], num_entries: u32, height: usize) -> ImageData {
     let num_bins = histogram.len();
     let max = *histogram.iter().max().unwrap();
-    let scale = (1.0 / max as f32).max(0.2 * num_bins as f32 / num_entries as f32);
+    let scale = 1.0 / max as f32; //.max(0.2 * num_bins as f32 / num_entries as f32);
     let mut data = vec![0u8; num_bins * height * 4];
     for x in 0..num_bins {
         let v = (histogram[x] as f32 * scale * height as f32) as usize;

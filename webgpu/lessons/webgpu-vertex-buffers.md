@@ -571,6 +571,36 @@ so its `offset` into the buffer is 8 bytes.
   });
 ```
 
+First, a small refactor: in the previous article `create_circle_vertices`
+took positional arguments. The parameter list is about to grow, so — like
+the JavaScript version's options object with default values — we'll move
+the parameters into an options struct with a `Default` impl.
+
+```rust
+struct CircleVerticesOptions {
+  radius: f32,
+  num_subdivisions: u32,
+  inner_radius: f32,
+  start_angle: f32,
+  end_angle: f32,
+}
+
+impl Default for CircleVerticesOptions {
+  fn default() -> Self {
+    Self {
+      radius: 1.0,
+      num_subdivisions: 24,
+      inner_radius: 0.0,
+      start_angle: 0.0,
+      end_angle: std::f32::consts::PI * 2.0,
+    }
+  }
+}
+```
+
+Callers set the fields they care about and take the rest from the defaults:
+`create_circle_vertices(CircleVerticesOptions { radius: 0.5, inner_radius: 0.25, ..Default::default() })`.
+
 We'll update the circle vertex generation code to provide a dark color
 for vertices on the outer edge of the circle and a light color for
 the inner vertices.

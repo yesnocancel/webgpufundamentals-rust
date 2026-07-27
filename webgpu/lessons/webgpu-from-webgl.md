@@ -525,6 +525,7 @@ let position_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&posit
 let normal_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&normals), wgpu::BufferUsages::VERTEX);
 let texcoord_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&texcoords), wgpu::BufferUsages::VERTEX);
 let indices_buffer = create_buffer(&device, &queue, bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX);
+let num_indices = indices.len() as u32;
 {{/escapehtml}}</code></pre>
   </div>
 </div>

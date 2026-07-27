@@ -75,7 +75,7 @@ async fn run() {
 
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
-
+        
         // Add in the translation
         let position = vert.position + uni.translation;
 

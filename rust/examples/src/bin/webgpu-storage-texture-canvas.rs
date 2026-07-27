@@ -14,10 +14,10 @@ async fn run() {
     // STORAGE_BINDING so we can write to it from the compute shader.
     app.usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING;
 
-    if app.format == wgpu::TextureFormat::Bgra8Unorm
-        && !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE)
-    {
-        panic!("bgra8unorm-storage is not supported");
+    // Like the JS version: if bgra8unorm-storage is unavailable, fall back
+    // to configuring the canvas as rgba8unorm (always storage-capable).
+    if !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE) {
+        app.format = wgpu::TextureFormat::Rgba8Unorm;
     }
 
     let format_name = match app.format {

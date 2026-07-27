@@ -213,7 +213,7 @@ async fn run() {
                 module: &module,
                 entry_point: None,
                 compilation_options: Default::default(),
-                targets: &[Some(app.format.into())],
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
             }),
             primitive: Default::default(),
             depth_stencil: None,
@@ -269,7 +269,6 @@ async fn run() {
         let cMult = cellColor + uni.cellBright;
 
         let effect = mix(vec3f(1), banding * cMult, uni.effectAmount);
-
         let color = textureSample(postTexture2d, postSampler, fsInput.texcoord);
         return vec4f(color.rgb * effect, color.a);
       }

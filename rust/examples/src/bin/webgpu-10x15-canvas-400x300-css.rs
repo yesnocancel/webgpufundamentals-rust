@@ -12,7 +12,6 @@ async fn run() {
             source: wgpu::ShaderSource::Wgsl(
                 /* wgsl */ r#"
       @group(0) @binding(0) var<uniform> time: f32;
-
       @vertex fn vs(
         @builtin(vertex_index) vNdx : u32
       ) -> @builtin(position) vec4f {

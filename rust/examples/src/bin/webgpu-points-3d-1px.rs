@@ -60,7 +60,7 @@ async fn run() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        return vec4f(1, 0.5, 0.2, 1);  // orange
+        return vec4f(1, 0.5, 0.2, 1);
       }
     "#
                 .into(),
@@ -70,7 +70,7 @@ async fn run() {
     let pipeline = app
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("3d points with fixed size"),
+            label: Some("3d points with 1px size"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &module,

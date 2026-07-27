@@ -117,10 +117,10 @@ async fn run() {
     app.usage = wgpu::TextureUsages::RENDER_ATTACHMENT
         | wgpu::TextureUsages::TEXTURE_BINDING
         | wgpu::TextureUsages::STORAGE_BINDING;
-    if app.format == wgpu::TextureFormat::Bgra8Unorm
-        && !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE)
-    {
-        panic!("bgra8unorm-storage is not supported");
+    // Like the JS version: if bgra8unorm-storage is unavailable, fall back
+    // to configuring the canvas as rgba8unorm (always storage-capable).
+    if !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE) {
+        app.format = wgpu::TextureFormat::Rgba8Unorm;
     }
     let format_name = match app.format {
         wgpu::TextureFormat::Rgba8Unorm => "rgba8unorm",
@@ -229,7 +229,7 @@ async fn run() {
                 module: &module,
                 entry_point: None,
                 compilation_options: Default::default(),
-                targets: &[Some(app.format.into())],
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
             }),
             primitive: Default::default(),
             depth_stencil: None,
@@ -264,7 +264,6 @@ async fn run() {
         let cMult = cellColor + uni.cellBright;
 
         let effect = mix(vec3f(1), banding * cMult, uni.effectAmount);
-
         let uv = (vec2f(gid.xy) + 0.5) / vec2f(outSize);
         let color = textureSampleLevel(postTexture2d, postSampler, uv, 0);
         textureStore(outTexture, gid.xy, vec4f(color.rgb * effect, color.a));

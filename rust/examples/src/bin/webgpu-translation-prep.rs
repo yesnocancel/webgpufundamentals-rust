@@ -74,7 +74,7 @@ async fn run() {
 
       @vertex fn vs(vert: Vertex) -> VSOutput {
         var vsOut: VSOutput;
-
+        
         let position = vert.position;
 
         // convert the position from pixels to a 0.0 to 1.0 value

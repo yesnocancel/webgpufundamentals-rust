@@ -61,6 +61,12 @@ const settings = {
 
 const radToDegOptions = { min: -360, max: 360, step: 1, converters: GUI.converters.radToDeg };
 
+// Push the computed initial translation into the wasm module so the
+// rendered default matches the GUI's displayed value (they can differ on
+// HiDPI displays otherwise).
+wasm.set_setting_num('translationX', settings.translation[0]);
+wasm.set_setting_num('translationY', settings.translation[1]);
+
 const gui = new GUI();
 gui.add(settings.translation, '0', 0, 1000).name('translation.x')
    .onChange(v => wasm.set_setting_num('translationX', v));

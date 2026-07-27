@@ -210,14 +210,16 @@ version switches its target from `presentationFormat` to `'rgba8unorm'`.
       module: &module,
       entry_point: None,
       compilation_options: Default::default(),
-      targets: &[Some(app.format.into())],
+-      targets: &[Some(app.format.into())],
++      targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
     }),
     ...
   });
 ```
 
-We'll leave it reading `app.format`, which matches the `rgba8unorm` render
-target in the configurations we run in.
+The pipeline's target must be the render target's format, not the canvas's
+(`app.format`) — on many systems the canvas is `bgra8unorm`, and a mismatch
+is a validation error.
 
 These change alone would make it start rendering the original scene to this
 render target texture but we still need to draw something to the canvas
@@ -604,10 +606,10 @@ ended up with.
 +  app.usage = wgpu::TextureUsages::RENDER_ATTACHMENT
 +    | wgpu::TextureUsages::TEXTURE_BINDING
 +    | wgpu::TextureUsages::STORAGE_BINDING;
-+  if app.format == wgpu::TextureFormat::Bgra8Unorm
-+    && !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE)
-+  {
-+    panic!("bgra8unorm-storage is not supported");
++  // Like the JS version: if bgra8unorm-storage is unavailable, fall back
++  // to configuring the canvas as rgba8unorm (always storage-capable).
++  if !app.device.features().contains(wgpu::Features::BGRA8UNORM_STORAGE) {
++    app.format = wgpu::TextureFormat::Rgba8Unorm;
 +  }
 ```
 

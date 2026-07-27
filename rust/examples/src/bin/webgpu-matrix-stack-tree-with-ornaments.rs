@@ -74,7 +74,7 @@ fn create_cone_vertices(radius: f32, height: f32, subdivisions: usize) -> (Vec<f
         add_vertex(angle1, radius, -height, &color);
         add_vertex(angle0, radius, -height, &color);
 
-        // add top
+        // add bottom
         add_vertex(angle0, radius, -height, &color);
         add_vertex(angle1, radius, -height, &color);
         add_vertex(angle0, 0.0, -height, &color);
