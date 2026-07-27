@@ -14,19 +14,20 @@ storage buffers, vertex buffers, and textures.
 
 There are a few less common ways that are sometimes still highly useful.
 
-One is, when calling the `draw` or `drawIndexed` command we can pass in
-a `firstInstance` value.
+One is, when calling the `draw` or `draw_indexed` command we can pass in
+a first instance value. In wgpu, the ranges are `first..last`, so the
+start of each range is the first vertex/instance.
 
-```js
-pass.draw(numVertices,
-          numInstances = 1,
-          firstVertex = 0,
-          firstInstance = 0); // <== here
-pass.drawIndexed(indexCount,
-                 instanceCount = 1,
-                 firstIndex = 0,
-                 baseVertex = 0,
-                 firstInstance = 0); // <== here
+```rust
+pass.draw(
+    vertices,   // vertex range, e.g. 0..num_vertices
+    instances,  // instance range — its start is firstInstance <== here
+);
+pass.draw_indexed(
+    indices,     // index range, e.g. 0..index_count
+    base_vertex,
+    instances,   // instance range — its start is firstInstance <== here
+);
 ```
 
 This value shows up as `@builtin(instance_index)` in the shader. That means
@@ -85,24 +86,17 @@ doesn't matter if it's the first or last vertex but choosing
 Finally, we just need to update our call to `draw` to draw
 3 times.
 
-```js
-    function render() {
-      // Get the current texture from the canvas context and
-      // set it as the texture to render to.
-      renderPassDescriptor.colorAttachments[0].view =
-        context.getCurrentTexture().createView();
-
-      const encoder = device.createCommandEncoder({ label: 'our encoder' });
-      const pass = encoder.beginRenderPass(renderPassDescriptor);
-      pass.setPipeline(pipeline);
-      pass.draw(3);  // call our vertex shader 3 times
-+      pass.draw(3, 1, 0, 1); // pass 1 for instance_index
-+      pass.draw(3, 1, 0, 2); // pass 2 for instance_index
-      pass.end();
-
-      const commandBuffer = encoder.finish();
-      device.queue.submit([commandBuffer]);
+```rust
+    {
+      let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
+      pass.set_pipeline(&pipeline);
+      pass.draw(0..3, 0..1); // call our vertex shader 3 times
++      pass.draw(0..3, 1..2); // pass 1 for instance_index
++      pass.draw(0..3, 2..3); // pass 2 for instance_index
     }
+
+    let command_buffer = encoder.finish();
+    frame.queue.submit([command_buffer]);
 ```
 
 And we get this result.
@@ -145,8 +139,8 @@ struct PerInstanceInfo {
 
 When to use this method is up to you. You can also use
 [immediates](webgpu-immediates.html) for small changes bewtween
-draws. The advantage to using `firstInstance` is less calls
-into WebGPU and that we don't need an `ArrayBufferView` just to
+draws. The advantage to using the first instance is fewer calls
+into WebGPU and that we don't need to build a byte slice just to
 pass in a single number.
 
 We will this method when [making our mipmap generation code to

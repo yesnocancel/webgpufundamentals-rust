@@ -14,6 +14,12 @@ pub fn start(fut: impl std::future::Future<Output = ()>) {
     pollster::block_on(fut);
 }
 
+/// Show a failure message, like the JS examples' `fail()`: a banner in the
+/// browser, stderr natively.
+pub fn fail(msg: &str) {
+    eprintln!("{msg}");
+}
+
 pub struct App {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -62,15 +68,32 @@ impl App {
     /// `adapter.features.has(...)` pattern. Check `app.device.features()`
     /// to see which ones you actually got.
     pub async fn new_with_features(title: &str, optional_features: wgpu::Features) -> App {
+        Self::new_with_features_and_limits(title, optional_features, |_, _| {
+            wgpu::Limits::default()
+        })
+        .await
+    }
+
+    /// Like [`App::new_with_features`], but also lets the example request
+    /// limits — the JS `requiredLimits` device option. `limits_fn` is called
+    /// with the features the device will get and the adapter's limits, and
+    /// returns the limits to request.
+    pub async fn new_with_features_and_limits(
+        title: &str,
+        optional_features: wgpu::Features,
+        limits_fn: impl FnOnce(wgpu::Features, &wgpu::Limits) -> wgpu::Limits,
+    ) -> App {
         crate::settings::load_settings_from_env();
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
             .expect("no compatible GPU adapter found");
+        let features = adapter.features() & optional_features;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: adapter.features() & optional_features,
+                required_features: features,
+                required_limits: limits_fn(features, &adapter.limits()),
                 ..Default::default()
             })
             .await

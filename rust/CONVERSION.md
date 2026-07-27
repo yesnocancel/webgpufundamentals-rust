@@ -164,6 +164,14 @@ frame code reads current values from wgpu_fun's settings store:
 - `App::new_with_features(title, features)` — requests optional features if
   the adapter supports them (JS `adapter.features.has(...)` +
   requiredFeatures).
+- `App::new_with_features_and_limits(title, features, |features, limits| ...)`
+  — additionally requests limits (JS `requiredLimits`); the closure gets the
+  granted features + adapter limits and returns the limits to request.
+  Used by the immediates examples (`wgpu::Features::IMMEDIATES` +
+  `max_immediate_size`).
+- `wgpu_fun::fail(msg)` is cross-platform: red banner in the browser,
+  stderr natively. Examples whose feature check fails call it and `return`
+  (no panic — panics show up as console errors in the browser sweep).
 - `wgpu_fun::drain_pointer_events()` — drain queued `PointerEvent`s
   (Down/Move/Up/Wheel, device-pixel coords) inside the frame callback; the
   JS originals' pointerdown/pointermove/wheel listeners map to this. Events

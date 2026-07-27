@@ -235,7 +235,7 @@ pub use events::{drain_pointer_events, PointerEvent};
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{start, App};
+pub use native::{fail, start, App};
 #[cfg(not(target_arch = "wasm32"))]
 mod multi_native;
 #[cfg(not(target_arch = "wasm32"))]

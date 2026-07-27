@@ -102,7 +102,22 @@ impl App {
     /// device if (and only if) the adapter supports them — the JS
     /// `adapter.features.has(...)` pattern. Check `app.device.features()`
     /// to see which ones you actually got.
-    pub async fn new_with_features(_title: &str, optional_features: wgpu::Features) -> App {
+    pub async fn new_with_features(title: &str, optional_features: wgpu::Features) -> App {
+        Self::new_with_features_and_limits(title, optional_features, |_, _| {
+            wgpu::Limits::default()
+        })
+        .await
+    }
+
+    /// Like [`App::new_with_features`], but also lets the example request
+    /// limits — the JS `requiredLimits` device option. `limits_fn` is called
+    /// with the features the device will get and the adapter's limits, and
+    /// returns the limits to request.
+    pub async fn new_with_features_and_limits(
+        _title: &str,
+        optional_features: wgpu::Features,
+        limits_fn: impl FnOnce(wgpu::Features, &wgpu::Limits) -> wgpu::Limits,
+    ) -> App {
         let canvas = canvas();
         let instance = wgpu::Instance::default();
         let surface = instance
@@ -121,9 +136,11 @@ impl App {
                 panic!("no adapter");
             }
         };
+        let features = adapter.features() & optional_features;
         let (device, queue) = match adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: adapter.features() & optional_features,
+                required_features: features,
+                required_limits: limits_fn(features, &adapter.limits()),
                 ..Default::default()
             })
             .await
